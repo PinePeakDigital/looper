@@ -1,0 +1,7 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestPreservesMode'
+why:    rewriting a file drops its executable bit, breaking whatever runs it
+--- old
+	perm := info.Mode().Perm()
+--- new
+	perm := os.FileMode(0o644)

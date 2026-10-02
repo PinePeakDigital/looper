@@ -1,0 +1,21 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestFirstFailingVerifyWins'
+why:    verify commands keep running after one has already failed
+--- old
+	for _, cmd := range m.Verify {
+		ok, detail := r.verify(cmd)
+		if !ok {
+			return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
+		}
+	}
+--- new
+	caughtBy := ""
+	for _, cmd := range m.Verify {
+		ok, detail := r.verify(cmd)
+		if !ok && caughtBy == "" {
+			caughtBy = detail
+		}
+	}
+	if caughtBy != "" {
+		return Result{Mutation: m, Outcome: Caught, Detail: caughtBy}, nil
+	}

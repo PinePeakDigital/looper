@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestScoreCountsHolesAsFailures'
+why:    a stale catalog entry is not counted as a failure, so the score flatters itself
+--- old
+		case Stale:
+			stale++
+--- new
+		case Stale:

@@ -1,0 +1,11 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored|TestSurvived'
+why:    a suite that passes with the defect present is reported as catching it
+--- old
+		if !ok {
+			return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
+		}
+--- new
+		if ok {
+			return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
+		}

@@ -1,0 +1,13 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestOneBadFileFailsTheCatalog|TestRefusesMalformedFiles'
+why:    a malformed entry is skipped, so the catalog silently shrinks
+--- old
+		m, err := parseFile(path)
+		if err != nil {
+			return nil, err
+		}
+--- new
+		m, err := parseFile(path)
+		if err != nil {
+			continue
+		}

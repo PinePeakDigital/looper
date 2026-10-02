@@ -1,0 +1,7 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored'
+why:    the mutation is left in the tree once the run ends
+--- old
+	defer func() { _ = restore() }()
+--- new
+	_ = restore()

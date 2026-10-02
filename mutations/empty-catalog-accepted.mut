@@ -1,0 +1,9 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesEmptyCatalog'
+why:    an empty catalog reports a perfect score over nothing
+--- old
+	if len(found) == 0 {
+		return nil, fmt.Errorf("no .mut files under %s", dir)
+	}
+--- new
+	_ = found

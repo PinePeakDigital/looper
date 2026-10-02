@@ -1,0 +1,11 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesMalformedFiles'
+why:    a mutation with no verify command is scored against nothing and reads as surviving
+--- old
+	case len(m.Verify) == 0:
+		// Without this, a mutation would be scored against nothing and always
+		// read as surviving — or worse, as caught by an unrelated suite.
+		return m, fmt.Errorf("%s: no `verify:` command, so nothing could catch it", path)
+
+--- new
+

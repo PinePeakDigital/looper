@@ -1,0 +1,7 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestParsesEveryField|TestBlockKeepsInteriorBlankLines'
+why:    leading indentation is stripped from the blocks, where it is syntax
+--- old
+	return strings.TrimSuffix(s, "\n")
+--- new
+	return strings.TrimSpace(s)
