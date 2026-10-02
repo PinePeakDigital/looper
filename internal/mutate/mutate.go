@@ -272,18 +272,50 @@ func (r *Runner) verify(command string) check {
 	}
 }
 
-// tail returns the last few lines of a command's output, indented, for a detail line.
-// The whole point is that the operator can tell a failing assertion from a build error
-// without re-running anything by hand, so it has to show enough to read.
+// tail returns the part of a command's output an operator actually needs, indented, for a
+// detail line. The point is to tell a failing assertion from a build error without
+// re-running anything by hand.
+//
+// It prefers lines that LOOK like failures over the last lines, because the last lines are
+// often the wrong end: a shell test suite prints its one failure early and then dozens of
+// passing checks, so a plain tail scrolls the failure out. Measured against this skill's
+// own suites — 7 of 13 mutations had no failure line in their detail at all, while the
+// output containing it had been captured the whole time.
 func tail(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > tailLines {
+	if hits := failureLines(lines); len(hits) > 0 {
+		// The FIRST failures, not the last: the earliest one is the cause, the rest are
+		// usually consequences.
+		lines = hits
+		if len(lines) > tailLines {
+			lines = append(lines[:tailLines:tailLines], "…")
+		}
+	} else if len(lines) > tailLines {
+		// Nothing identifiable, so fall back to the end, where a crash message lands.
 		lines = append([]string{"…"}, lines[len(lines)-tailLines:]...)
 	}
 	for i, l := range lines {
 		lines[i] = "      " + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// failureMarkers are what test runners and interpreters print when something went wrong.
+// Deliberately a short list of unambiguous ones rather than anything matching "error":
+// a false positive here hides the real end of the output, which is the fallback's job.
+var failureMarkers = []string{"FAIL", "Traceback", "panic:", "not ok", "AssertionError", "Error:"}
+
+func failureLines(lines []string) []string {
+	var hits []string
+	for _, l := range lines {
+		for _, m := range failureMarkers {
+			if strings.Contains(l, m) {
+				hits = append(hits, l)
+				break
+			}
+		}
+	}
+	return hits
 }
 
 const tailLines = 12

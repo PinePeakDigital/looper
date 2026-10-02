@@ -1,0 +1,13 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestDetailFallsBackToTheEndWhenNothingLooksLikeAFailure'
+expect: --- FAIL:
+why:    output with no recognisable failure marker loses its end, which is where an interpreter's last words land
+--- old
+	} else if len(lines) > tailLines {
+		// Nothing identifiable, so fall back to the end, where a crash message lands.
+		lines = append([]string{"…"}, lines[len(lines)-tailLines:]...)
+	}
+--- new
+	} else if len(lines) > tailLines {
+		lines = append(lines[:tailLines:tailLines], "…")
+	}

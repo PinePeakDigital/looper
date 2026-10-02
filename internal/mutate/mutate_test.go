@@ -567,3 +567,49 @@ func gitCmd(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
+
+// A shell suite prints its one failure early and then dozens of passing checks, so the
+// last few lines are the wrong few. Measured against the review-loop skill's own suites:
+// 7 of 13 mutations had no failure line in their detail at all, while the output
+// containing it had been captured the whole time.
+func TestDetailShowsTheFailureNotJustTheEnd(t *testing.T) {
+	var sh strings.Builder
+	sh.WriteString("#!/bin/sh\ngrep -q 'x = 1' app.py && exit 0\n")
+	sh.WriteString("echo 'FAIL  the comparison is inverted'\n")
+	for i := 0; i < tailLines*3; i++ {
+		sh.WriteString("echo 'ok    some later check'\n")
+	}
+	sh.WriteString("exit 1\n")
+
+	dir := repo(t, map[string]string{"app.py": "x = 1\n", "t.sh": sh.String()})
+	res := run(t, dir, Mutation{
+		Target: "app.py", Verify: []string{"./t.sh"},
+		Expect: "FAIL", Why: "w", Old: "x = 1", New: "x = 2",
+	})
+	if res[0].Outcome != Caught {
+		t.Fatalf("outcome = %q, want caught (detail: %s)", res[0].Outcome, res[0].Detail)
+	}
+	if !strings.Contains(res[0].Detail, "the comparison is inverted") {
+		t.Errorf("detail buried the failure under later passes: %q", res[0].Detail)
+	}
+}
+
+// ...and when nothing in the output looks like a failure, the end is still the best
+// guess: that is where an interpreter's last words land.
+func TestDetailFallsBackToTheEndWhenNothingLooksLikeAFailure(t *testing.T) {
+	var sh strings.Builder
+	sh.WriteString("#!/bin/sh\ngrep -q 'x = 1' app.py && exit 0\n")
+	for i := 0; i < tailLines*3; i++ {
+		sh.WriteString("echo 'some unremarkable line'\n")
+	}
+	sh.WriteString("echo 'the last thing it said'\nexit 1\n")
+
+	dir := repo(t, map[string]string{"app.py": "x = 1\n", "t.sh": sh.String()})
+	res := run(t, dir, Mutation{
+		Target: "app.py", Verify: []string{"./t.sh"},
+		Expect: "unremarkable", Why: "w", Old: "x = 1", New: "x = 2",
+	})
+	if !strings.Contains(res[0].Detail, "the last thing it said") {
+		t.Errorf("detail dropped the end of the output: %q", res[0].Detail)
+	}
+}
