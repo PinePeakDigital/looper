@@ -3,6 +3,6 @@ verify: go test ./internal/mutate/ -count=1 -run 'TestFailureWithoutTheExpectedM
 expect: --- FAIL:
 why:    any non-zero exit counts as a catch, so a mutation that merely fails to compile scores as caught
 --- old
-		if m.Expect != "" && !strings.Contains(output, m.Expect) {
+		case m.Expect != "" && !strings.Contains(c.output, m.Expect):
 --- new
-		if false && !strings.Contains(output, m.Expect) {
+		case false && !strings.Contains(c.output, m.Expect):

@@ -3,10 +3,8 @@ verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored|TestSurv
 expect: --- FAIL:
 why:    a suite that passes with the defect present is reported as catching it
 --- old
-		if !failed {
+		case !c.failed:
 			continue
-		}
 --- new
-		if failed {
+		case c.failed:
 			continue
-		}

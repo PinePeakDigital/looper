@@ -3,6 +3,8 @@ verify: go test ./internal/mutate/ -count=1 -run 'TestFailureWithoutTheExpectedM
 expect: --- FAIL:
 why:    the command output is thrown away, so a build break and a failing assertion are indistinguishable
 --- old
-			return true, out.String(), fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))
+			return check{ran: true, failed: true, output: out.String(),
+				detail: fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))}
 --- new
-			return true, out.String(), fmt.Sprintf("%s: %v", command, err)
+			return check{ran: true, failed: true, output: out.String(),
+				detail: fmt.Sprintf("%s: %v", command, err)}
