@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailDoesNotAppendABlankLineForTrailingNewline'
+expect: a trailing newline became a blank line
+why:    real command output ends in a newline, so dropping the TrimRight appends a blank indented line to every detail block — and shifts the long-output window by one at the same time
+--- old
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+--- new
+	lines := strings.Split(s, "\n")

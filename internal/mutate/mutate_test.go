@@ -824,3 +824,13 @@ func TestEveryDetailLineIsIndented(t *testing.T) {
 		}
 	}
 }
+
+// Real command output ends in a newline, so the TrimRight before the split is what keeps
+// every detail block from carrying a trailing blank line. Nothing asserted it: deleting
+// the TrimRight left both the suite and the 53-entry catalog green.
+func TestTailDoesNotAppendABlankLineForTrailingNewline(t *testing.T) {
+	got := strings.Split(tail("alpha\nbeta\n"), "\n")
+	if len(got) != 2 {
+		t.Errorf("want 2 detail lines, got %d — a trailing newline became a blank line: %q", len(got), got)
+	}
+}
