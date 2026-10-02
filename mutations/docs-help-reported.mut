@@ -3,9 +3,10 @@ verify: go test ./internal/docs/ -count=1 -run 'TestHelpIsNotReported'
 expect: --- FAIL:
 why:    --help is reported against every script, since argparse supplies it rather than the source
 --- old
-				if universal[flag[1]] {
+				if flag[1] == helpFlag {
 					continue
 				}
-
 --- new
-
+				if false {
+					continue
+				}

@@ -22,14 +22,24 @@ reports whether they did.
 looper mutate [-catalog mutations] [-root .]
 ```
 
-- **caught** — a verify command failed. The suite does its job.
+- **caught** — a verify command failed, and failed the way the mutation said it would.
+  The suite does its job.
 - **survived** — every verify command passed with the defect present. A hole in the
   suite: that defect can ship green.
-- **stale** — the anchor no longer matches, so nothing was tested. A hole in the
-  catalog, and scored as a failure too; a catalog that quietly stops applying
-  flatters the score it produces.
+- **stale** — the target could not be read, or the anchor no longer matches it exactly
+  once, so nothing was tested. A hole in the catalog, and scored as a failure too; a
+  catalog that quietly stops applying flatters the score it produces.
+- **broken** — a verify command failed, but not with the marker the mutation named, so
+  something other than the named assertion is what broke. Usually the mutation itself not
+  compiling. Also scored as a failure: that entry tested nothing while reading like a catch.
 
-Exits non-zero on any survivor or stale entry, so CI can gate on it.
+Exits non-zero on any survivor, stale or broken entry, so CI can gate on it.
+
+Before mutating anything, each distinct verify command is run once against the unmodified
+code and has to pass. A command already failing — a flaky test, a broken environment,
+someone else's regression — fails identically with the mutation applied, so without this
+every entry it guards would score as caught while proving nothing. Commands are
+deduplicated, so this costs far less than one extra run per mutation.
 
 ### Writing a mutation
 
@@ -37,18 +47,36 @@ One `.mut` file per defect, under `mutations/`:
 
 ```
 target: internal/mutate/mutate.go
-verify: go test ./internal/mutate/ -count=1 -run 'TestPreservesMode'
-why:    rewriting a file drops its executable bit, breaking whatever runs it
+verify: go test ./internal/mutate/ -count=1 -run 'TestRestoreRecreatesWithTheOriginalMode'
+expect: --- FAIL:
+why:    a restore that recreates a deleted target brings it back without its executable bit
 --- old
 	perm := info.Mode().Perm()
 --- new
+	_ = info
 	perm := os.FileMode(0o644)
 ```
 
-`verify:` is a shell command line that must **fail** once the edit is applied;
-repeat it for more than one. The `old` block must occur exactly once in the target,
-and both blocks are taken verbatim — indentation included, since it is syntax in
-most of what this catalog targets.
+`verify:` is a shell command line that must **fail** once the edit is applied; repeat it
+for more than one. The `old` block must occur exactly once in the target, and both blocks
+are taken verbatim — indentation included, since it is syntax in some of the languages a
+catalog can target.
+
+`expect:` is optional and carries most of the weight. It is a substring the failing output
+must contain for the failure to count as a catch, because a non-zero exit on its own lies
+in at least three ways:
+
+- the mutation does not **compile**, so the build fails and the suite never runs. Two of
+  this repo's own nineteen entries were in that state, and the score read 19/19.
+- `go test -run` with a pattern matching **no tests** exits 0, so a renamed test turns a
+  stale catalog entry into what looks like a hole in the suite.
+- a suite **already red** for an unrelated reason fails exactly the same way.
+
+Write the marker your suite prints when an assertion actually fails — `--- FAIL:` for Go.
+Entries with no `expect:` keep the old behaviour, so an existing catalog still runs.
+
+Note also that a mutation which deletes the last use of a variable will not compile in Go.
+Keep it used (`_ = info` above) or the entry reports as broken.
 
 `why:` is what makes a survivor actionable six months later. Prefer a defect that
 actually shipped over one invented to pad the score.
@@ -67,7 +95,22 @@ Mutation testing edits your working tree. The runner therefore:
 - **preserves the file mode**, after a fresh create dropped an executable bit and
   the hook requiring it failed three times for reasons that looked unrelated.
 - **gives verify commands no stdin**, so one that reads it cannot hang the run.
-- **restores on interrupt**, then exits 130.
+- **restores on interrupt** — SIGINT, SIGTERM, SIGHUP and SIGQUIT, the last two because
+  their default disposition runs no deferred functions at all — then exits 130.
+- **treats a failed restore as fatal.** Ignoring it meant the tool could print a clean
+  score, exit 0, and leave a mutated file on disk, which is the one outcome the clean-tree
+  refusal exists to make impossible.
+- **refuses a target git does not track.** An untracked or ignored file passes the
+  clean-tree check, because `git status --porcelain` does not list ignored files, but has no
+  committed copy to recover from if the process dies before the restore.
+- **gives the mutated file a later modification time**, and puts the original back on
+  restore. The baseline run would otherwise prime any cache keyed on `(mtime, size)` —
+  Python's `.pyc`, make, most watchers — and a same-length mutation landing in the same
+  second would be checked against the bytecode the baseline had just built. Measured: an
+  `x > 0` → `x < 0` mutation re-imported stale bytecode and reported the suite as missing
+  the defect. (`go test` hashes content and was never affected; most things are not Go.)
+- **kills the process group** on timeout, not just the shell, whose grandchild test runner
+  would otherwise outlive it.
 
 The catalog's first entries are the runner's own rules, so the tool measures itself.
 

@@ -1,0 +1,14 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestFailedRestoreIsFatal'
+expect: --- FAIL:
+why:    a restore that fails is ignored, so the tool reports a clean score and leaves a mutated file on disk
+--- old
+		rerr := restore()
+		if rerr == nil {
+			return
+		}
+--- new
+		rerr := restore()
+		if rerr != nil || true {
+			return
+		}

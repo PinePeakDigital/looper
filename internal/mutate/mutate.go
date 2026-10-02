@@ -34,6 +34,17 @@ const (
 	Broken Outcome = "broken"
 )
 
+// check is what one verify command reported. `ran` is separate from `failed` because a
+// command that never started is neither a pass nor a catch: treating it as a pass made
+// the mutation report "every verify command passed with the defect present", which is
+// false, and threw away the only line saying what had actually gone wrong.
+type check struct {
+	ran    bool
+	failed bool
+	output string
+	detail string
+}
+
 // Result records one mutation and what it proved.
 type Result struct {
 	Mutation Mutation
@@ -66,9 +77,22 @@ func (r *Runner) Run(muts []Mutation) ([]Result, error) {
 	if err := r.requireCleanTree(); err != nil {
 		return nil, err
 	}
+	if err := r.requireTrackedTargets(muts); err != nil {
+		return nil, err
+	}
+	alreadyBad, err := r.baseline(muts)
+	if err != nil {
+		return nil, err
+	}
 
 	results := make([]Result, 0, len(muts))
 	for _, m := range muts {
+		if why := firstBad(m, alreadyBad); why != "" {
+			res := Result{Mutation: m, Outcome: Broken, Detail: why}
+			results = append(results, res)
+			r.logf("  %-8s %-34s %s\n", res.Outcome, m.Name(), res.Detail)
+			continue
+		}
 		res, err := r.one(m)
 		if err != nil {
 			return results, err
@@ -111,8 +135,23 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 	// a dropped executable bit breaking a hook three times, came from a write that
 	// created the file fresh every time; this one does not.)
 	perm := info.Mode().Perm()
+	// The mutated file gets a LATER modification time, and the restore puts the original
+	// one back. Both matter because of the baseline run: anything that caches on
+	// (mtime, size) — Python's .pyc, make, many watchers — will happily reuse what the
+	// baseline built if the mutation happens to be the same length and lands in the same
+	// second. Measured: a `x > 0` -> `x < 0` mutation re-imported the bytecode the
+	// baseline had just compiled and reported the suite as missing the defect.
+	// (`go test` hashes content, so it was never affected; most things are not Go.)
+	modTime := info.ModTime()
+	stamp := func(t time.Time) { _ = os.Chtimes(target, t, t) }
 
-	restore := func() error { return os.WriteFile(target, original, perm) }
+	restore := func() error {
+		if err := os.WriteFile(target, original, perm); err != nil {
+			return err
+		}
+		stamp(modTime)
+		return nil
+	}
 	stop := onSignal(func() {
 		if rerr := restore(); rerr != nil {
 			fmt.Fprintf(os.Stderr, "\nlooper: could not restore %s: %v\n"+
@@ -132,30 +171,45 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 	// mutated file on disk: the one outcome the clean-tree refusal exists to make
 	// impossible.
 	defer func() {
-		if rerr := restore(); rerr != nil && err == nil {
-			err = fmt.Errorf("could not restore %s after %s: %w\n"+
-				"THE WORKING TREE IS NOT CLEAN — check `git status` before trusting anything above",
-				m.Target, m.Name(), rerr)
+		rerr := restore()
+		if rerr == nil {
+			return
 		}
+		// Reported whether or not something else already failed. Guarding this on
+		// `err == nil` meant the compound case — the write fails, and the restore
+		// responding to it fails too — was the one case that stayed silent, while being
+		// the one most likely to leave a half-written file behind.
+		if err != nil {
+			err = fmt.Errorf("%w\nand the restore failed too: %v\n"+
+				"THE WORKING TREE IS NOT CLEAN — check `git status` before trusting anything above", err, rerr)
+			return
+		}
+		err = fmt.Errorf("could not restore %s after %s: %w\n"+
+			"THE WORKING TREE IS NOT CLEAN — check `git status` before trusting anything above",
+			m.Target, m.Name(), rerr)
 	}()
 
 	if werr := os.WriteFile(target, mutated, perm); werr != nil {
 		return Result{}, fmt.Errorf("writing %s: %w", target, werr)
 	}
+	stamp(modTime.Add(time.Second))
 
 	// First failing command decides. Whether that failure counts as a catch depends on
 	// the output, not merely on the exit code — see Mutation.Expect.
 	for _, cmd := range m.Verify {
-		failed, output, detail := r.verify(cmd)
-		if !failed {
+		c := r.verify(cmd)
+		switch {
+		case !c.ran:
+			return Result{Mutation: m, Outcome: Broken, Detail: c.detail}, nil
+		case !c.failed:
 			continue
-		}
-		if m.Expect != "" && !strings.Contains(output, m.Expect) {
+		case m.Expect != "" && !strings.Contains(c.output, m.Expect):
 			return Result{Mutation: m, Outcome: Broken, Detail: fmt.Sprintf(
 				"%s failed, but its output never contains %q, so the named assertion did "+
-					"not report the defect — something else broke. %s", cmd, m.Expect, detail)}, nil
+					"not report the defect — something else broke. %s", cmd, m.Expect, c.detail)}, nil
+		default:
+			return Result{Mutation: m, Outcome: Caught, Detail: c.detail}, nil
 		}
-		return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
 	}
 	return Result{Mutation: m, Outcome: Survived,
 		Detail: "every verify command passed with the defect present"}, nil
@@ -173,7 +227,7 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 // directly would make the common case (`./runlog.test.sh 2>&1 | grep -q FAIL`)
 // unexpressible. If a catalog ever comes from somewhere untrusted, this is the line
 // that has to change first.
-func (r *Runner) verify(command string) (failed bool, output, detail string) {
+func (r *Runner) verify(command string) check {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.Root
 	// Own process group, so a timeout can kill the whole tree. Killing only the `sh`
@@ -189,26 +243,25 @@ func (r *Runner) verify(command string) (failed bool, output, detail string) {
 
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
-		// Could not start is not a catch: nothing ran. Reported as a pass so the
-		// mutation reads as surviving rather than silently scoring in the suite's favour.
-		return false, "", fmt.Sprintf("%s: could not start: %v", command, err)
+		return check{detail: fmt.Sprintf("%s: could not start: %v", command, err)}
 	}
 	go func() { done <- cmd.Wait() }()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			return true, out.String(), fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))
+			return check{ran: true, failed: true, output: out.String(),
+				detail: fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))}
 		}
-		return false, out.String(), ""
+		return check{ran: true, output: out.String()}
 	case <-time.After(verifyTimeout):
 		// Negative pid: the whole process group, not just the shell.
 		if kerr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); kerr != nil {
 			_ = cmd.Process.Kill()
 		}
 		<-done
-		return true, out.String(), fmt.Sprintf("%s: timed out after %s\n%s",
-			command, verifyTimeout, tail(out.String()))
+		return check{ran: true, failed: true, output: out.String(),
+			detail: fmt.Sprintf("%s: timed out after %s\n%s", command, verifyTimeout, tail(out.String()))}
 	}
 }
 
@@ -227,6 +280,39 @@ func tail(s string) string {
 }
 
 const tailLines = 12
+
+// firstBad reports why a mutation cannot be evaluated, given the commands the baseline
+// found unusable, or "" when all of its commands are sound.
+func firstBad(m Mutation, alreadyBad map[string]string) string {
+	for _, c := range m.Verify {
+		if why, ok := alreadyBad[c]; ok {
+			return why
+		}
+	}
+	return ""
+}
+
+// requireTrackedTargets refuses a target git does not know about. An untracked or ignored
+// file passes requireCleanTree — `git status --porcelain` does not list ignored files —
+// but has no committed baseline, so if the process dies before the restore there is
+// nothing to recover it from. In-repo damage is recoverable; this would not be.
+func (r *Runner) requireTrackedTargets(muts []Mutation) error {
+	seen := map[string]bool{}
+	for _, m := range muts {
+		if seen[m.Target] {
+			continue
+		}
+		seen[m.Target] = true
+		out, err := exec.Command("git", "-C", r.Root, "ls-files", "--error-unmatch", "--", m.Target).Output()
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return fmt.Errorf("%s names target %q, which git does not track.\n"+
+				"An untracked target has no committed copy to recover from if this process is "+
+				"killed before the restore, and it does not show up in the clean-tree check either",
+				m.Source, m.Target)
+		}
+	}
+	return nil
+}
 
 // requireCleanTree refuses to run when the working tree has changes, so that a
 // restore can never be confused with a revert of someone's work in progress.

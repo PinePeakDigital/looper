@@ -40,8 +40,9 @@ var (
 	flagRef   = regexp.MustCompile(`(--[a-z0-9][a-z0-9-]*)`)
 )
 
-// universal flags are argparse's own, never written with add_argument.
-var universal = map[string]bool{"--help": true}
+// helpFlag is argparse's own, never written with add_argument. A map modelled a
+// plurality that does not exist: argparse auto-adds exactly one.
+const helpFlag = "--help"
 
 // Check reports each flag a document attributes to a script that does not declare it.
 // It reads every .py file directly under dir, and every .md file both directly under dir
@@ -87,7 +88,7 @@ func Check(dir string) ([]Reference, error) {
 				continue
 			}
 			for _, flag := range flagRef.FindAllStringSubmatch(line, -1) {
-				if universal[flag[1]] {
+				if flag[1] == helpFlag {
 					continue
 				}
 				for _, script := range named {

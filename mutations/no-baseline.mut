@@ -1,0 +1,14 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestAlreadyRedSuiteIsBroken'
+expect: --- FAIL:
+why:    a verify command already failing before the mutation counts as catching it, so the suite proves nothing
+--- old
+	alreadyBad, err := r.baseline(muts)
+	if err != nil {
+		return nil, err
+	}
+--- new
+	alreadyBad, err := map[string]string{}, error(nil)
+	if err != nil {
+		return nil, err
+	}

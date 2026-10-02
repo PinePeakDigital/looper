@@ -1,0 +1,10 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCommandThatCannotStartIsBroken'
+expect: --- FAIL:
+why:    a verify command that never started counts as a pass, so the mutation reads as surviving
+--- old
+		case !c.ran:
+			return Result{Mutation: m, Outcome: Broken, Detail: c.detail}, nil
+--- new
+		case !c.ran:
+			continue

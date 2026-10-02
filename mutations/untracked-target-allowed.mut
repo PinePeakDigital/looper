@@ -1,0 +1,12 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesUntrackedTarget'
+expect: --- FAIL:
+why:    a target git does not track is accepted, so a kill before the restore leaves nothing to recover it from
+--- old
+	if err := r.requireTrackedTargets(muts); err != nil {
+		return nil, err
+	}
+--- new
+	if err := error(nil); err != nil {
+		return nil, err
+	}

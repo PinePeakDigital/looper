@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored'
+expect: --- FAIL:
+why:    the mutated file keeps its original mtime, so an mtime-keyed cache feeds the baseline's build to the mutated run
+--- old
+	stamp(modTime.Add(time.Second))
+--- new
+	stamp(modTime)

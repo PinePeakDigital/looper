@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+// guard builds a verify script that PASSES while `want` is still in app.py and fails
+// once it is gone — i.e. a real test of that line, rather than `exit 1`.
+//
+// Every fixture needs this now: Run establishes a baseline by running each verify command
+// against the unmutated file and requires it to pass, so a script that fails
+// unconditionally is reported as already-red and the mutation is never evaluated. Several
+// fixtures here used `exit 1` and were, in exactly the sense this tool exists to measure,
+// not testing anything.
+func guard(want, file string) string {
+	return "#!/bin/sh\ngrep -q '" + want + "' " + file + " && exit 0\necho '--- FAIL: TestGuard'\nexit 1\n"
+}
+
 // repo builds a throwaway git repo with the given files, committed, so the
 // clean-tree check passes. Every test gets its own.
 func repo(t *testing.T, files map[string]string) string {
@@ -166,8 +178,8 @@ func TestRefusesDirtyTree(t *testing.T) {
 func TestFirstFailingVerifyWins(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py":  "x = 1\n",
-		"a.sh":    "#!/bin/sh\nexit 1\n",
-		"mark.sh": "#!/bin/sh\ntouch ran-second\n",
+		"a.sh":    guard("x = 1", "app.py"),
+		"mark.sh": "#!/bin/sh\necho ran >> ran-second\n",
 	})
 	res := run(t, dir, Mutation{
 		Source: "x.mut", Target: "app.py", Verify: []string{"./a.sh", "./mark.sh"},
@@ -176,8 +188,15 @@ func TestFirstFailingVerifyWins(t *testing.T) {
 	if res[0].Outcome != Caught {
 		t.Fatalf("outcome = %q, want caught", res[0].Outcome)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "ran-second")); err == nil {
-		t.Error("kept running verify commands after one failed")
+	// Once, for the baseline. A second line means the mutated run kept going after
+	// a.sh had already failed.
+	ran, err := os.ReadFile(filepath.Join(dir, "ran-second"))
+	if err != nil {
+		t.Fatalf("the baseline never ran the second command: %v", err)
+	}
+	if n := strings.Count(string(ran), "ran"); n != 1 {
+		t.Errorf("second verify command ran %d time(s), want 1 (baseline only) — the loop "+
+			"kept going after the first command failed", n)
 	}
 }
 
@@ -193,7 +212,9 @@ func TestFirstFailingVerifyWins(t *testing.T) {
 func TestRestoreRecreatesWithTheOriginalMode(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"tool.sh": "#!/bin/sh\necho one\n",
-		"t.sh":    "#!/bin/sh\nrm -f tool.sh\nexit 1\n",
+		// Deletes its target, but only once the mutation has landed: at baseline it must
+		// pass and leave the tree alone.
+		"t.sh": "#!/bin/sh\ngrep -q 'echo one' tool.sh && exit 0\nrm -f tool.sh\necho '--- FAIL: TestMode'\nexit 1\n",
 	})
 	before, err := os.Stat(filepath.Join(dir, "tool.sh"))
 	if err != nil {
@@ -259,6 +280,100 @@ func TestVerifyGetsNoStdin(t *testing.T) {
 	}
 }
 
+// A restore that fails must abort the run with a loud error. Reverting this to the old
+// `_ = restore()` left every test green while the tool could print a clean score, exit 0,
+// and leave a mutated file on disk.
+func TestFailedRestoreIsFatal(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"sub/app.py": "x = 1\n",
+		// Passes at baseline; once the mutation lands it makes the target read-only, so
+		// the restore cannot put the original bytes back. (Removing write permission from
+		// the DIRECTORY is not enough: rewriting an existing file does not need it.)
+		"t.sh": "#!/bin/sh\ngrep -q 'x = 1' sub/app.py && exit 0\nchmod 400 sub/app.py\necho '--- FAIL: TestX'\nexit 1\n",
+	})
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "sub/app.py"), 0o644) })
+
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "sub/app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2", Expect: "--- FAIL:",
+	}})
+	if err == nil {
+		t.Fatal("a failed restore did not stop the run")
+	}
+	if !strings.Contains(err.Error(), "could not restore") ||
+		!strings.Contains(err.Error(), "NOT CLEAN") {
+		t.Errorf("error does not say the tree is dirty: %v", err)
+	}
+}
+
+// A suite already failing before any mutation is applied cannot be said to have caught
+// anything. Without the baseline, such a command fails identically with the mutation in
+// place and every entry it guards scores as caught.
+func TestAlreadyRedSuiteIsBroken(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		// Red regardless of the mutation — a flaky test, a broken environment, someone
+		// else's regression.
+		"t.sh": "#!/bin/sh\necho '--- FAIL: TestUnrelated'\nexit 1\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2", Expect: "--- FAIL:",
+	})
+	if res[0].Outcome != Broken {
+		t.Errorf("outcome = %q, want broken (detail: %s)", res[0].Outcome, res[0].Detail)
+	}
+	if !strings.Contains(res[0].Detail, "already failing") {
+		t.Errorf("detail does not say why: %q", res[0].Detail)
+	}
+}
+
+// A target git does not track has no committed copy to recover from, and does not show up
+// in the clean-tree check either, so it is refused before anything is written.
+func TestRefusesUntrackedTarget(t *testing.T) {
+	dir := repo(t, map[string]string{"app.py": "x = 1\n", "t.sh": guard("x = 1", "app.py")})
+	if err := os.WriteFile(filepath.Join(dir, "generated.py"), []byte("y = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Ignored, so the clean-tree check cannot see it — which is the whole hazard.
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("generated.py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", ".gitignore")
+	gitCmd(t, dir, "commit", "-qm", "ignore")
+
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "generated.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "y = 1", New: "y = 2",
+	}})
+	if err == nil {
+		t.Fatal("ran against an untracked target")
+	}
+	if !strings.Contains(err.Error(), "does not track") {
+		t.Errorf("error does not name the cause: %v", err)
+	}
+	// And it must say so BEFORE writing anything.
+	got, _ := os.ReadFile(filepath.Join(dir, "generated.py"))
+	if string(got) != "y = 1\n" {
+		t.Errorf("wrote to the untracked target anyway: %q", got)
+	}
+}
+
+// A command that never started is not a pass. Reporting it as one made the mutation read
+// as "every verify command passed with the defect present", which is simply untrue.
+func TestCommandThatCannotStartIsBroken(t *testing.T) {
+	r := &Runner{Root: "/no/such/directory"}
+	c := r.verify("echo hello")
+	if c.ran {
+		t.Fatalf("a command in a nonexistent directory reported as having run: %+v", c)
+	}
+	if !strings.Contains(c.detail, "could not start") {
+		t.Errorf("detail does not say why: %q", c.detail)
+	}
+}
+
 func TestScoreCountsHolesAsFailures(t *testing.T) {
 	caught, survived, stale, broken := Score([]Result{
 		{Outcome: Caught}, {Outcome: Caught}, {Outcome: Survived}, {Outcome: Stale},
@@ -296,7 +411,7 @@ func TestFailureWithoutTheExpectedMarkerIsBroken(t *testing.T) {
 func TestFailureWithTheExpectedMarkerIsCaught(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py": "def f(x):\n    return x > 0\n",
-		"t.sh":   "#!/bin/sh\necho '--- FAIL: TestSign'\nexit 1\n",
+		"t.sh":   guard("x > 0", "app.py"),
 	})
 	res := run(t, dir, Mutation{
 		Source: "flip.mut", Target: "app.py", Verify: []string{"./t.sh"},
@@ -313,7 +428,9 @@ func TestFailureWithTheExpectedMarkerIsCaught(t *testing.T) {
 func TestNoExpectMeansAnyFailureCounts(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py": "x = 1\n",
-		"t.sh":   "#!/bin/sh\necho 'something unrelated broke' >&2\nexit 3\n",
+		// Fails once the line is gone, but says nothing a marker could match — which is
+		// fine, because this mutation sets no Expect.
+		"t.sh": "#!/bin/sh\ngrep -q 'x = 1' app.py && exit 0\necho 'something unrelated broke' >&2\nexit 3\n",
 	})
 	res := run(t, dir, Mutation{
 		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
@@ -327,16 +444,30 @@ func TestNoExpectMeansAnyFailureCounts(t *testing.T) {
 // A target that cannot be read is Stale, not Survived. Reporting it as Survived would
 // claim the suite missed a defect that was never introduced.
 func TestUnreadableTargetIsStale(t *testing.T) {
-	dir := repo(t, map[string]string{"t.sh": "#!/bin/sh\nexit 1\n"})
-	res := run(t, dir, Mutation{
-		Source: "x.mut", Target: "no-such-file.go", Verify: []string{"./t.sh"},
-		Why: "w", Old: "a", New: "b",
+	dir := repo(t, map[string]string{
+		"locked.go": "package p\n\nvar A = 1\n",
+		"t.sh":      guard("A = 1", "locked.go"),
 	})
-	if res[0].Outcome != Stale {
-		t.Fatalf("outcome = %q, want stale", res[0].Outcome)
+	path := filepath.Join(dir, "locked.go")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(res[0].Detail, "unreadable") {
-		t.Errorf("detail does not say why: %q", res[0].Detail)
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	// Through Run() the clean-tree check fires first, because chmod makes git report the
+	// file as changed. one() is the unit that has to get this right.
+	r := &Runner{Root: dir}
+	res, err := r.one(Mutation{
+		Source: "x.mut", Target: "locked.go", Verify: []string{"./t.sh"},
+		Why: "w", Old: "A = 1", New: "A = 2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != Stale {
+		t.Fatalf("outcome = %q, want stale", res.Outcome)
+	}
+	if !strings.Contains(res.Detail, "unreadable") {
+		t.Errorf("detail does not say why: %q", res.Detail)
 	}
 }
 
@@ -367,9 +498,18 @@ func TestOnSignalRunsOnHangup(t *testing.T) {
 	}
 }
 
-// And stop() must actually unsubscribe, or a later signal runs a restore for a mutation
-// that is already finished — writing stale bytes over the next one.
-func TestStopUnsubscribes(t *testing.T) {
+// After stop(), a signal must not run the function.
+//
+// This proves less than it looks like it proves, and the gap is the point. Deleting
+// `signal.Stop(ch)` from stop() leaves this test passing — twenty runs out of twenty —
+// because stop() closes `done` first and the goroutine always leaves through that branch.
+// Chasing a test that could tell the two apart showed why none exists: even with the
+// subscription left open, nothing reads `ch` once the goroutine is gone, and the restore a
+// leaked handler would perform writes the same original bytes that were already written
+// back. So signal.Stop and the `defer stop()` beside it are hygiene against a goroutine
+// leak, not guards against a reachable defect — which is why neither has a catalog entry.
+// Recorded here rather than papered over with a mutation that would be a no-op.
+func TestStopDoesNotRunTheFunctionAfterwards(t *testing.T) {
 	var ran int32
 	stop := onSignal(func() { atomic.AddInt32(&ran, 1) })
 	stop()
@@ -388,7 +528,7 @@ func TestStopUnsubscribes(t *testing.T) {
 func TestProgressLineNamesEachMutation(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py": "x = 1\n",
-		"t.sh":   "#!/bin/sh\nexit 1\n",
+		"t.sh":   guard("x = 1", "app.py"),
 	})
 	var log bytes.Buffer
 	r := &Runner{Root: dir, Log: &log}
@@ -400,5 +540,15 @@ func TestProgressLineNamesEachMutation(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "flip-compare") {
 		t.Errorf("progress line does not name the mutation: %q", log.String())
+	}
+}
+
+// gitCmd runs one git command in a fixture repo, failing the test if it does not land.
+func gitCmd(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
