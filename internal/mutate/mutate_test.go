@@ -390,8 +390,10 @@ func TestScoreCountsHolesAsFailures(t *testing.T) {
 func TestFailureWithoutTheExpectedMarkerIsBroken(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py": "def f(x):\n    return x > 0\n",
-		// Fails, but for a reason that has nothing to do with the assertion.
-		"t.sh": "#!/bin/sh\necho 'SyntaxError: unexpected EOF' >&2\nexit 2\n",
+		// Passes at baseline, then fails for a reason that has nothing to do with the
+		// assertion. Failing unconditionally would make the baseline answer this test
+		// instead of the marker check — which is how it briefly passed for the wrong reason.
+		"t.sh": "#!/bin/sh\ngrep -q 'x > 0' app.py && exit 0\necho 'SyntaxError: unexpected EOF' >&2\nexit 2\n",
 	})
 	res := run(t, dir, Mutation{
 		Source: "flip.mut", Target: "app.py", Verify: []string{"./t.sh"},
