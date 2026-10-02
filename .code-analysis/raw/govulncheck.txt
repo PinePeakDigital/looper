@@ -1,3 +1,0 @@
-
-[stderr]
-go: golang.org/x/vuln/cmd/govulncheck@latest: module golang.org/x/vuln/cmd/govulncheck: Get "https://proxy.golang.org/golang.org/x/vuln/cmd/govulncheck/@v/list": tls: failed to verify certificate: x509: OSStatus -26276
