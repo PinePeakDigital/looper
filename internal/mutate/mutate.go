@@ -143,7 +143,14 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 	// baseline had just compiled and reported the suite as missing the defect.
 	// (`go test` hashes content, so it was never affected; most things are not Go.)
 	modTime := info.ModTime()
-	stamp := func(t time.Time) { _ = os.Chtimes(target, t, t) }
+	// A failed Chtimes is logged, not ignored: silently leaving the original mtime in
+	// place re-opens the stale-cache window this exists to close, and a mutation could
+	// then read as surviving because of a cached build rather than a gap in the suite.
+	stamp := func(t time.Time) {
+		if err := os.Chtimes(target, t, t); err != nil {
+			r.logf("  warning: could not set the modification time on %s: %v\n", m.Target, err)
+		}
+	}
 
 	restore := func() error {
 		if err := os.WriteFile(target, original, perm); err != nil {

@@ -1,0 +1,16 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineRunsEachCommandOnce|TestDistinctCommandsDedupesAndSorts'
+expect: --- FAIL:
+why:    the baseline runs a shared verify command once per mutation instead of once, so its cost scales with the catalog
+--- old
+		for _, c := range m.Verify {
+			if !seen[c] {
+				seen[c] = true
+				commands = append(commands, c)
+			}
+		}
+--- new
+		for _, c := range m.Verify {
+			seen[c] = true
+			commands = append(commands, c)
+		}

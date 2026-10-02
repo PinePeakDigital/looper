@@ -177,9 +177,13 @@ func TestRefusesDirtyTree(t *testing.T) {
 // Any one failing command is enough; the rest are not run.
 func TestFirstFailingVerifyWins(t *testing.T) {
 	dir := repo(t, map[string]string{
-		"app.py":  "x = 1\n",
-		"a.sh":    guard("x = 1", "app.py"),
-		"mark.sh": "#!/bin/sh\necho ran >> ran-second\n",
+		"app.py": "x = 1\n",
+		"a.sh":   guard("x = 1", "app.py"),
+		// Counts into an IGNORED path. A verify command that writes a tracked file would
+		// now (correctly) be refused: the baseline runs it against the real tree, so the
+		// bytes a later mutation reads as "original" would no longer be the committed ones.
+		"mark.sh":    "#!/bin/sh\necho ran >> ran-second\n",
+		".gitignore": "ran-second\n",
 	})
 	res := run(t, dir, Mutation{
 		Source: "x.mut", Target: "app.py", Verify: []string{"./a.sh", "./mark.sh"},

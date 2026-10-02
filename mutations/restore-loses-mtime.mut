@@ -1,0 +1,9 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineRunsEachCommandOnce'
+expect: --- FAIL:
+why:    the restore leaves the bumped modification time behind, so the next mutation of the same file starts from a stamp the baseline never saw
+--- old
+		stamp(modTime)
+		return nil
+--- new
+		return nil

@@ -1,0 +1,10 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestDistinctCommandsDedupesAndSorts'
+expect: --- FAIL:
+why:    the baseline reports in catalog order, so two runs of the same catalog cannot be diffed
+--- old
+	sort.Strings(commands)
+	return commands
+--- new
+	_ = sort.Strings
+	return commands

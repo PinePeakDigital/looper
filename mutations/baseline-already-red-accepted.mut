@@ -1,0 +1,10 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestAlreadyRedSuiteIsBroken'
+expect: --- FAIL:
+why:    a verify command already failing before any mutation is treated as sound, so every entry it guards scores as caught
+--- old
+		case c.failed:
+			bad[command] = fmt.Sprintf("already failing before any mutation was applied: %s", c.detail)
+--- new
+		case c.failed:
+			_ = c.detail

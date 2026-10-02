@@ -1,0 +1,8 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCommandThatRunsNoTestsIsVacuous|TestRealGoTestWithNoMatchIsVacuous'
+expect: --- FAIL:
+why:    a verify command that passes while running no tests is treated as sound, so a renamed test reads as a hole in the suite
+--- old
+		case strings.Contains(c.output, noTestsRun):
+--- new
+		case false && strings.Contains(c.output, noTestsRun):
