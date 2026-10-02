@@ -707,6 +707,11 @@ func TestTailAnchorsOnTheEarliestFailure(t *testing.T) {
 func TestTailDoesNotMarkACutItDidNotMake(t *testing.T) {
 	lines := append([]string{"FAIL  the very first line"}, noise(tailLines*2)...)
 	got := tail(strings.Join(lines, "\n"))
+	// Asserted first, because the check below is an ABSENCE and an absence is satisfied by
+	// returning nothing at all: `return ""` as tail()'s first statement passed this test.
+	if !strings.Contains(got, "FAIL  the very first line") {
+		t.Fatalf("window lost the failure it is supposed to start at:\n%s", got)
+	}
 	if strings.HasPrefix(strings.TrimLeft(got, " "), "…") {
 		t.Errorf("window starts at line 0 but claims it cut something:\n%s", got)
 	}

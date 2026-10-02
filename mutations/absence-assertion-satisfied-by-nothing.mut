@@ -1,0 +1,11 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailDoesNotMarkACutItDidNotMake'
+expect: window lost the failure it is supposed to start at
+why:    an absence assertion is satisfied by returning nothing at all — this test passed with `return ""` as tail()'s first statement, so it could not tell "nothing was cut" from "nothing came back"
+--- old
+func tail(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+--- new
+func tail(s string) string {
+	return ""
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
