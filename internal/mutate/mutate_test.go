@@ -181,13 +181,19 @@ func TestFirstFailingVerifyWins(t *testing.T) {
 	}
 }
 
-// The executable bit must survive. Rewriting a file through a fresh create dropped
-// runlog.py's, and the Stop hook requiring it then failed three times for reasons
-// that looked unrelated to the edit.
-func TestPreservesMode(t *testing.T) {
+// The executable bit must survive a restore that has to RECREATE the file. A verify
+// command deleting its own target is outside the contract, but it happens — a test
+// harness cleaning up, a build step rewriting a generated file — and os.WriteFile applies
+// its perm argument only on create, so this is the one path where the stashed mode does
+// any work at all.
+//
+// The previous version of this test mutated the file and compared the mode before and
+// after, which could not fail: rewriting an existing file never changes its mode, so the
+// assertion held whether or not the code preserved anything. Mutation testing found it.
+func TestRestoreRecreatesWithTheOriginalMode(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"tool.sh": "#!/bin/sh\necho one\n",
-		"t.sh":    "#!/bin/sh\nexit 1\n",
+		"t.sh":    "#!/bin/sh\nrm -f tool.sh\nexit 1\n",
 	})
 	before, err := os.Stat(filepath.Join(dir, "tool.sh"))
 	if err != nil {
@@ -199,7 +205,7 @@ func TestPreservesMode(t *testing.T) {
 	})
 	after, err := os.Stat(filepath.Join(dir, "tool.sh"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("restore did not put the target back after a verify command deleted it: %v", err)
 	}
 	if before.Mode() != after.Mode() {
 		t.Errorf("mode changed: %v -> %v", before.Mode(), after.Mode())
@@ -340,6 +346,12 @@ func TestUnreadableTargetIsStale(t *testing.T) {
 func TestOnSignalRunsOnHangup(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
 		t.Run(sig.String(), func(t *testing.T) {
+			// Ignore it first: with the SIGHUP registration removed, the default
+			// disposition would kill the test binary, so the test would "fail" by dying
+			// rather than by this assertion — a failure the catalog cannot tell apart
+			// from the mutation breaking the build.
+			signal.Ignore(sig)
+			defer signal.Reset(sig)
 			fired := make(chan struct{})
 			stop := onSignal(func() { close(fired) })
 			defer stop()

@@ -5,4 +5,4 @@ why:    a broken mutation exits 0, so CI goes green on a catalog entry that test
 --- old
 	if survived+stale+broken > 0 {
 --- new
-	if survived > 0 {
+	if survived > 0 || stale < 0 || broken < 0 {

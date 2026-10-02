@@ -103,9 +103,13 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("stat %s: %w", target, err)
 	}
-	// Preserve the mode explicitly. Rewriting a file through a fresh create dropped
-	// runlog.py's executable bit once, and the Stop hook that requires it then failed
-	// three times for reasons that looked unrelated to the edit.
+	// The mode, for the one case where it is load-bearing. os.WriteFile applies perm
+	// ONLY when it creates the file, so rewriting an existing target cannot change its
+	// mode — which is why the test guarding this could not fail until it was rewritten to
+	// cover the real path: a verify command that DELETES the target, after which restore
+	// recreates it and perm is the mode it comes back with. (The incident behind this,
+	// a dropped executable bit breaking a hook three times, came from a write that
+	// created the file fresh every time; this one does not.)
 	perm := info.Mode().Perm()
 
 	restore := func() error { return os.WriteFile(target, original, perm) }

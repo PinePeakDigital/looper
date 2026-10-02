@@ -1,8 +1,11 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored'
 expect: --- FAIL:
-why:    the file is restored before the verify commands run, so they never see the mutation
+why:    restore fires before the verify commands run, so they never see the mutation
 --- old
-	defer func() { _ = restore() }()
+	defer func() {
+		if rerr := restore(); rerr != nil && err == nil {
 --- new
 	_ = restore()
+	defer func() {
+		if rerr := restore(); rerr != nil && err == nil {

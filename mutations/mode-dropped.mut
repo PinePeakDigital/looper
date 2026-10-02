@@ -1,7 +1,7 @@
 target: internal/mutate/mutate.go
-verify: go test ./internal/mutate/ -count=1 -run 'TestPreservesMode'
+verify: go test ./internal/mutate/ -count=1 -run 'TestRestoreRecreatesWithTheOriginalMode'
 expect: --- FAIL:
-why:    rewriting a file drops its executable bit, breaking whatever runs it
+why:    a restore that has to recreate a deleted target brings it back without its executable bit
 --- old
 	perm := info.Mode().Perm()
 --- new
