@@ -692,7 +692,23 @@ func TestTailAnchorsOnTheEarliestFailure(t *testing.T) {
 		t.Errorf("window ran past its budget to the last failure:\n%s", got)
 	}
 	if !strings.HasSuffix(got, "…") {
-		t.Errorf("cut the output without saying so:\n%s", got)
+		t.Errorf("cut the output without saying so at the end:\n%s", got)
+	}
+	// And the same at the front. A window that drops the lines before it without marking
+	// the cut reads as the whole output, so an operator stops looking — the identical
+	// failure mode, and it went untested while its mirror image was covered.
+	if !strings.HasPrefix(strings.TrimLeft(got, " "), "…") {
+		t.Errorf("cut the output without saying so at the front:\n%s", got)
+	}
+}
+
+// ...and the converse, or the assertion above is satisfied by marking every window
+// whether or not anything was cut.
+func TestTailDoesNotMarkACutItDidNotMake(t *testing.T) {
+	lines := append([]string{"FAIL  the very first line"}, noise(tailLines*2)...)
+	got := tail(strings.Join(lines, "\n"))
+	if strings.HasPrefix(strings.TrimLeft(got, " "), "…") {
+		t.Errorf("window starts at line 0 but claims it cut something:\n%s", got)
 	}
 }
 
@@ -760,5 +776,29 @@ func TestSymlinkTargetIsRefused(t *testing.T) {
 	// And the file it points at must be untouched.
 	if b, _ := os.ReadFile(outside); string(b) != "x = 1\n" {
 		t.Errorf("wrote through the link: %q", b)
+	}
+}
+
+// The symlink guard reads `err == nil && <is a symlink>`, so an Lstat error falls through
+// to the tracked-files check rather than deciding anything. Nothing pinned that down:
+// inverting it to `err != nil || <is a symlink>` — every Lstat failure now reported as a
+// symlink — left the whole suite green. The distinction matters because the fall-through is
+// the only reason a plainly-missing target gets the error that names the actual problem.
+func TestLstatFailureFallsThroughToTheTrackedCheck(t *testing.T) {
+	dir := repo(t, map[string]string{"app.py": "x = 1\n", "t.sh": guard("x = 1", "app.py")})
+
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "catalog/x.mut", Target: "nothing-here.py",
+		Verify: []string{"./t.sh"}, Why: "w", Old: "x = 1", New: "x = 2",
+	}})
+	if err == nil {
+		t.Fatal("a target that does not exist at all was accepted")
+	}
+	if strings.Contains(err.Error(), "symlink") {
+		t.Errorf("an Lstat failure was reported as a symlink, which is not what went wrong: %v", err)
+	}
+	if !strings.Contains(err.Error(), "does not track") {
+		t.Errorf("error does not name the actual problem: %v", err)
 	}
 }

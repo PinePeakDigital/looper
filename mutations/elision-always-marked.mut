@@ -1,0 +1,12 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailDoesNotMarkACutItDidNotMake'
+expect: window starts at line 0 but claims it cut something
+why:    marking every window as cut satisfies the leading-elision assertion without the marker ever meaning anything
+--- old
+	if start > 0 {
+		window = append(window, "…")
+	}
+--- new
+	if start >= 0 {
+		window = append(window, "…")
+	}

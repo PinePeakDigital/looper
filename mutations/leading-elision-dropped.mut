@@ -1,0 +1,9 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailAnchorsOnTheEarliestFailure'
+expect: cut the output without saying so at the front
+why:    a window that drops the lines before it without marking the cut reads as the whole output, so an operator stops looking — the same failure mode the trailing marker guards, and it shipped untested while its mirror image was covered
+--- old
+	if start > 0 {
+		window = append(window, "…")
+	}
+--- new

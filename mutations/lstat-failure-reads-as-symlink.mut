@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestLstatFailureFallsThroughToTheTrackedCheck'
+expect: an Lstat failure was reported as a symlink
+why:    treating any Lstat error as a symlink hides what actually went wrong — a plainly missing target gets told it is a link — and the fall-through is the only reason the tracked-files check ever gets to name the real problem
+--- old
+		if info, err := os.Lstat(filepath.Join(r.Root, m.Target)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+--- new
+		if info, err := os.Lstat(filepath.Join(r.Root, m.Target)); err != nil || info.Mode()&os.ModeSymlink != 0 {
