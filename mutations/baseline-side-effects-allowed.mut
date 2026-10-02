@@ -3,6 +3,6 @@ verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineRefusesIfACommandD
 expect: --- FAIL:
 why:    a verify command that rewrites a tracked file during the baseline goes unnoticed, so later mutations restore post-baseline bytes
 --- old
-	if dirty := r.dirtyTracked(); dirty != "" {
+	if dirty != "" {
 --- new
-	if dirty := ""; dirty != "" {
+	if false {
