@@ -154,7 +154,13 @@ func TestStaleAnchor(t *testing.T) {
 func TestRefusesDirtyTree(t *testing.T) {
 	dir := repo(t, map[string]string{
 		"app.py": "x = 1\n",
-		"t.sh":   "#!/bin/sh\nexit 1\n",
+		// Leaves a trace if it is ever run. The refusal has to come BEFORE anything
+		// executes: there is now a second clean-tree check after the baseline, so merely
+		// asserting that Run returns an error no longer distinguishes the two — the
+		// baseline would catch it too, having already run every command in the catalog
+		// against the dirty tree first.
+		"t.sh":       "#!/bin/sh\ntouch verify-ran\nexit 0\n",
+		".gitignore": "verify-ran\n",
 	})
 	if err := os.WriteFile(filepath.Join(dir, "app.py"), []byte("x = 2\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -166,6 +172,9 @@ func TestRefusesDirtyTree(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "uncommitted") {
 		t.Errorf("error does not name the cause: %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "verify-ran")); serr == nil {
+		t.Error("a verify command ran before the dirty tree was refused")
 	}
 	// And the edit in progress is still there, untouched.
 	got, _ := os.ReadFile(filepath.Join(dir, "app.py"))
