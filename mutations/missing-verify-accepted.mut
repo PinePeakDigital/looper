@@ -1,5 +1,6 @@
 target: internal/mutate/catalog.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesMalformedFiles'
+expect: --- FAIL:
 why:    a mutation with no verify command is scored against nothing and reads as surviving
 --- old
 	case len(m.Verify) == 0:

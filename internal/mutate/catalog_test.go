@@ -54,14 +54,40 @@ func TestParsesEveryField(t *testing.T) {
 	if m.Name() != "conv" {
 		t.Errorf("name = %q, want conv", m.Name())
 	}
-	// Indentation is syntax in both Python and shell, which is most of what this
-	// catalog targets, so the blocks must survive byte-for-byte.
+	// Indentation is syntax in some of the languages a catalog can target, Python and
+	// shell among them, so the blocks must survive byte-for-byte.
 	wantOld := "    if not last.get(\"asked\"):\n        return \"converged\""
 	if m.Old != wantOld {
 		t.Errorf("old block mangled:\n got %q\nwant %q", m.Old, wantOld)
 	}
 	if m.New != "    return \"converged\"" {
 		t.Errorf("new block mangled: %q", m.New)
+	}
+}
+
+func TestParsesExpect(t *testing.T) {
+	dir := catalogDir(t, map[string]string{
+		"x.mut": "target: a.py\nverify: ./t.sh\nwhy: w\nexpect: --- FAIL: TestThing\n--- old\na\n--- new\nb\n",
+	})
+	muts, err := ParseCatalog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if muts[0].Expect != "--- FAIL: TestThing" {
+		t.Errorf("expect = %q", muts[0].Expect)
+	}
+}
+
+// Absent, it stays empty rather than picking up a default, because any non-empty value
+// would silently change what counts as a catch for every existing entry.
+func TestExpectIsOptional(t *testing.T) {
+	dir := catalogDir(t, map[string]string{"x.mut": "target: a.py\nverify: ./t.sh\nwhy: w\n--- old\na\n--- new\nb\n"})
+	muts, err := ParseCatalog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if muts[0].Expect != "" {
+		t.Errorf("expect = %q, want empty", muts[0].Expect)
 	}
 }
 

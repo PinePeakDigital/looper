@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestMutateSurvivorExitsNonZero'
+expect: --- FAIL:
+why:    the score and the survivor names are not printed, so CI output says nothing about what failed
+--- old
+	report(out, results, len(muts))
+--- new
+	_ = report

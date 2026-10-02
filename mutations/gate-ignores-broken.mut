@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestMutateBrokenExitsNonZero'
+expect: --- FAIL:
+why:    a broken mutation exits 0, so CI goes green on a catalog entry that tested nothing
+--- old
+	if survived+stale+broken > 0 {
+--- new
+	if survived > 0 {

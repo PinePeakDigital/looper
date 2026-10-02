@@ -22,10 +22,16 @@ const (
 	Caught Outcome = "caught"
 	// Survived: every verify command passed with the defect reintroduced. A hole.
 	Survived Outcome = "survived"
-	// Stale: the anchor no longer matches the target, so nothing was tested. A hole
-	// in the catalog rather than in the suite, and reported as a failure either way —
-	// a catalog that quietly stops applying flatters the score it produces.
+	// Stale: the target could not be read, or the anchor does not match it exactly
+	// once, so nothing was tested. A hole in the catalog rather than in the suite, and
+	// reported as a failure either way — a catalog that quietly stops applying flatters
+	// the score it produces.
 	Stale Outcome = "stale"
+	// Broken: a verify command failed, but not with the marker the mutation said to
+	// expect, so something other than the named assertion broke — most often the
+	// mutation itself not compiling. Also a failure: it means that mutation tested
+	// nothing, while reading exactly like a catch.
+	Broken Outcome = "broken"
 )
 
 // Result records one mutation and what it proved.
@@ -75,7 +81,7 @@ func (r *Runner) Run(muts []Mutation) ([]Result, error) {
 
 // one applies a single mutation, runs its verify commands, and restores the file
 // before returning — on every path, including a signal.
-func (r *Runner) one(m Mutation) (Result, error) {
+func (r *Runner) one(m Mutation) (res Result, err error) {
 	target := filepath.Join(r.Root, m.Target)
 	original, err := os.ReadFile(target)
 	if err != nil {
@@ -104,28 +110,58 @@ func (r *Runner) one(m Mutation) (Result, error) {
 
 	restore := func() error { return os.WriteFile(target, original, perm) }
 	stop := onSignal(func() {
-		_ = restore()
+		if rerr := restore(); rerr != nil {
+			fmt.Fprintf(os.Stderr, "\nlooper: could not restore %s: %v\n"+
+				"THE WORKING TREE IS NOT CLEAN — %s still holds the mutation.\n", target, rerr, m.Target)
+		}
 		os.Exit(130)
 	})
 	defer stop()
 
-	if err := os.WriteFile(target, mutated, perm); err != nil {
-		return Result{}, fmt.Errorf("writing %s: %w", target, err)
-	}
-	defer func() { _ = restore() }()
-
-	for _, cmd := range m.Verify {
-		ok, detail := r.verify(cmd)
-		if !ok {
-			return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
+	// Registered BEFORE the write, not after it. os.WriteFile truncates and then writes,
+	// so a write that failed partway used to return here with the target holding neither
+	// the original nor the mutation and no restore even attempted — while the function's
+	// own doc comment promised a restore "on every path".
+	//
+	// A failed restore is fatal rather than ignored. Both call sites used to be
+	// `_ = restore()`, so the tool could print "score N/N caught", exit 0, and leave a
+	// mutated file on disk: the one outcome the clean-tree refusal exists to make
+	// impossible.
+	defer func() {
+		if rerr := restore(); rerr != nil && err == nil {
+			err = fmt.Errorf("could not restore %s after %s: %w\n"+
+				"THE WORKING TREE IS NOT CLEAN — check `git status` before trusting anything above",
+				m.Target, m.Name(), rerr)
 		}
+	}()
+
+	if werr := os.WriteFile(target, mutated, perm); werr != nil {
+		return Result{}, fmt.Errorf("writing %s: %w", target, werr)
+	}
+
+	// First failing command decides. Whether that failure counts as a catch depends on
+	// the output, not merely on the exit code — see Mutation.Expect.
+	for _, cmd := range m.Verify {
+		failed, output, detail := r.verify(cmd)
+		if !failed {
+			continue
+		}
+		if m.Expect != "" && !strings.Contains(output, m.Expect) {
+			return Result{Mutation: m, Outcome: Broken, Detail: fmt.Sprintf(
+				"%s failed, but its output never contains %q, so the named assertion did "+
+					"not report the defect — something else broke. %s", cmd, m.Expect, detail)}, nil
+		}
+		return Result{Mutation: m, Outcome: Caught, Detail: detail}, nil
 	}
 	return Result{Mutation: m, Outcome: Survived,
 		Detail: "every verify command passed with the defect present"}, nil
 }
 
-// verify runs one command in the repo root. It reports ok=true when the command
-// SUCCEEDED, which for a mutation run is the bad news.
+// verify runs one command in the repo root. It reports failed=true when the command
+// exited non-zero, which for a mutation run is the good news, plus the command's
+// combined output so the caller can tell WHY it failed. That output used to be captured
+// into a buffer nothing ever read, which is how a mutation that did not compile scored
+// as caught.
 //
 // `sh -c` is deliberate, not an injection hole: `verify:` IS a shell command line,
 // often a pipeline, and it comes from a committed .mut file in this repo — the same
@@ -133,9 +169,14 @@ func (r *Runner) one(m Mutation) (Result, error) {
 // directly would make the common case (`./runlog.test.sh 2>&1 | grep -q FAIL`)
 // unexpressible. If a catalog ever comes from somewhere untrusted, this is the line
 // that has to change first.
-func (r *Runner) verify(command string) (ok bool, detail string) {
+func (r *Runner) verify(command string) (failed bool, output, detail string) {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.Root
+	// Own process group, so a timeout can kill the whole tree. Killing only the `sh`
+	// child left its grandchild — usually the actual test runner — alive and consuming
+	// CPU while the Runner restored the file and moved on to the next target, so the
+	// timeout bounded the reported wait but not the cost. Unix-only, which this tool is.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// No stdin. A suite that reads stdin would otherwise block forever inheriting
 	// this process's — which is exactly the hang filed against pr-report.py.
 	cmd.Stdin = nil
@@ -144,22 +185,44 @@ func (r *Runner) verify(command string) (ok bool, detail string) {
 
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
-		return false, fmt.Sprintf("%s: could not start: %v", command, err)
+		// Could not start is not a catch: nothing ran. Reported as a pass so the
+		// mutation reads as surviving rather than silently scoring in the suite's favour.
+		return false, "", fmt.Sprintf("%s: could not start: %v", command, err)
 	}
 	go func() { done <- cmd.Wait() }()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			return false, fmt.Sprintf("%s: %v", command, err)
+			return true, out.String(), fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))
 		}
-		return true, ""
+		return false, out.String(), ""
 	case <-time.After(verifyTimeout):
-		_ = cmd.Process.Kill()
+		// Negative pid: the whole process group, not just the shell.
+		if kerr := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); kerr != nil {
+			_ = cmd.Process.Kill()
+		}
 		<-done
-		return false, fmt.Sprintf("%s: timed out after %s", command, verifyTimeout)
+		return true, out.String(), fmt.Sprintf("%s: timed out after %s\n%s",
+			command, verifyTimeout, tail(out.String()))
 	}
 }
+
+// tail returns the last few lines of a command's output, indented, for a detail line.
+// The whole point is that the operator can tell a failing assertion from a build error
+// without re-running anything by hand, so it has to show enough to read.
+func tail(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > tailLines {
+		lines = append([]string{"…"}, lines[len(lines)-tailLines:]...)
+	}
+	for i, l := range lines {
+		lines[i] = "      " + l
+	}
+	return strings.Join(lines, "\n")
+}
+
+const tailLines = 12
 
 // requireCleanTree refuses to run when the working tree has changes, so that a
 // restore can never be confused with a revert of someone's work in progress.
@@ -180,7 +243,11 @@ func (r *Runner) requireCleanTree() error {
 // onSignal arranges for fn to run on interrupt, and returns a stop function.
 func onSignal(fn func()) (stop func()) {
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	// SIGHUP and SIGQUIT too. Their default disposition terminates the process without
+	// running a single deferred function, so a dropped SSH session or a supervisor
+	// HUPping the process group left the target mutated with no restore at all — the
+	// one thing the README promises cannot happen.
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -201,9 +268,11 @@ func (r *Runner) logf(format string, args ...any) {
 	}
 }
 
-// Score counts outcomes. Survivors and stale entries are both failures, because
-// both mean a defect could ship with the suite green.
-func Score(results []Result) (caught, survived, stale int) {
+// Score counts outcomes. Everything that is not Caught is a failure: a survivor means
+// the suite missed the defect, a stale entry means the catalog never applied it, and a
+// broken one means something other than the named assertion failed — in all three cases
+// that defect can ship with the suite green.
+func Score(results []Result) (caught, survived, stale, broken int) {
 	for _, res := range results {
 		switch res.Outcome {
 		case Caught:
@@ -212,10 +281,12 @@ func Score(results []Result) (caught, survived, stale int) {
 			survived++
 		case Stale:
 			stale++
+		case Broken:
+			broken++
 		}
 	}
-	return caught, survived, stale
+	return caught, survived, stale, broken
 }
 
-// ErrHoles is returned when any mutation survived or went stale.
+// ErrHoles is returned when any mutation survived, went stale, or broke.
 var ErrHoles = errors.New("the suite did not catch every reintroduced defect")

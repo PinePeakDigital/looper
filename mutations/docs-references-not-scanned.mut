@@ -1,5 +1,6 @@
 target: internal/docs/docs.go
 verify: go test ./internal/docs/ -count=1 -run 'TestReferencesSubdirectoryIsChecked'
+expect: --- FAIL:
 why:    references/*.md is skipped, where half the procedure lives, so the check passes by not looking
 --- old
 	more, err := filepath.Glob(filepath.Join(dir, "references", "*.md"))

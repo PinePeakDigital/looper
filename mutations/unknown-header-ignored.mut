@@ -1,5 +1,6 @@
 target: internal/mutate/catalog.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesMalformedFiles'
+expect: --- FAIL:
 why:    a misspelled header is ignored instead of refused, so the field it meant goes unset
 --- old
 		default:

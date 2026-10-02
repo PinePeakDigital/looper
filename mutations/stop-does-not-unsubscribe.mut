@@ -1,0 +1,13 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestStopUnsubscribes'
+expect: --- FAIL:
+why:    a finished mutation keeps its signal handler, so a later signal restores stale bytes over the next one
+--- old
+	return func() {
+		signal.Stop(ch)
+		close(done)
+	}
+--- new
+	return func() {
+		close(done)
+	}

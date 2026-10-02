@@ -1,9 +1,9 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestScoreCountsHolesAsFailures'
 expect: --- FAIL:
-why:    a stale catalog entry is not counted as a failure, so the score flatters itself
+why:    a broken mutation is not counted as a failure, so the score flatters itself
 --- old
-		case Stale:
-			stale++
+		case Broken:
+			broken++
 --- new
-		case Stale:
+		case Broken:

@@ -1,0 +1,10 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesMalformedFiles'
+expect: --- FAIL:
+why:    an entry with no target is accepted and then edits the repo root as if it were a file
+--- old
+	case m.Target == "":
+		return m, fmt.Errorf("%s: no `target:`", path)
+
+--- new
+

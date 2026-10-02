@@ -1,5 +1,6 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestStaleAnchor'
+expect: --- FAIL:
 why:    a mutation that matches nothing is scored as a working guard
 --- old
 	if n := bytes.Count(original, []byte(m.Old)); n != 1 {

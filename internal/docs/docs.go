@@ -43,8 +43,10 @@ var (
 // universal flags are argparse's own, never written with add_argument.
 var universal = map[string]bool{"--help": true}
 
-// Check reads every .py and .md file directly under dir and reports each flag a
-// document attributes to a script that does not declare it.
+// Check reports each flag a document attributes to a script that does not declare it.
+// It reads every .py file directly under dir, and every .md file both directly under dir
+// and under dir/references/ — that subdirectory is where half a skill's procedure tends
+// to live, so skipping it would let the check pass by not looking.
 //
 // A flag counts as attributed only when the same LINE also names the script. Prose
 // spanning lines is skipped rather than guessed at: the point is a signal that is

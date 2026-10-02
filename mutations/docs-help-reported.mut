@@ -1,5 +1,6 @@
 target: internal/docs/docs.go
 verify: go test ./internal/docs/ -count=1 -run 'TestHelpIsNotReported'
+expect: --- FAIL:
 why:    --help is reported against every script, since argparse supplies it rather than the source
 --- old
 				if universal[flag[1]] {

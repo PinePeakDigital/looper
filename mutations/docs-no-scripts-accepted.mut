@@ -1,5 +1,6 @@
 target: internal/docs/docs.go
 verify: go test ./internal/docs/ -count=1 -run 'TestRefusesToCheckNothing'
+expect: --- FAIL:
 why:    a directory with no scripts reports a clean bill of health instead of refusing
 --- old
 	if len(flags) == 0 {

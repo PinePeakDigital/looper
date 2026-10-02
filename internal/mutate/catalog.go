@@ -29,6 +29,21 @@ type Mutation struct {
 	Why    string   // the defect this reproduces, in one line
 	Old    string   // exact text to replace; must occur exactly once
 	New    string   // replacement
+	// Expect is a substring the failing verify output must contain for the failure to
+	// count as the suite catching the defect. Optional, and the single most load-bearing
+	// field in the format, because without it ANY non-zero exit reads as a catch:
+	//
+	//   - A mutation that merely fails to COMPILE makes the command fail, and scored as
+	//     caught. Measured: two of this repo's own 19 entries did not compile, so their
+	//     named tests had never been shown to catch anything, and the score said 19/19.
+	//   - A `go test -run` pattern naming a test that no longer exists exits 0 ("no tests
+	//     to run"), so a renamed test reads as a hole rather than a stale catalog entry.
+	//   - A suite already red for an unrelated reason fails identically to one that
+	//     noticed.
+	//
+	// With it, "caught" means the named assertion reported failure. `--- FAIL:` for Go,
+	// whatever a given suite prints for anything else.
+	Expect string
 }
 
 // Name identifies a mutation in output, by its catalog filename.
@@ -77,6 +92,7 @@ func ParseCatalog(dir string) ([]Mutation, error) {
 //	target: path/to/file.py
 //	verify: ./its.test.sh          (repeatable)
 //	why:    one line on the defect
+//	expect: --- FAIL: TestThing    (optional; see Mutation.Expect)
 //	--- old
 //	<exact text>
 //	--- new
@@ -84,8 +100,9 @@ func ParseCatalog(dir string) ([]Mutation, error) {
 //
 // Old and New are taken verbatim between the markers, minus the single newline
 // that ends each block, so a mutation can span lines and carry its own
-// indentation. Leading whitespace is significant in both Python and shell, which
-// is most of what this catalog targets.
+// indentation — which matters because leading whitespace is syntax in some of the
+// languages a catalog can target, Python and shell among them, and an anchor that
+// lost its indentation would match nothing.
 func parseFile(path string) (Mutation, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -122,6 +139,8 @@ func parseFile(path string) (Mutation, error) {
 			m.Verify = append(m.Verify, val)
 		case "why":
 			m.Why = val
+		case "expect":
+			m.Expect = val
 		default:
 			return m, fmt.Errorf("%s: unknown header %q", path, key)
 		}

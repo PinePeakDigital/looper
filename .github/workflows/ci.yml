@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # 30 mutations x the 5-minute per-command verify timeout is a ~150-minute worst case
+    # if something makes every verify hang, and the GitHub default is 360. A typical run
+    # is a couple of minutes, so this fails fast and cheap instead.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

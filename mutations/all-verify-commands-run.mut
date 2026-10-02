@@ -1,5 +1,6 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestFirstFailingVerifyWins'
+expect: --- FAIL:
 why:    verify commands keep running after one has already failed
 --- old
 	for _, cmd := range m.Verify {

@@ -1,5 +1,6 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestVerifyGetsNoStdin'
+expect: --- FAIL:
 why:    a verify command that reads stdin blocks the whole run with no result
 --- old
 	cmd.Stdin = nil

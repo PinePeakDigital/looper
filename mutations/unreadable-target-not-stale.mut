@@ -1,0 +1,10 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestUnreadableTargetIsStale'
+expect: --- FAIL:
+why:    a target that cannot be read reads as the suite missing a defect that was never introduced
+--- old
+		return Result{Mutation: m, Outcome: Stale,
+			Detail: fmt.Sprintf("target unreadable: %v", err)}, nil
+--- new
+		return Result{Mutation: m, Outcome: Survived,
+			Detail: fmt.Sprintf("target unreadable: %v", err)}, nil

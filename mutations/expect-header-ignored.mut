@@ -1,0 +1,10 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestParsesExpect'
+expect: --- FAIL:
+why:    the expect header is silently dropped, which turns every catch back into any non-zero exit
+--- old
+		case "expect":
+			m.Expect = val
+
+--- new
+

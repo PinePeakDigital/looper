@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestOnSignalRunsOnHangup'
+expect: --- FAIL:
+why:    SIGHUP terminates without running any defer, so a dropped session leaves the target mutated
+--- old
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
+--- new
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)

@@ -1,0 +1,17 @@
+markdownlint-cli2 v0.23.3 (markdownlint v0.41.1)
+Finding: README.md
+Linting: 1 file
+Summary: 11 issues in 1 file
+
+[stderr]
+README.md:21 error MD040/fenced-code-language Fenced code blocks should have a language specified [Context: "```"]
+README.md:26:81 error MD013/line-length Line length [Expected: 80; Actual: 83]
+README.md:38 error MD040/fenced-code-language Fenced code blocks should have a language specified [Context: "```"]
+README.md:43:1 error MD010/no-hard-tabs Hard tabs [Column: 1]
+README.md:45:1 error MD010/no-hard-tabs Hard tabs [Column: 1]
+README.md:76 error MD040/fenced-code-language Fenced code blocks should have a language specified [Context: "```"]
+README.md:80:81 error MD013/line-length Line length [Expected: 80; Actual: 85]
+README.md:81:81 error MD013/line-length Line length [Expected: 80; Actual: 84]
+README.md:86:81 error MD013/line-length Line length [Expected: 80; Actual: 84]
+README.md:87:81 error MD013/line-length Line length [Expected: 80; Actual: 86]
+README.md:90:81 error MD013/line-length Line length [Expected: 80; Actual: 86]

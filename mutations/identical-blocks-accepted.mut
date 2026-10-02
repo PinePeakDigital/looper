@@ -1,0 +1,10 @@
+target: internal/mutate/catalog.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesMalformedFiles'
+expect: --- FAIL:
+why:    a mutation whose old and new text are identical is accepted, and always scores as a survivor
+--- old
+	case m.Old == m.New:
+		return m, fmt.Errorf("%s: old and new are identical, so it mutates nothing", path)
+
+--- new
+

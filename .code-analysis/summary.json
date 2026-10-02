@@ -1,0 +1,96 @@
+{
+  "scope": "whole-repo",
+  "target": "/Users/narthur/code/looper",
+  "total_findings": 11,
+  "tools_run": [
+    "actionlint",
+    "gitleaks",
+    "golangci-lint",
+    "govulncheck",
+    "markdownlint",
+    "semgrep",
+    "yamllint",
+    "zizmor"
+  ],
+  "tools_skipped": [],
+  "results": [
+    {
+      "tool": "actionlint",
+      "status": "ran",
+      "exit": 0,
+      "findings": 0,
+      "sample": [],
+      "cmd": "actionlint"
+    },
+    {
+      "tool": "gitleaks",
+      "status": "ran",
+      "exit": 0,
+      "findings": 0,
+      "sample": [],
+      "cmd": "gitleaks dir . --report-format json --report-path /Users/narthur/code/looper/.code-analysis/raw/gitleaks.gitleaks.json --no-banner --exit-code 0"
+    },
+    {
+      "tool": "golangci-lint",
+      "status": "ran",
+      "exit": 1,
+      "findings": 0,
+      "sample": [],
+      "cmd": "golangci-lint run --output.json.path=stdout ./..."
+    },
+    {
+      "tool": "govulncheck",
+      "status": "ran",
+      "exit": 1,
+      "findings": 0,
+      "sample": [],
+      "cmd": "go run golang.org/x/vuln/cmd/govulncheck@latest -json ./..."
+    },
+    {
+      "tool": "markdownlint",
+      "status": "ran",
+      "exit": 1,
+      "findings": 4,
+      "sample": [
+        "markdownlint-cli2 v0.23.3 (markdownlint v0.41.1)",
+        "Finding: README.md",
+        "Linting: 1 file",
+        "Summary: 11 issues in 1 file"
+      ],
+      "cmd": "npx --yes markdownlint-cli2 README.md"
+    },
+    {
+      "tool": "semgrep",
+      "status": "ran",
+      "exit": 1,
+      "findings": 3,
+      "sample": [
+        ".github/workflows/ci.yml:12 yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag",
+        ".github/workflows/ci.yml:13 yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag",
+        "internal/mutate/mutate.go:137 go.lang.security.audit.dangerous-exec-command.dangerous-exec-command"
+      ],
+      "cmd": "uvx semgrep --config auto --json --quiet --error ."
+    },
+    {
+      "tool": "yamllint",
+      "status": "ran",
+      "exit": 0,
+      "findings": 0,
+      "sample": [],
+      "cmd": "uvx yamllint -d relaxed --no-warnings -f parsable .github/workflows/ci.yml"
+    },
+    {
+      "tool": "zizmor",
+      "status": "ran",
+      "exit": 14,
+      "findings": 4,
+      "sample": [
+        "artipacked",
+        "excessive-permissions",
+        "unpinned-uses",
+        "unpinned-uses"
+      ],
+      "cmd": "uvx zizmor --format json .github/workflows"
+    }
+  ]
+}

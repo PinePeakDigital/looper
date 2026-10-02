@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -251,11 +254,122 @@ func TestVerifyGetsNoStdin(t *testing.T) {
 }
 
 func TestScoreCountsHolesAsFailures(t *testing.T) {
-	caught, survived, stale := Score([]Result{
+	caught, survived, stale, broken := Score([]Result{
 		{Outcome: Caught}, {Outcome: Caught}, {Outcome: Survived}, {Outcome: Stale},
+		{Outcome: Broken},
 	})
-	if caught != 2 || survived != 1 || stale != 1 {
-		t.Errorf("got %d/%d/%d, want 2/1/1", caught, survived, stale)
+	if caught != 2 || survived != 1 || stale != 1 || broken != 1 {
+		t.Errorf("got %d/%d/%d/%d, want 2/1/1/1", caught, survived, stale, broken)
+	}
+}
+
+// The defect that made this whole field necessary: a mutation that does not compile
+// makes the verify command fail, and so scored as caught. Two of this repo's own
+// nineteen entries were in that state, which the 19/19 score did not reveal.
+func TestFailureWithoutTheExpectedMarkerIsBroken(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "def f(x):\n    return x > 0\n",
+		// Fails, but for a reason that has nothing to do with the assertion.
+		"t.sh": "#!/bin/sh\necho 'SyntaxError: unexpected EOF' >&2\nexit 2\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "flip.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "comparison inverted", Old: "x > 0", New: "x < 0",
+		Expect: "--- FAIL:",
+	})
+	if res[0].Outcome != Broken {
+		t.Errorf("outcome = %q, want broken (detail: %s)", res[0].Outcome, res[0].Detail)
+	}
+	// And the detail must carry the output, or the operator cannot tell which it was.
+	if !strings.Contains(res[0].Detail, "SyntaxError") {
+		t.Errorf("detail does not include the command output: %q", res[0].Detail)
+	}
+}
+
+// The same command, now failing the way the mutation said it would.
+func TestFailureWithTheExpectedMarkerIsCaught(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "def f(x):\n    return x > 0\n",
+		"t.sh":   "#!/bin/sh\necho '--- FAIL: TestSign'\nexit 1\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "flip.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "comparison inverted", Old: "x > 0", New: "x < 0",
+		Expect: "--- FAIL:",
+	})
+	if res[0].Outcome != Caught {
+		t.Errorf("outcome = %q, want caught (detail: %s)", res[0].Outcome, res[0].Detail)
+	}
+}
+
+// With no Expect, any failure still counts — the field is opt-in, so an existing
+// catalog keeps working.
+func TestNoExpectMeansAnyFailureCounts(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		"t.sh":   "#!/bin/sh\necho 'something unrelated broke' >&2\nexit 3\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2",
+	})
+	if res[0].Outcome != Caught {
+		t.Errorf("outcome = %q, want caught", res[0].Outcome)
+	}
+}
+
+// A target that cannot be read is Stale, not Survived. Reporting it as Survived would
+// claim the suite missed a defect that was never introduced.
+func TestUnreadableTargetIsStale(t *testing.T) {
+	dir := repo(t, map[string]string{"t.sh": "#!/bin/sh\nexit 1\n"})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "no-such-file.go", Verify: []string{"./t.sh"},
+		Why: "w", Old: "a", New: "b",
+	})
+	if res[0].Outcome != Stale {
+		t.Fatalf("outcome = %q, want stale", res[0].Outcome)
+	}
+	if !strings.Contains(res[0].Detail, "unreadable") {
+		t.Errorf("detail does not say why: %q", res[0].Detail)
+	}
+}
+
+// onSignal has to run its function on every signal that would otherwise terminate the
+// process without running deferred calls. SIGHUP is the one that was missing, and it is
+// the likely one: a dropped SSH session or a supervisor HUPping the process group.
+func TestOnSignalRunsOnHangup(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
+		t.Run(sig.String(), func(t *testing.T) {
+			fired := make(chan struct{})
+			stop := onSignal(func() { close(fired) })
+			defer stop()
+			if err := syscall.Kill(os.Getpid(), sig); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-fired:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s did not run the restore function", sig)
+			}
+		})
+	}
+}
+
+// And stop() must actually unsubscribe, or a later signal runs a restore for a mutation
+// that is already finished — writing stale bytes over the next one.
+func TestStopUnsubscribes(t *testing.T) {
+	var ran int32
+	stop := onSignal(func() { atomic.AddInt32(&ran, 1) })
+	stop()
+	// Default disposition for SIGHUP would kill the test binary, so re-ignore it first.
+	signal.Ignore(syscall.SIGHUP)
+	defer signal.Reset(syscall.SIGHUP)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := atomic.LoadInt32(&ran); n != 0 {
+		t.Errorf("the function ran %d time(s) after stop()", n)
 	}
 }
 

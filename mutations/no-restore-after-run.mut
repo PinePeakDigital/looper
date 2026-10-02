@@ -1,6 +1,7 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored'
-why:    the mutation is left in the tree once the run ends
+expect: --- FAIL:
+why:    the file is restored before the verify commands run, so they never see the mutation
 --- old
 	defer func() { _ = restore() }()
 --- new

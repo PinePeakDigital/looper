@@ -1,5 +1,6 @@
 target: internal/docs/docs.go
 verify: go test ./internal/docs/ -count=1 -run 'TestFlagsAreAttributedPerScript'
+expect: --- FAIL:
 why:    a flag is credited to the first script named on the line rather than the one it belongs to
 --- old
 					out = append(out, Reference{Doc: rel, Line: i + 1, Script: script[1], Flag: flag[1]})

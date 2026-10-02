@@ -1,5 +1,6 @@
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestRefusesDirtyTree'
+expect: --- FAIL:
 why:    a restore silently reverts uncommitted work alongside the mutation
 --- old
 	if err := r.requireCleanTree(); err != nil {
