@@ -1,0 +1,14 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineFailsClosedWhenGitCannotBeAsked'
+expect: --- FAIL:
+why:    a git failure after the baseline reads as a clean tree, failing open on the one check whose purpose is to notice the tree cannot be trusted
+--- old
+	dirty, err := r.dirtyTracked()
+	if err != nil {
+		return nil, fmt.Errorf("after the baseline run: %w", err)
+	}
+--- new
+	dirty, err := r.dirtyTracked()
+	if err != nil {
+		dirty, err = "", nil
+	}

@@ -66,7 +66,11 @@ func (r *Runner) baseline(muts []Mutation) (map[string]string, error) {
 	// it — so an untracked file a verify command left behind (a stray log, a coverage
 	// artifact) cannot affect any of them. Refusing the whole run for that, with a message
 	// asserting the original bytes were untrustworthy, claimed a risk that was not there.
-	if dirty := r.dirtyTracked(); dirty != "" {
+	dirty, err := r.dirtyTracked()
+	if err != nil {
+		return nil, fmt.Errorf("after the baseline run: %w", err)
+	}
+	if dirty != "" {
 		return nil, fmt.Errorf("a verify command changed tracked file(s) during the baseline "+
 			"run, so the bytes a later mutation would read as \"original\" are no longer the "+
 			"committed ones:\n%s\nCommit, revert, or stop the command writing there", dirty)

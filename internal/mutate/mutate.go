@@ -321,14 +321,25 @@ func (r *Runner) requireTrackedTargets(muts []Mutation) error {
 	return nil
 }
 
+// porcelain runs `git status --porcelain` in the repo root. Both callers go through it so
+// that they cannot drift apart on how a git failure is handled — they already had, one
+// failing closed and the other open on the identical error.
+func (r *Runner) porcelain() (string, error) {
+	out, err := exec.Command("git", "-C", r.Root, "status", "--porcelain").Output()
+	if err != nil {
+		return "", fmt.Errorf("checking the tree in %s: %w (is it a git repo?)", r.Root, err)
+	}
+	return string(out), nil
+}
+
 // requireCleanTree refuses to run when the working tree has changes, so that a
 // restore can never be confused with a revert of someone's work in progress.
 func (r *Runner) requireCleanTree() error {
-	out, err := exec.Command("git", "-C", r.Root, "status", "--porcelain").Output()
+	out, err := r.porcelain()
 	if err != nil {
-		return fmt.Errorf("checking the tree in %s: %w (is it a git repo?)", r.Root, err)
+		return err
 	}
-	if dirty := strings.TrimSpace(string(out)); dirty != "" {
+	if dirty := strings.TrimSpace(out); dirty != "" {
 		n := len(strings.Split(dirty, "\n"))
 		return fmt.Errorf("refusing to run: %d uncommitted change(s) in %s.\n"+
 			"Mutation testing restores files, and a restore is indistinguishable from\n"+
@@ -337,21 +348,27 @@ func (r *Runner) requireCleanTree() error {
 	return nil
 }
 
-// dirtyTracked reports modified or deleted TRACKED files, one per line, or "" when there
-// are none. Untracked additions are deliberately not included — see baseline's use of it.
-func (r *Runner) dirtyTracked() string {
-	out, err := exec.Command("git", "-C", r.Root, "status", "--porcelain").Output()
+// dirtyTracked reports any tracked-file change — modified, deleted, renamed, staged or
+// conflicted — one per line, or "" when there are none. Untracked additions are
+// deliberately excluded; see baseline's use of it.
+//
+// It returns the git failure rather than swallowing it. Reporting "clean" when the status
+// command itself failed would fail OPEN on the one check whose purpose is to notice that
+// the tree can no longer be trusted — and a verify command has just run arbitrary shell,
+// so git breaking is exactly the case to worry about.
+func (r *Runner) dirtyTracked() (string, error) {
+	out, err := r.porcelain()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	var lines []string
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		if line == "" || strings.HasPrefix(line, "??") {
 			continue
 		}
 		lines = append(lines, "  "+line)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), nil
 }
 
 // onSignal arranges for fn to run on interrupt, and returns a stop function.

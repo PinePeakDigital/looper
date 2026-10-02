@@ -154,6 +154,28 @@ func TestBaselineRefusesIfACommandDirtiesTheTree(t *testing.T) {
 	}
 }
 
+// If git itself cannot be asked, that is not "clean". A verify command has just run
+// arbitrary shell, so git breaking is precisely the case the post-baseline check exists
+// for — and reporting no changes there would fail open on the one check that matters.
+func TestBaselineFailsClosedWhenGitCannotBeAsked(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		// Takes git away after passing, the way a destructive suite or a disk-full run can.
+		"t.sh": "#!/bin/sh\nrm -rf .git\nexit 0\n",
+	})
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2",
+	}})
+	if err == nil {
+		t.Fatal("a broken git read as a clean tree")
+	}
+	if !strings.Contains(err.Error(), "after the baseline run") {
+		t.Errorf("error does not say when it happened: %v", err)
+	}
+}
+
 // Untracked litter is not corruption. A verify command dropping a stray log or a coverage
 // artifact cannot affect the bytes any mutation reads as "original", because every target
 // is a tracked file, so refusing the whole run for it — with a message asserting the
