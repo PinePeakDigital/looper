@@ -6,17 +6,23 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/mutate"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: looper mutate [-catalog dir] [-root dir]")
+		fmt.Fprintln(os.Stderr, "usage: looper mutate [-catalog dir] [-root dir]\n       looper docs <dir>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
 	case "mutate":
 		if err := runMutate(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "docs":
+		if err := runDocs(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -65,5 +71,24 @@ func runMutate(args []string) error {
 	if survived > 0 || stale > 0 {
 		return mutate.ErrHoles
 	}
+	return nil
+}
+
+func runDocs(args []string) error {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	refs, err := docs.Check(dir)
+	if err != nil {
+		return err
+	}
+	for _, r := range refs {
+		fmt.Println(r)
+	}
+	if n := len(refs); n > 0 {
+		return fmt.Errorf("%d documented flag(s) do not exist", n)
+	}
+	fmt.Printf("every flag the docs under %s name exists\n", dir)
 	return nil
 }

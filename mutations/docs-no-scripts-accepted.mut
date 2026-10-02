@@ -1,0 +1,10 @@
+target: internal/docs/docs.go
+verify: go test ./internal/docs/ -count=1 -run 'TestRefusesToCheckNothing'
+why:    a directory with no scripts reports a clean bill of health instead of refusing
+--- old
+	if len(flags) == 0 {
+		return nil, fmt.Errorf("no .py files under %s, so nothing could be checked", dir)
+	}
+
+--- new
+
