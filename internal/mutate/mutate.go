@@ -337,6 +337,23 @@ func (r *Runner) requireCleanTree() error {
 	return nil
 }
 
+// dirtyTracked reports modified or deleted TRACKED files, one per line, or "" when there
+// are none. Untracked additions are deliberately not included — see baseline's use of it.
+func (r *Runner) dirtyTracked() string {
+	out, err := exec.Command("git", "-C", r.Root, "status", "--porcelain").Output()
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" || strings.HasPrefix(line, "??") {
+			continue
+		}
+		lines = append(lines, "  "+line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // onSignal arranges for fn to run on interrupt, and returns a stop function.
 func onSignal(fn func()) (stop func()) {
 	ch := make(chan os.Signal, 1)

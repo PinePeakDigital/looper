@@ -146,7 +146,77 @@ func TestBaselineRefusesIfACommandDirtiesTheTree(t *testing.T) {
 	if err == nil {
 		t.Fatal("ran on after a verify command changed a tracked file")
 	}
-	if !strings.Contains(err.Error(), "changed the working tree during the baseline") {
+	if !strings.Contains(err.Error(), "changed tracked file(s) during the baseline") {
 		t.Errorf("error does not name the cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tracked.txt") {
+		t.Errorf("error does not name the file: %v", err)
+	}
+}
+
+// Untracked litter is not corruption. A verify command dropping a stray log or a coverage
+// artifact cannot affect the bytes any mutation reads as "original", because every target
+// is a tracked file, so refusing the whole run for it — with a message asserting the
+// original bytes were untrustworthy — claimed a risk that was not there.
+func TestBaselineToleratesUntrackedLitter(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		"t.sh":   "#!/bin/sh\ntouch litter.tmp\ngrep -q 'x = 1' app.py && exit 0\necho '--- FAIL: TestX'\nexit 1\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2", Expect: "--- FAIL:",
+	})
+	if res[0].Outcome != Caught {
+		t.Errorf("outcome = %q, want caught — untracked litter aborted the run (detail: %s)",
+			res[0].Outcome, res[0].Detail)
+	}
+}
+
+// "no tests to run" appearing SOMEWHERE in the output is not enough. `go test ./... -run X`
+// prints it for every package with no match and exits 0, while the package that does match
+// runs normally — so rejecting the command as vacuous turned real coverage into `broken`.
+func TestRanNothingNeedsEveryPackageToHaveRunNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"nothing matched anywhere", "testing: warning: no tests to run\nok  \tpkg\t0.001s [no tests to run]\n", true},
+		{"one package matched, another did not", "ok  \tpkg/a\t0.20s\nok  \tpkg/b\t0.001s [no tests to run]\n", false},
+		{"the matching package failed", "--- FAIL: TestA\nFAIL\tpkg/a\t0.20s\nok  \tpkg/b\t0.001s [no tests to run]\n", false},
+		{"a normal clean run", "ok  \tpkg\t0.20s\n", false},
+		{"a shell suite that says nothing of the kind", "all checks passed\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ranNothing(tc.output); got != tc.want {
+				t.Errorf("ranNothing() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// And the real thing, on a two-package module: the named test runs in one package and
+// matches nothing in the other, which must still count as a sound command.
+func TestMultiPackageRunIsNotVacuous(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"go.mod":      "module probe\n\ngo 1.24\n",
+		"a/p.go":      "package a\n\nfunc A() int { return 1 }\n",
+		"a/p_test.go": "package a\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif A() != 1 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+		"b/q.go":      "package b\n\nfunc B() int { return 2 }\n",
+		"b/q_test.go": "package b\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {\n\tif B() != 2 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+	})
+	r := &Runner{Root: dir}
+	bad, err := r.baseline([]Mutation{{
+		Source: "x.mut", Target: "a/p.go",
+		Verify: []string{"go test ./... -count=1 -run 'TestA'"},
+		Why:    "w", Old: "return 1", New: "return 2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) != 0 {
+		t.Errorf("rejected a sound multi-package command because another package matched "+
+			"nothing: %v", bad)
 	}
 }

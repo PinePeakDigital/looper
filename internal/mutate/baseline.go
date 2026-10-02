@@ -44,7 +44,7 @@ func (r *Runner) baseline(muts []Mutation) (map[string]string, error) {
 		case c.failed:
 			bad[command] = fmt.Sprintf("already failing before any mutation was applied: %s", c.detail)
 			r.logf("  ALREADY RED  %s\n", command)
-		case strings.Contains(c.output, noTestsRun):
+		case ranNothing(c.output):
 			// Passed, but ran nothing — so it could never fail either.
 			bad[command] = fmt.Sprintf("passes without running any test (%q), so it can "+
 				"never catch anything — the named test has probably been renamed: %s", noTestsRun, command)
@@ -61,11 +61,42 @@ func (r *Runner) baseline(muts []Mutation) (map[string]string, error) {
 	// committed ones, and restoring them would quietly leave that change behind — defeating
 	// the clean-tree guarantee checked at the top of Run. This hazard did not exist before
 	// the baseline, because nothing ever ran against unmutated code.
-	if err := r.requireCleanTree(); err != nil {
-		return nil, fmt.Errorf("a verify command changed the working tree during the "+
-			"baseline run, so the original bytes can no longer be trusted:\n%w", err)
+	// TRACKED content only. The rationale is about the bytes a mutation reads as
+	// "original", and those are always a tracked file — requireTrackedTargets guarantees
+	// it — so an untracked file a verify command left behind (a stray log, a coverage
+	// artifact) cannot affect any of them. Refusing the whole run for that, with a message
+	// asserting the original bytes were untrustworthy, claimed a risk that was not there.
+	if dirty := r.dirtyTracked(); dirty != "" {
+		return nil, fmt.Errorf("a verify command changed tracked file(s) during the baseline "+
+			"run, so the bytes a later mutation would read as \"original\" are no longer the "+
+			"committed ones:\n%s\nCommit, revert, or stop the command writing there", dirty)
 	}
 	return bad, nil
+}
+
+// ranNothing reports whether a passing command ran no tests at all.
+//
+// Not a bare substring match. `go test ./... -run 'TestA'` prints
+// "ok <pkg> [no tests to run]" for every package where the pattern matches nothing, and
+// exits 0, while the package that DOES match runs normally — so the phrase appearing
+// somewhere in the output says nothing on its own. Rejecting such a command as vacuous
+// turned real coverage into `broken` for the whole catalog entry; reproduced on a
+// two-package module where the named test ran, passed, and was the only one exercising
+// the mutated file. So: vacuous only when NO package reported running anything.
+func ranNothing(output string) bool {
+	if !strings.Contains(output, noTestsRun) {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		// Per-package result lines. One of them without the marker means something ran.
+		if strings.HasPrefix(line, "ok") || strings.HasPrefix(line, "--- ") ||
+			strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "PASS") {
+			if !strings.Contains(line, noTestsRun) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // distinctCommands lists every verify command in the catalog once, sorted so two runs of
