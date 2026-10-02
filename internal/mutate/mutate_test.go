@@ -206,7 +206,22 @@ func TestPreservesMode(t *testing.T) {
 // A verify command that reads stdin must not inherit ours and block forever. This
 // is a live hazard, not a hypothetical: pr-report.py hangs when run without stdin
 // redirected, and a hung verify would stall the whole run with no result.
+//
+// The test replaces this process's stdin with a pipe nobody writes to, because
+// `go test` otherwise supplies /dev/null — under which inheriting stdin reads EOF
+// immediately and the assertion cannot fail. That is the exact shape of hollow
+// assertion this tool exists to find, and the first run of it found this one.
 func TestVerifyGetsNoStdin(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Closing the write end on the way out releases anything left blocked on it.
+	t.Cleanup(func() { pw.Close(); pr.Close() })
+	saved := os.Stdin
+	os.Stdin = pr
+	t.Cleanup(func() { os.Stdin = saved })
+
 	dir := repo(t, map[string]string{
 		"app.py": "x = 1\n",
 		"t.sh":   "#!/bin/sh\ncat > /dev/null\nexit 0\n",
@@ -230,7 +245,7 @@ func TestVerifyGetsNoStdin(t *testing.T) {
 		if got != Survived {
 			t.Errorf("outcome = %q, want survived", got)
 		}
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("a verify command reading stdin blocked the run")
 	}
 }
