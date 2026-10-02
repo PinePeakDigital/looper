@@ -1,8 +1,0 @@
-target: internal/mutate/mutate.go
-verify: go test ./internal/mutate/ -count=1 -run 'TestDetailShowsTheFailureNotJustTheEnd'
-expect: --- FAIL:
-why:    the detail shows the last lines rather than the failing ones, so a suite that prints its one failure early and then dozens of passes reports a detail with no failure in it at all
---- old
-	if hits := failureLines(lines); len(hits) > 0 {
---- new
-	if hits := failureLines(nil); len(hits) > 0 {

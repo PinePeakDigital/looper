@@ -276,46 +276,74 @@ func (r *Runner) verify(command string) check {
 // detail line. The point is to tell a failing assertion from a build error without
 // re-running anything by hand.
 //
-// It prefers lines that LOOK like failures over the last lines, because the last lines are
-// often the wrong end: a shell test suite prints its one failure early and then dozens of
-// passing checks, so a plain tail scrolls the failure out. Measured against this skill's
-// own suites — 7 of 13 mutations had no failure line in their detail at all, while the
-// output containing it had been captured the whole time.
+// Output that already fits comes back whole. Output that must be cut is cut to a WINDOW,
+// and the window starts at the first line that looks like a failure rather than at the
+// end, because the end is often the wrong end: a shell test suite prints its one failure
+// early and then dozens of passing checks, so a plain tail scrolls the failure out.
+// (Measured once, 2026-10-02, against the review-loop skill's then-13-entry catalog in
+// github.com/narthur/skills: 7 of the 13 details carried no failure line at all, while
+// the output containing it had been captured the whole time.)
+//
+// A window and not a filter-to-matching-lines, which is what this did first: `go test`
+// puts the marker and the line that explains it on SEPARATE lines, and only the marker
+// line contains "FAIL" —
+//
+//	--- FAIL: TestX (0.00s)
+//	    x_test.go:6: outcome = "survived", want caught
+//	FAIL
+//
+// so keeping only marker-bearing lines throws away the one line with the diagnosis in it.
+// A build failure is worse: the compiler error carries no marker and would vanish
+// entirely, leaving two bare "FAIL" lines to explain a mutation that did not compile.
 func tail(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if hits := failureLines(lines); len(hits) > 0 {
-		// The FIRST failures, not the last: the earliest one is the cause, the rest are
-		// usually consequences.
-		lines = hits
-		if len(lines) > tailLines {
-			lines = append(lines[:tailLines:tailLines], "…")
-		}
-	} else if len(lines) > tailLines {
-		// Nothing identifiable, so fall back to the end, where a crash message lands.
-		lines = append([]string{"…"}, lines[len(lines)-tailLines:]...)
+	if len(lines) <= tailLines {
+		return indent(lines)
 	}
+
+	start := len(lines) - tailLines // the end, where a crash message lands
+	if i := firstFailure(lines); i >= 0 && i < start {
+		start = i // ...unless something earlier looks like the failure itself
+	}
+	end := min(start+tailLines, len(lines))
+
+	window := make([]string, 0, tailLines+2)
+	if start > 0 {
+		window = append(window, "…")
+	}
+	window = append(window, lines[start:end]...)
+	if end < len(lines) {
+		window = append(window, "…")
+	}
+	return indent(window)
+}
+
+func indent(lines []string) string {
+	out := make([]string, len(lines))
 	for i, l := range lines {
-		lines[i] = "      " + l
+		out[i] = "      " + l
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(out, "\n")
 }
 
 // failureMarkers are what test runners and interpreters print when something went wrong.
 // Deliberately a short list of unambiguous ones rather than anything matching "error":
-// a false positive here hides the real end of the output, which is the fallback's job.
+// a false positive here anchors the window in the wrong place, which is worse than the
+// end-of-output default it replaces.
 var failureMarkers = []string{"FAIL", "Traceback", "panic:", "not ok", "AssertionError", "Error:"}
 
-func failureLines(lines []string) []string {
-	var hits []string
-	for _, l := range lines {
+// firstFailure returns the index of the earliest line carrying a failure marker, or -1.
+// Earliest and not latest: the first failure is the cause, the rest are usually
+// consequences of it.
+func firstFailure(lines []string) int {
+	for i, l := range lines {
 		for _, m := range failureMarkers {
 			if strings.Contains(l, m) {
-				hits = append(hits, l)
-				break
+				return i
 			}
 		}
 	}
-	return hits
+	return -1
 }
 
 const tailLines = 12
@@ -342,6 +370,18 @@ func (r *Runner) requireTrackedTargets(muts []Mutation) error {
 			continue
 		}
 		seen[m.Target] = true
+
+		// Tracked is not the same as inside the repo. git tracks a symlink as a symlink,
+		// so a committed `linked.txt -> /etc/hosts` satisfies ls-files while os.ReadFile
+		// and os.WriteFile both follow it — and the catalog in CI is editable by whoever
+		// opens the pull request. Lstat, so the link itself is what gets inspected.
+		if info, err := os.Lstat(filepath.Join(r.Root, m.Target)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s names target %q, which is a symlink.\n"+
+				"Writes follow it, so a tracked link is a write to wherever it points — "+
+				"outside this repo, if that is where it points. Name the file itself",
+				m.Source, m.Target)
+		}
+
 		out, err := exec.Command("git", "-C", r.Root, "ls-files", "--error-unmatch", "--", m.Target).Output()
 		if err != nil || strings.TrimSpace(string(out)) == "" {
 			return fmt.Errorf("%s names target %q, which git does not track.\n"+

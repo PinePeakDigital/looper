@@ -1,0 +1,9 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailAnchorsOnTheEarliestFailure'
+expect: cut the output without saying so
+why:    a window that drops the rest of the output without marking the cut reads as the complete output, so an operator stops looking
+--- old
+	if end < len(lines) {
+		window = append(window, "…")
+	}
+--- new

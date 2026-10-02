@@ -1,0 +1,31 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailKeepsTheMessageUnderTheMarker'
+expect: detail kept the marker and dropped the line that explains it
+why:    keeping only the lines that carry a failure marker throws away the line that explains the failure, because go test puts the marker and the message on separate lines — this shipped, and the detail for nearly every entry in this catalog was four bare FAIL lines and a test name
+--- old
+	start := len(lines) - tailLines // the end, where a crash message lands
+	if i := firstFailure(lines); i >= 0 && i < start {
+		start = i // ...unless something earlier looks like the failure itself
+	}
+	end := min(start+tailLines, len(lines))
+
+	window := make([]string, 0, tailLines+2)
+	if start > 0 {
+		window = append(window, "…")
+	}
+	window = append(window, lines[start:end]...)
+	if end < len(lines) {
+		window = append(window, "…")
+	}
+	return indent(window)
+--- new
+	var hits []string
+	for _, l := range lines {
+		if firstFailure([]string{l}) == 0 {
+			hits = append(hits, l)
+		}
+	}
+	if len(hits) > 0 {
+		return indent(hits)
+	}
+	return indent(lines[len(lines)-tailLines:])

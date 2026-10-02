@@ -2,6 +2,7 @@ package mutate
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -569,9 +570,9 @@ func gitCmd(t *testing.T, dir string, args ...string) {
 }
 
 // A shell suite prints its one failure early and then dozens of passing checks, so the
-// last few lines are the wrong few. Measured against the review-loop skill's own suites:
-// 7 of 13 mutations had no failure line in their detail at all, while the output
-// containing it had been captured the whole time.
+// last few lines are the wrong few. Measured once (2026-10-02) against the review-loop
+// skill's then-13-entry catalog in github.com/narthur/skills: 7 of the 13 details carried
+// no failure line at all, while the output containing it had been captured the whole time.
 func TestDetailShowsTheFailureNotJustTheEnd(t *testing.T) {
 	var sh strings.Builder
 	sh.WriteString("#!/bin/sh\ngrep -q 'x = 1' app.py && exit 0\n")
@@ -611,5 +612,153 @@ func TestDetailFallsBackToTheEndWhenNothingLooksLikeAFailure(t *testing.T) {
 	})
 	if !strings.Contains(res[0].Detail, "the last thing it said") {
 		t.Errorf("detail dropped the end of the output: %q", res[0].Detail)
+	}
+}
+
+// The tests above drive tail() through the whole Runner, which proves the wiring. These
+// drive it directly, because the cases that matter are about which lines survive and are
+// unreasonable to stage as git fixtures.
+
+// goTestOutput is what a real `go test` prints for one failing assertion. Note that the
+// marker and the line explaining it are SEPARATE lines, and only the marker line contains
+// "FAIL". Captured from an actual run, not written from memory.
+var goTestOutput = []string{
+	"--- FAIL: TestAssertFails (0.00s)",
+	`    p_test.go:6: outcome = "survived", want caught`,
+	"FAIL",
+	"FAIL\ttailprobe\t0.233s",
+	"FAIL",
+}
+
+// The first version of this selected only the lines carrying a marker, which threw away
+// the one line with the diagnosis on it — every time, for the output shape this tool's own
+// catalog produces on nearly every entry.
+func TestTailKeepsTheMessageUnderTheMarker(t *testing.T) {
+	lines := append(noise(tailLines*2), goTestOutput...)
+	got := tail(strings.Join(lines, "\n"))
+
+	if !strings.Contains(got, "--- FAIL: TestAssertFails") {
+		t.Errorf("detail lost the marker line:\n%s", got)
+	}
+	if !strings.Contains(got, `p_test.go:6: outcome = "survived", want caught`) {
+		t.Errorf("detail kept the marker and dropped the line that explains it:\n%s", got)
+	}
+}
+
+// ...and a build failure carries no marker at all on the line that names the error, so
+// filtering would have left two bare "FAIL" lines to explain a mutation that did not
+// compile — the one case where the operator most needs to be told it was not the test.
+func TestTailKeepsTheCompilerErrorOnABuildFailure(t *testing.T) {
+	lines := append(noise(tailLines*2), []string{
+		"# tailprobe [tailprobe.test]",
+		"./p_test.go:6:7: undefined: undefinedSymbol",
+		"FAIL\ttailprobe [build failed]",
+	}...)
+	got := tail(strings.Join(lines, "\n"))
+
+	if !strings.Contains(got, "undefined: undefinedSymbol") {
+		t.Errorf("detail dropped the compiler error:\n%s", got)
+	}
+}
+
+// Nothing needs cutting, so nothing is cut. Filtering to marker lines narrowed output
+// that already fitted, which is strictly worse than the behaviour it replaced.
+func TestTailDoesNotNarrowOutputThatAlreadyFits(t *testing.T) {
+	got := tail("building the fixture\nFAIL  the guard did not fire\ndone in 0.4s\n")
+	for _, want := range []string{"building the fixture", "FAIL  the guard did not fire", "done in 0.4s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("short output lost %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "…") {
+		t.Errorf("elided output that already fitted:\n%s", got)
+	}
+}
+
+// More failures than the window holds. The earliest is the cause and the rest are usually
+// consequences, so the window starts there and says so when it has cut something off.
+func TestTailAnchorsOnTheEarliestFailure(t *testing.T) {
+	var lines []string
+	lines = append(lines, noise(3)...)
+	for i := 1; i <= tailLines*2; i++ {
+		lines = append(lines, fmt.Sprintf("FAIL  case %d", i))
+	}
+	got := tail(strings.Join(lines, "\n"))
+
+	if !strings.Contains(got, "FAIL  case 1\n") {
+		t.Errorf("window did not start at the earliest failure:\n%s", got)
+	}
+	if strings.Contains(got, fmt.Sprintf("FAIL  case %d", tailLines*2)) {
+		t.Errorf("window ran past its budget to the last failure:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("cut the output without saying so:\n%s", got)
+	}
+}
+
+// Each marker, individually. The list had five entries no test touched, so deleting any of
+// them left the suite green — and a silently narrowed marker list sends every window for
+// that runner back to the end of the output.
+func TestTailRecognisesEveryFailureMarker(t *testing.T) {
+	// Spelled out rather than ranging over failureMarkers: ranging over the list under
+	// test means deleting an entry deletes the case that would have caught it, and the
+	// suite stays green. Add the marker here too when adding one there.
+	want := []string{"FAIL", "Traceback", "panic:", "not ok", "AssertionError", "Error:"}
+	if len(want) != len(failureMarkers) {
+		t.Fatalf("failureMarkers has %d entries, this test knows %d — add the new one here",
+			len(failureMarkers), len(want))
+	}
+	for _, marker := range want {
+		t.Run(marker, func(t *testing.T) {
+			lines := append([]string{"a line carrying " + marker + " and nothing else of note"},
+				noise(tailLines*2)...)
+			got := tail(strings.Join(lines, "\n"))
+			if !strings.Contains(got, "a line carrying "+marker) {
+				t.Errorf("%q is in failureMarkers but did not anchor the window:\n%s", marker, got)
+			}
+		})
+	}
+}
+
+// noise builds n lines that no marker matches, each distinct so a test can tell which end
+// of the output it is looking at.
+func noise(n int) []string {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("unremarkable line %d", i)
+	}
+	return lines
+}
+
+// Tracked is not the same as inside the repo: git tracks a symlink as a symlink, so a
+// committed link satisfies `ls-files --error-unmatch` while os.ReadFile and os.WriteFile
+// both follow it. Reproduced before the guard existed — a link to a file outside the repo
+// passed the tracked-target check and the mutation was written through it.
+func TestSymlinkTargetIsRefused(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := repo(t, map[string]string{"t.sh": guard("x = 1", "linked.txt")})
+	if err := os.Symlink(outside, filepath.Join(dir, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-qm", "link")
+
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "catalog/x.mut", Target: "linked.txt",
+		Verify: []string{"./t.sh"}, Why: "w", Old: "x = 1", New: "x = 2",
+	}})
+	if err == nil {
+		t.Fatal("a tracked symlink target was accepted; writes follow it out of the repo")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error does not say why: %v", err)
+	}
+	// And the file it points at must be untouched.
+	if b, _ := os.ReadFile(outside); string(b) != "x = 1\n" {
+		t.Errorf("wrote through the link: %q", b)
 	}
 }

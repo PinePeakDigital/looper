@@ -1,0 +1,27 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailAnchorsOnTheEarliestFailure'
+expect: window did not start at the earliest failure
+why:    anchoring the window on the last failure instead of the first shows the consequences and cuts off the cause
+--- old
+func firstFailure(lines []string) int {
+	for i, l := range lines {
+		for _, m := range failureMarkers {
+			if strings.Contains(l, m) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+--- new
+func firstFailure(lines []string) int {
+	last := -1
+	for i, l := range lines {
+		for _, m := range failureMarkers {
+			if strings.Contains(l, m) {
+				last = i
+			}
+		}
+	}
+	return last
+}

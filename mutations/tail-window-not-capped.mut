@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailAnchorsOnTheEarliestFailure'
+expect: window ran past its budget to the last failure
+why:    an uncapped window dumps everything from the first failure to the end of the output into a single detail line
+--- old
+	end := min(start+tailLines, len(lines))
+--- new
+	end := len(lines)

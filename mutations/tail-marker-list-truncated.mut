@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailRecognisesEveryFailureMarker'
+expect: add the new one here
+why:    five of the six markers had no test touching them, so the list could be silently narrowed and every window for those runners would fall back to the end of the output
+--- old
+var failureMarkers = []string{"FAIL", "Traceback", "panic:", "not ok", "AssertionError", "Error:"}
+--- new
+var failureMarkers = []string{"FAIL"}

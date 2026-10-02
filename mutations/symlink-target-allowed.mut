@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestSymlinkTargetIsRefused'
+expect: a tracked symlink target was accepted
+why:    git tracks a symlink as a symlink, so a committed link passes the tracked-target check while the write follows it out of the repo — and in CI the catalog is editable by whoever opens the pull request
+--- old
+		if info, err := os.Lstat(filepath.Join(r.Root, m.Target)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+--- new
+		if info, err := os.Stat(filepath.Join(r.Root, m.Target)); err == nil && info.Mode()&os.ModeSymlink != 0 {
