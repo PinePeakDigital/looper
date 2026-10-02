@@ -694,6 +694,17 @@ func TestTailAnchorsOnTheEarliestFailure(t *testing.T) {
 	if !strings.HasSuffix(got, "…") {
 		t.Errorf("cut the output without saying so at the end:\n%s", got)
 	}
+	// Exactly tailLines of content between the two markers. Checking only that case 1 is in
+	// and case 24 is out left the window free to be one line too wide.
+	var content int
+	for _, l := range strings.Split(got, "\n") {
+		if strings.TrimSpace(l) != "…" {
+			content++
+		}
+	}
+	if content != tailLines {
+		t.Errorf("window holds %d lines, want exactly %d:\n%s", content, tailLines, got)
+	}
 	// And the same at the front. A window that drops the lines before it without marking
 	// the cut reads as the whole output, so an operator stops looking — the identical
 	// failure mode, and it went untested while its mirror image was covered.
@@ -781,6 +792,11 @@ func TestSymlinkTargetIsRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("error does not say why: %v", err)
 	}
+	// In the right places. Swapping the two format arguments still mentions "symlink" and
+	// still fails the run, while telling the operator that the catalog file is the link.
+	if !strings.Contains(err.Error(), `catalog/x.mut names target "linked.txt"`) {
+		t.Errorf("error misattributes which of the two is the symlink: %v", err)
+	}
 	// And the file it points at must be untouched.
 	if b, _ := os.ReadFile(outside); string(b) != "x = 1\n" {
 		t.Errorf("wrote through the link: %q", b)
@@ -817,11 +833,47 @@ func TestLstatFailureFallsThroughToTheTrackedCheck(t *testing.T) {
 func TestEveryDetailLineIsIndented(t *testing.T) {
 	// A blank line in the middle, because that is the one a prefix loop is most likely to
 	// skip and the one that would visually break the block.
-	got := tail("alpha\n\nbeta\n")
-	for _, l := range strings.Split(got, "\n") {
-		if !strings.HasPrefix(l, "      ") {
-			t.Errorf("detail line runs into the summary line above it: %q", l)
+	// Both paths: the short-circuit that returns the whole input, and the windowed one. Only
+	// the short path was covered, so the entire windowed path could emit unindented text —
+	// and HasPrefix alone could not tell six spaces from seven.
+	for _, in := range []string{
+		"alpha\n\nbeta\n",                      // short: a blank line in the middle
+		strings.Join(noise(tailLines*3), "\n"), // windowed, no marker
+		strings.Join(append(noise(3), "FAIL  x"), "\n") + "\n" + strings.Join(noise(tailLines*3), "\n"),
+	} {
+		for _, l := range strings.Split(tail(in), "\n") {
+			if strings.TrimLeft(l, " ") != strings.TrimSpace(l) || !strings.HasPrefix(l, "      ") {
+				t.Errorf("detail line runs into the summary line above it: %q", l)
+				continue
+			}
+			if got := len(l) - len(strings.TrimLeft(l, " ")); got != 6 {
+				t.Errorf("indent is %d spaces, want exactly 6: %q", got, l)
+			}
 		}
+	}
+}
+
+// The fallback window's exact shape. The Runner-level fallback test only checks that the
+// last line of output is present, which a window shifted by one still satisfies — and says
+// nothing about whether a cut was marked that never happened.
+func TestTailFallbackWindowIsExactlyTheLastNLines(t *testing.T) {
+	lines := noise(tailLines * 3) // no marker anywhere, so the window falls back to the end
+	got := strings.Split(tail(strings.Join(lines, "\n")), "\n")
+
+	if len(got) != tailLines+1 {
+		t.Fatalf("want %d lines (one leading marker + %d), got %d:\n%s",
+			tailLines+1, tailLines, len(got), strings.Join(got, "\n"))
+	}
+	if strings.TrimSpace(got[0]) != "…" {
+		t.Errorf("first line is not the elision marker: %q", got[0])
+	}
+	if want := lines[len(lines)-tailLines]; !strings.Contains(got[1], want) {
+		t.Errorf("window starts one line off: want %q, got %q", want, got[1])
+	}
+	// The window reaches the end of the output, so there is nothing to mark as cut.
+	if strings.TrimSpace(got[len(got)-1]) == "…" {
+		t.Errorf("marked a cut at the end where the window reaches the end of the output:\n%s",
+			strings.Join(got, "\n"))
 	}
 }
 

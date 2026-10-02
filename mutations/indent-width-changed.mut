@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestEveryDetailLineIsIndented'
+expect: want exactly 6
+why:    a HasPrefix check on six spaces cannot tell six from seven, so the indent width could drift and misalign every detail block against the rest of the report
+--- old
+		out[i] = "      " + l
+--- new
+		out[i] = "       " + l

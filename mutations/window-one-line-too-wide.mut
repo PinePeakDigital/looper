@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailAnchorsOnTheEarliestFailure'
+expect: window holds 13 lines, want exactly 12
+why:    the window ran one line past its budget whenever it was anchored on an early failure, which a test checking only which case numbers are in and out cannot see
+--- old
+	end := min(start+tailLines, len(lines))
+--- new
+	end := min(start+tailLines+1, len(lines))

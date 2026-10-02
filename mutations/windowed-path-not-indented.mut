@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestEveryDetailLineIsIndented'
+expect: detail line runs into the summary line above it
+why:    only the short-output path's indentation was covered, so every long detail — the ones that actually get windowed, which is most of them — could come back flush against the summary line
+--- old
+	return indent(window)
+--- new
+	return strings.Join(window, "\n")

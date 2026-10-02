@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailFallbackWindowIsExactlyTheLastNLines'
+expect: marked a cut at the end where the window reaches the end of the output
+why:    a window reaching the end of the output claimed it had cut something, so an operator keeps looking for output that is not there — the mirror of dropping the marker when there IS a cut
+--- old
+	if end < len(lines) {
+--- new
+	if end <= len(lines) {

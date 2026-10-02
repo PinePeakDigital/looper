@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestTailFallbackWindowIsExactlyTheLastNLines'
+expect: window starts one line off
+why:    the fallback window shifted one line later, dropping the line that should have been its first — invisible to a test that only checks the LAST line of output is present
+--- old
+	start := len(lines) - tailLines // the end, where a crash message lands
+--- new
+	start := len(lines) - tailLines + 1 // the end, where a crash message lands

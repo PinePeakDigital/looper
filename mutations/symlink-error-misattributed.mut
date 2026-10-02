@@ -1,0 +1,10 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestSymlinkTargetIsRefused'
+expect: error misattributes which of the two is the symlink
+why:    swapping the two format arguments still mentions "symlink" and still aborts the run, while telling the operator the catalog file is the link and the link is the catalog file
+--- old
+				"outside this repo, if that is where it points. Name the file itself",
+				m.Source, m.Target)
+--- new
+				"outside this repo, if that is where it points. Name the file itself",
+				m.Target, m.Source)
