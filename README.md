@@ -70,3 +70,23 @@ Mutation testing edits your working tree. The runner therefore:
 - **restores on interrupt**, then exits 130.
 
 The catalog's first entries are the runner's own rules, so the tool measures itself.
+
+## `looper docs`
+
+```
+looper docs <dir>
+```
+
+Reports every flag the markdown under `<dir>` (and `<dir>/references/`) attributes to
+a script that does not have it. SKILL.md documented a `--max-cycles` flag for a full
+day after it was deleted; this is the cheap half of that finding class. The expensive
+half — prose that states a step order the scripts refuse — still needs a reader.
+
+A flag counts as declared if its literal appears anywhere in the script's source.
+Narrower rules were wrong in both directions: matching only `add_argument(` missed a
+script that parses `sys.argv` by hand, and reading `--help` output would make a script
+that cannot start look flagless.
+
+Attribution is per line: a flag is checked against the scripts named on the same line.
+Prose spanning lines is skipped rather than guessed at — the aim is a signal worth
+acting on every time it fires, not a complete one.
