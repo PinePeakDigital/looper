@@ -1,0 +1,14 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineToleratesUntrackedLitter'
+expect: --- FAIL:
+why:    untracked litter left by a verify command aborts the whole run, claiming the committed bytes are untrustworthy when nothing tracked was touched
+--- old
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" || strings.HasPrefix(line, "??") {
+			continue
+		}
+--- new
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}

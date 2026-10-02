@@ -1,0 +1,17 @@
+target: internal/mutate/baseline.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRanNothingNeedsEveryPackageToHaveRunNothing|TestMultiPackageRunIsNotVacuous'
+expect: --- FAIL:
+why:    a multi-package run is called vacuous because one unrelated package matched nothing, turning real coverage into a reported hole
+--- old
+	for _, line := range strings.Split(output, "\n") {
+		// Per-package result lines. One of them without the marker means something ran.
+		if strings.HasPrefix(line, "ok") || strings.HasPrefix(line, "--- ") ||
+			strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "PASS") {
+			if !strings.Contains(line, noTestsRun) {
+				return false
+			}
+		}
+	}
+	return true
+--- new
+	return true

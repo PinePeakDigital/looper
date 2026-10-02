@@ -1,13 +1,8 @@
 target: internal/mutate/baseline.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestBaselineRefusesIfACommandDirtiesTheTree'
 expect: --- FAIL:
-why:    a verify command that writes a tracked file during the baseline goes unnoticed, so later mutations restore post-baseline bytes
+why:    a verify command that rewrites a tracked file during the baseline goes unnoticed, so later mutations restore post-baseline bytes
 --- old
-	if err := r.requireCleanTree(); err != nil {
-		return nil, fmt.Errorf("a verify command changed the working tree during the "+
-			"baseline run, so the original bytes can no longer be trusted:\n%w", err)
-	}
+	if dirty := r.dirtyTracked(); dirty != "" {
 --- new
-	if err := error(nil); err != nil {
-		return nil, err
-	}
+	if dirty := ""; dirty != "" {
