@@ -1,0 +1,13 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCaughtAndRestored'
+expect: --- FAIL:
+why:    restore fires before the verify commands run, so they never see the mutation
+--- old
+	if werr := os.WriteFile(target, mutated, perm); werr != nil {
+		return Result{}, fmt.Errorf("writing %s: %w", target, werr)
+	}
+--- new
+	if werr := os.WriteFile(target, mutated, perm); werr != nil {
+		return Result{}, fmt.Errorf("writing %s: %w", target, werr)
+	}
+	_ = restore()
