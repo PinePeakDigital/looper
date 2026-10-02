@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestEveryDetailLineIsIndented'
+expect: detail line runs into the summary line above it
+why:    the six-space prefix is what separates a mutation's captured output from the summary line above it in the report, and nothing asserted it — the prefix could be dropped entirely with the suite green
+--- old
+		out[i] = "      " + l
+--- new
+		out[i] = l

@@ -710,7 +710,10 @@ func TestTailDoesNotMarkACutItDidNotMake(t *testing.T) {
 	// Asserted first, because the check below is an ABSENCE and an absence is satisfied by
 	// returning nothing at all: `return ""` as tail()'s first statement passed this test.
 	if !strings.Contains(got, "FAIL  the very first line") {
-		t.Fatalf("window lost the failure it is supposed to start at:\n%s", got)
+		// Errorf, not Fatalf: the check below is a total function on `got`, so letting it
+		// run reports a compound defect — content dropped AND a cut claimed that never
+		// happened — in one go instead of one symptom at a time.
+		t.Errorf("window lost the failure it is supposed to start at:\n%s", got)
 	}
 	if strings.HasPrefix(strings.TrimLeft(got, " "), "…") {
 		t.Errorf("window starts at line 0 but claims it cut something:\n%s", got)
@@ -805,5 +808,19 @@ func TestLstatFailureFallsThroughToTheTrackedCheck(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not track") {
 		t.Errorf("error does not name the actual problem: %v", err)
+	}
+}
+
+// indent is what separates the captured output from the summary line above it in the CLI
+// report, and nothing checked it: stripping the prefix entirely left the whole suite green.
+// Cosmetic, but the detail line is the one thing an operator actually reads.
+func TestEveryDetailLineIsIndented(t *testing.T) {
+	// A blank line in the middle, because that is the one a prefix loop is most likely to
+	// skip and the one that would visually break the block.
+	got := tail("alpha\n\nbeta\n")
+	for _, l := range strings.Split(got, "\n") {
+		if !strings.HasPrefix(l, "      ") {
+			t.Errorf("detail line runs into the summary line above it: %q", l)
+		}
 	}
 }
