@@ -7,6 +7,10 @@ why:    keeping only the lines that carry a failure marker throws away the line 
 	if i := firstFailure(lines); i >= 0 && i < start {
 		start = i // ...unless something earlier looks like the failure itself
 	}
+	// The min never binds, and that is worth stating rather than leaving to be rediscovered:
+	// the fallback puts start+tailLines exactly at len(lines), and anchoring only happens when
+	// i < start, so an anchored window ends strictly before it. Kept as a bound on a slice
+	// index anyway — if the anchor condition above is ever widened, truncating beats panicking.
 	end := min(start+tailLines, len(lines))
 
 	window := make([]string, 0, tailLines+2)

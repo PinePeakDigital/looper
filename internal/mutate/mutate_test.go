@@ -860,15 +860,17 @@ func TestTailFallbackWindowIsExactlyTheLastNLines(t *testing.T) {
 	lines := noise(tailLines * 3) // no marker anywhere, so the window falls back to the end
 	got := strings.Split(tail(strings.Join(lines, "\n")), "\n")
 
-	if len(got) != tailLines+1 {
-		t.Fatalf("want %d lines (one leading marker + %d), got %d:\n%s",
-			tailLines+1, tailLines, len(got), strings.Join(got, "\n"))
+	// Errorf throughout, not Fatalf. A count check that stops the test does all the work and
+	// leaves the three assertions after it decorative — which is how this test first reported
+	// two different defects with the same message, and the harness called both broken.
+	if n := contentLines(got); n != tailLines {
+		t.Errorf("window holds %d lines, want exactly %d:\n%s", n, tailLines, strings.Join(got, "\n"))
 	}
 	if strings.TrimSpace(got[0]) != "…" {
 		t.Errorf("first line is not the elision marker: %q", got[0])
 	}
-	if want := lines[len(lines)-tailLines]; !strings.Contains(got[1], want) {
-		t.Errorf("window starts one line off: want %q, got %q", want, got[1])
+	if want, first := lines[len(lines)-tailLines], firstContentLine(got); !strings.Contains(first, want) {
+		t.Errorf("window starts one line off: want %q, got %q", want, first)
 	}
 	// The window reaches the end of the output, so there is nothing to mark as cut.
 	if strings.TrimSpace(got[len(got)-1]) == "…" {
@@ -885,4 +887,25 @@ func TestTailDoesNotAppendABlankLineForTrailingNewline(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("want 2 detail lines, got %d — a trailing newline became a blank line: %q", len(got), got)
 	}
+}
+
+// contentLines counts the lines of a detail that are not an elision marker.
+func contentLines(detail []string) int {
+	n := 0
+	for _, l := range detail {
+		if strings.TrimSpace(l) != "…" {
+			n++
+		}
+	}
+	return n
+}
+
+// firstContentLine returns the first line of a detail that is not an elision marker.
+func firstContentLine(detail []string) string {
+	for _, l := range detail {
+		if strings.TrimSpace(l) != "…" {
+			return l
+		}
+	}
+	return ""
 }
