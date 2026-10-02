@@ -18,7 +18,7 @@ whether the tests are worth anything.
 Reintroduces a known defect into the code, runs the suites that should notice, and
 reports whether they did.
 
-```
+```text
 looper mutate [-catalog mutations] [-root .]
 ```
 
@@ -45,7 +45,7 @@ deduplicated, so this costs far less than one extra run per mutation.
 
 One `.mut` file per defect, under `mutations/`:
 
-```
+```text
 target: internal/mutate/mutate.go
 verify: go test ./internal/mutate/ -count=1 -run 'TestRestoreRecreatesWithTheOriginalMode'
 expect: --- FAIL:
@@ -116,7 +116,7 @@ The catalog's first entries are the runner's own rules, so the tool measures its
 
 ## `looper docs`
 
-```
+```text
 looper docs <dir>
 ```
 

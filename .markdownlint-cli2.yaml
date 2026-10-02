@@ -1,0 +1,11 @@
+# Two rules are off deliberately, so the other 50-odd stay useful.
+#
+# MD013 (line-length) wants 80 columns. The prose here runs to 90 and records the
+# incident behind each rule; reflowing it to 80 would not make it more readable, and 33
+# findings nobody intends to fix is how a linter's output stops being read.
+#
+# MD010 (no-hard-tabs) fires on the `.mut` examples, where the tabs ARE the content: the
+# anchors are Go source and have to match it byte for byte, indentation included.
+config:
+  MD013: false
+  MD010: false
