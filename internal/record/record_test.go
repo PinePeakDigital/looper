@@ -90,6 +90,11 @@ func TestConvergenceRules(t *testing.T) {
 		// The deterministic pass changing files is unfinished work too.
 		{"analysis changing files is not converged", Halted, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3,"analysis_changed":true}`}},
+		// One agent short of the cap is not capped. The other half of the boundary: with
+		// only the at-cap case pinned, an off-by-one that fires early reads as correct.
+		{"one agent short of the cap is not capped", Halted, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":7}`}},
 		// Spend exactly at the cap is capped, not halted. The boundary, stated.
 		{"spend exactly at the cap is capped", Capped, []string{
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,

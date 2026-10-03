@@ -71,6 +71,11 @@ var fixtures = map[string][]string{
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":-5}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":10}`,
 	},
+	// One agent short of the cap: the other half of the boundary.
+	"one-short-of-the-cap": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":7}`,
+	},
 	// A final zero-fix cycle: the only shape that converges.
 	"converged": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
