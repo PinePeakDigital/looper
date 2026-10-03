@@ -40,6 +40,37 @@ func runlogPath(t *testing.T) string {
 
 // fixtures are stores to compare on. Each is a list of JSONL rows.
 var fixtures = map[string][]string{
+	// A cycle row with NO `applied` field. The Python compares `last.get("applied") == 0`,
+	// and `None == 0` is False, so absence does not satisfy the converged branch — this
+	// derives halted. Routing it through a helper that maps absent to 0 derived
+	// `converged` instead, which is a clean result bought by omitting a field.
+	"applied-absent-is-not-zero": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"agents":5}`,
+	},
+	// `applied: null` is the same case spelled explicitly.
+	"applied-null-is-not-zero": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":null,"agents":5}`,
+	},
+	// Converged wins over capped when BOTH predicates hold: a last cycle that applied
+	// nothing, at a spend that also reaches the cap. Every other fixture has only one of
+	// the two true, so swapping those two branches passed the whole suite and this gate.
+	"converged-beats-capped-at-the-boundary": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`,
+	},
+	// An empty list is falsy in Python, so `asked: []` does not block the converged branch.
+	"empty-asked-list-is-falsy": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":[],"agents":2}`,
+	},
+	// A negative cap is truthy in Python's bare `if cap`, so any spend clears it.
+	// cmd_plan refuses to write one, but the store is append-only and never rewritten.
+	"negative-cap-is-still-a-cap": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":-5}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":10}`,
+	},
 	// A final zero-fix cycle: the only shape that converges.
 	"converged": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,

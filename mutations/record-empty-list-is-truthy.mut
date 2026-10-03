@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: an_empty_asked_list_is_falsy
+why:    Python's `not x` is False for an empty list or dict, so `asked: []` does not block the converged branch. Go's default case returned `v != nil`, and a non-nil empty slice boxed in an interface is not nil — so an empty list read as truthy and blocked it. The record's vocabulary is open, so nothing stops a count field from holding a list.
+--- old
+	case []any:
+		return len(t) != 0 // Python: an empty list is falsy
+	case map[string]any:
+		return len(t) != 0 // Python: an empty dict is falsy
+	default:
+--- new
+	default:

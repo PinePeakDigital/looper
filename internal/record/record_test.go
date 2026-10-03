@@ -3,6 +3,7 @@ package record
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,29 @@ func TestConvergenceRules(t *testing.T) {
 		want string
 		rows []string
 	}{
+		// A MISSING `applied` is not zero. The Python compares `last.get("applied") == 0`
+		// and `None == 0` is False, so absence falls through to the cap/halted path.
+		// Reading absence as zero derived Converged here — a clean result, with no
+		// disclosure, bought by leaving a field out.
+		{"a cycle with no applied field is not converged", Halted, []string{plan,
+			`{"run_id":"r","phase":"cycle","n":1,"agents":5}`}},
+		{"an explicitly null applied is not converged", Halted, []string{plan,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":null,"agents":5}`}},
+		// Converged is checked BEFORE capped, and this is the only shape where both
+		// predicates are true at once, so it is the only case that can fail if the two
+		// branches are swapped. Without it the ordering was free to invert.
+		{"a converged last cycle wins over a cap it also reached", Converged, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`}},
+		// An empty list is falsy in Python; treating a non-nil empty slice as truthy
+		// blocked the converged branch.
+		{"an empty asked list is falsy", Converged, []string{plan,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":[],"agents":2}`}},
+		// The Python cap guard is a bare `if cap`, so a negative cap is truthy and any
+		// spend clears it. cmd_plan will not write one; the store keeps what it has.
+		{"a negative cap is still a cap", Capped, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":-5}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":10}`}},
 		{"a final zero-fix cycle converges", Converged, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":6}`,
 			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"agents":2}`}},
@@ -162,6 +186,54 @@ func TestMissingStoreIsEmpty(t *testing.T) {
 // `n/a` is success, not a drop: a gate that cannot apply is not a gate that was dropped.
 // With a `status == "done"` test instead, every n/a counted as dropped and the Step 0
 // alarm fired permanently on gates nobody could fix.
+// Every falsy status collapses to "unreported", not just an absent entry. The Python
+// stores `st or "unreported"`, so "", 0 and false all land there too. Defaulting only on
+// absence reported `""`, `"0"` and `"false"` — a parity break, and an alarm line naming
+// nothing. The status vocabulary is open (cmd_finish never validates the string) and a
+// non-string status reaching this path has already happened once.
+func TestDroppedGatesCollapsesEveryFalsyStatus(t *testing.T) {
+	runs, err := Load(store(t,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g_empty":{"planned":"run"},"g_false":{"planned":"run"},"g_zero":{"planned":"run"},"g_absent":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g_empty":{"status":""},"g_false":{"status":false},"g_zero":{"status":0}}}`), 0)
+	if err != nil {
+		t.Fatalf("store did not load: %v", err)
+	}
+	got := runs["r"].DroppedGates()
+	for _, g := range []string{"g_empty", "g_false", "g_zero", "g_absent"} {
+		if got[g] != "unreported" {
+			t.Errorf("gate %s reported %q, want \"unreported\" — a falsy status must not reach the caller verbatim", g, got[g])
+		}
+	}
+}
+
+// An over-long line must not invalidate the store either. A bufio.Scanner caps the line
+// length and then reports ErrTooLong, which discarded every run already parsed — and it
+// fires on the same input the torn-line tolerance exists for, a half-written line from a
+// concurrent writer. runlog.py has no ceiling on record size.
+func TestAnOverlongLineDoesNotInvalidateTheStore(t *testing.T) {
+	// The over-long row is valid JSON, just large — so it must be READ and USED, not
+	// merely survived. Making it the last cycle, with the fields that decide the answer,
+	// is what proves that: if it were dropped the answer would come from cycle 1 instead.
+	huge := `{"run_id":"r","phase":"cycle","n":2,"applied":0,"agents":2,"junk":"` +
+		strings.Repeat("x", 17*1024*1024) + `"}`
+	runs, err := Load(store(t, plan,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":6}`,
+		huge), 0)
+	if err != nil {
+		t.Fatalf("an over-long line discarded the whole store: %v", err)
+	}
+	if runs["r"] == nil {
+		t.Fatal("an over-long line discarded the whole store")
+	}
+	if n := len(runs["r"].Cycles); n != 2 {
+		t.Errorf("kept %d cycle rows, want 2 — the over-long row was dropped", n)
+	}
+	// Cycle 1 alone would be Halted; only reading the over-long cycle 2 gives Converged.
+	if got := runs["r"].Convergence(); got != Converged {
+		t.Errorf("convergence = %q, want %q — the over-long row was not used", got, Converged)
+	}
+}
+
 func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	runs, err := Load(store(t,
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"a":{"planned":"run"},"b":{"planned":"run"},"c":{"planned":"run"},"d":{"planned":"skip"}}}`,

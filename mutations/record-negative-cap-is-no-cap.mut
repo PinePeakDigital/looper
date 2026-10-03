@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: a_negative_cap_is_still_a_cap
+why:    the Python cap guard is a bare `if cap`, which is plain truthiness, so a negative cap is a cap there and any spend clears it. `cap > 0` excludes negative caps and derives halted instead. cmd_plan refuses a non-positive --agent-cap so no new row can carry one, but the store is append-only and never rewritten, so a legacy or hand-written row reads differently in the two implementations.
+--- old
+	if cap != 0 && spent >= cap {
+--- new
+	if cap > 0 && spent >= cap {

@@ -5,3 +5,7 @@
 # here. It must be IGNORED, not merely untracked: `git status --porcelain` lists
 # untracked paths, so the mutation-score step's clean-tree guard aborted on it.
 .parity-oracle/
+# CI writes the verbose record-package test output here so the next step can assert the
+# parity gate did not skip. Ignored for the same reason as above: the mutation-score step
+# runs afterwards and its clean-tree guard counts untracked paths.
+record.log

@@ -16,7 +16,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 )
 
 // Row is one line of the append-only store. The record's vocabulary is open — cmd_finish
@@ -51,14 +53,25 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	}
 	defer f.Close()
 
+	// Read with a bufio.Reader, not a Scanner. A Scanner caps the line length and then
+	// reports ErrTooLong, which aborted the WHOLE load and discarded every run already
+	// parsed — the exact opposite of the torn-line tolerance below, and on the same
+	// input: a half-written line from a concurrent writer is where an over-long read
+	// comes from. runlog.py iterates the file with no ceiling on record size, and its
+	// own comment says records are unbounded, so a ceiling here is a parity break too.
 	var lines []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if line != "" {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err // a real I/O error still surfaces; only size does not
+		}
 	}
 	if limit > 0 && len(lines) > limit {
 		lines = lines[len(lines)-limit:]
@@ -126,7 +139,14 @@ func (r *Run) Convergence() string {
 	// auto-fix bucket, and so is the ask bucket: a cycle that routed every finding to the
 	// user and resolved none has not run out of findings, it has run out of what it may
 	// do unattended.
-	if num(last["applied"]) == 0 && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
+	// `isZero`, not `num(...) == 0`. The Python is `last.get("applied") == 0`, where a
+	// MISSING or null `applied` is None and `None == 0` is False — absence does NOT read
+	// as zero here, unlike the `or 0` sites above and below. Routing this through num(),
+	// which maps absent and null to 0, made a cycle row with no `applied` field derive
+	// `converged` where the Python derives `halted`. That is the one direction that
+	// matters: it buys a clean result, with no disclosure, by omitting a field — which is
+	// the hole the unresolved_asks check above was added to close, reopened one line down.
+	if isZero(last["applied"]) && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
 		return Converged
 	}
 
@@ -135,7 +155,11 @@ func (r *Run) Convergence() string {
 	for _, c := range r.Cycles {
 		spent += num(c["agents"])
 	}
-	if cap > 0 && spent >= cap {
+	// `cap != 0`, not `cap > 0`: the Python guard is a bare `if cap`, so a negative cap is
+	// truthy there and any spend clears it. cmd_plan refuses a non-positive --agent-cap,
+	// so no NEW row can carry one, but the store is append-only and never rewritten, so a
+	// legacy or hand-written row still reads differently in the two implementations.
+	if cap != 0 && spent >= cap {
 		return Capped
 	}
 
@@ -163,8 +187,28 @@ func truthy(v any) bool {
 		return t != 0
 	case string:
 		return t != ""
+	case []any:
+		return len(t) != 0 // Python: an empty list is falsy
+	case map[string]any:
+		return len(t) != 0 // Python: an empty dict is falsy
 	default:
 		return v != nil
+	}
+}
+
+// isZero mirrors Python's `x == 0` rather than its `not x`. The two differ on exactly the
+// case that matters: absence. `None == 0` is False, so a missing key is NOT zero — while
+// `False == 0` is True, so a JSON false is. Nothing else in this record compares this way;
+// `applied` is the one site, and it is the one where reading absence as zero awards a
+// `converged` the run did not earn.
+func isZero(v any) bool {
+	switch t := v.(type) {
+	case float64:
+		return t == 0
+	case bool:
+		return !t // Python: False == 0 is True, True == 0 is False
+	default:
+		return false // absent, null, a string, a list: none of them equal 0 in Python
 	}
 }
 
@@ -200,15 +244,28 @@ func (r *Run) DroppedGates() map[string]string {
 	executed, _ := r.Fields["executed"].(map[string]any)
 	out := map[string]string{}
 	for name := range planned {
-		status := "unreported"
+		var raw any
 		if e, ok := executed[name].(map[string]any); ok {
-			if s, ok := e["status"]; ok && s != nil {
-				status = fmt.Sprint(s)
-			}
+			raw = e["status"]
 		}
-		if !gateOK(status) {
-			out[name] = status
+		status := ""
+		if raw != nil {
+			status = fmt.Sprint(raw)
 		}
+		if gateOK(status) {
+			continue
+		}
+		// The Python stores `st or "unreported"`, so EVERY falsy status collapses to
+		// "unreported" — not just an absent entry, but also "", 0 and false. Defaulting
+		// only on absence reported `""`, `"0"` and `"false"` instead, which is both a
+		// parity break and a worse alarm line: the status is what names the gate's
+		// problem, and an empty one names nothing. None of these is hypothetical — the
+		// vocabulary is open (cmd_finish never validates the status string) and a
+		// non-string status reaching this path has already happened once.
+		if !truthy(raw) {
+			status = "unreported"
+		}
+		out[name] = status
 	}
 	return out
 }

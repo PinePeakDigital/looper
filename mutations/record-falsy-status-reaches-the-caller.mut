@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDroppedGatesCollapsesEveryFalsyStatus'
+expect: a falsy status must not reach the caller verbatim
+why:    the Python stores `st or "unreported"`, so EVERY falsy status collapses to "unreported" — not only an absent entry but also "", 0 and false. Defaulting only on absence reported "", "0" and "false" to the caller: a parity break, and an alarm line that names nothing where the status is the only thing naming the gate's problem. Not hypothetical — the status vocabulary is open because cmd_finish never validates the string, and a non-string status reaching this path has already happened once.
+--- old
+		if !truthy(raw) {
+			status = "unreported"
+		}
+--- new
+		if raw == nil {
+			status = "unreported"
+		}

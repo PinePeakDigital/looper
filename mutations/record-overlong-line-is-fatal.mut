@@ -1,0 +1,31 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestAnOverlongLineDoesNotInvalidateTheStore'
+expect: an over-long line discarded the whole store
+why:    a bufio.Scanner caps the line length and then reports ErrTooLong, which aborted the whole Load and discarded every run already parsed. It fires on exactly the input the torn-line tolerance below exists for — a half-written line from a concurrent writer — so the ceiling defeats the guarantee the function documents. runlog.py iterates the file with no ceiling and its own comment says records are unbounded in size, so a ceiling is a parity break too.
+--- old
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if line != "" {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err // a real I/O error still surfaces; only size does not
+		}
+	}
+--- new
+	var lines []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	_ = io.EOF
+	_ = strings.TrimRight

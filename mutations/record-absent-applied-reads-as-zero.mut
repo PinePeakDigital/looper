@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: a_cycle_with_no_applied_field_is_not_converged
+why:    the Python compares `last.get("applied") == 0`, and `None == 0` is False, so a MISSING or null applied does NOT satisfy the converged branch — it falls through to cap/halted. Routing it through num(), which maps absent and null to 0, derived `converged` where the Python derives `halted`: a clean result with no disclosure, bought by leaving a field out. That is the same hole the unresolved_asks check above exists to close, reopened one line below it.
+--- old
+	if isZero(last["applied"]) && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
+--- new
+	if num(last["applied"]) == 0 && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
