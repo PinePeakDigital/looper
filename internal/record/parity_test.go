@@ -76,6 +76,14 @@ var fixtures = map[string][]string{
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":7}`,
 	},
+	// An empty `unresolved_asks` is none, exactly as absent is — Python's `"" or 0`. The
+	// non-empty-string case cannot live here: the Python raises TypeError on it, so there
+	// is no answer to compare. record_test.go states the Go answer directly instead.
+	"empty-asks-value-is-not-outstanding": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":""}`,
+	},
 	// A final zero-fix cycle: the only shape that converges.
 	"converged": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,

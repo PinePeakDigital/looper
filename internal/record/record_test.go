@@ -87,6 +87,18 @@ func TestConvergenceRules(t *testing.T) {
 		{"asks recorded only at finish are still outstanding", Halted, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
 			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// An unreadable `unresolved_asks` must not read as "no asks". This is the only
+		// guard where falsy waves the run through, so a string where a count belongs
+		// collapsed to 0 and derived `converged` — a clean push, no disclosure, seven
+		// findings outstanding. The Python raises TypeError on the same input; halted and
+		// a crash both deny the push, and only one of them keeps reading the store.
+		{"an unreadable asks count is still outstanding", Halted, []string{plan,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":"7"}`}},
+		// ...but an EMPTY one is genuinely none, the same as absent — Python's `"" or 0`.
+		{"an empty asks value is not outstanding", Converged, []string{plan,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":""}`}},
 		// The deterministic pass changing files is unfinished work too.
 		{"analysis changing files is not converged", Halted, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3,"analysis_changed":true}`}},

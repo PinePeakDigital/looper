@@ -130,7 +130,17 @@ func (r *Run) Convergence() string {
 	// short-circuited this and the hole stayed open: `cycle --applied 0` with no --asked,
 	// then `finish --asks 7`, derived converged with no disclosure while seven findings
 	// sat unresolved and the report said nothing was left to apply.
-	if num(r.Fields["unresolved_asks"]) > 0 {
+	// Not `num(...) > 0`. This is the one guard where FALSY means "carry on to the
+	// converged check", so a value num() cannot read — a string where a count belongs —
+	// collapsed to 0 and waved the run through. Measured: `unresolved_asks: "7"` with a
+	// zero-fix last cycle derived `converged` in Go while the Python raised TypeError. A
+	// clean push, no disclosure, seven findings outstanding: this guard's own hole,
+	// reopened through a type confusion rather than an ordering mistake.
+	//
+	// `asked` and `analysis_changed` below are safe from this by accident of polarity —
+	// they are tested with `!truthy(...)`, so an unreadable value BLOCKS convergence. Only
+	// this one had to be told.
+	if asksOutstanding(r.Fields["unresolved_asks"]) {
 		return Halted
 	}
 
@@ -177,9 +187,11 @@ func (r *Run) Convergence() string {
 // a traceback instead of returning any of the four words; `agent_cap: "40"` likewise.
 // Matching that exactly would mean reproducing an unhandled crash, which is not a decision
 // the original made, just a place it has none. Degrading to zero is safe in the only
-// direction that matters here: every answer it can produce for a malformed numeric is
-// non-converged, so a corrupt row can never buy a clean push — it can only understate a
-// capped run as halted, and both deny the push. Reviewed and kept 2026-10-03.
+// direction that matters here — but only because the ONE site where a falsy reading waves
+// a run through now refuses to use it. That was not true when this comment first claimed
+// it: `unresolved_asks: "7"` read as 0 and derived `converged`. See asksOutstanding below.
+// Everywhere else num() is reached, an unreadable value can only understate a capped run
+// as halted, and both of those deny the push. Reviewed and kept 2026-10-03.
 func num(v any) float64 {
 	f, _ := v.(float64)
 	return f
@@ -220,6 +232,21 @@ func isZero(v any) bool {
 	default:
 		return false // absent, null, a string, a list: none of them equal 0 in Python
 	}
+}
+
+// asksOutstanding answers "does the record say findings are still with the user", and it
+// answers YES whenever it cannot tell. Every other reader in this file can degrade a value
+// it cannot parse to zero, because zero there denies a push. Here zero GRANTS one: it is
+// the falsy reading that lets Convergence() go on to award `converged`. So a present
+// value that is neither a number nor empty — a string, a list, anything — counts as
+// outstanding rather than as none. That diverges from the Python, which raises TypeError
+// and dies, and the divergence is deliberate: both refuse the clean push, and this one
+// also keeps reading the rest of the store.
+func asksOutstanding(v any) bool {
+	if f, ok := v.(float64); ok {
+		return f > 0 // the ordinary case: a count
+	}
+	return truthy(v) // absent, null, 0 and "" are none; anything else is unreadable, so yes
 }
 
 // GateOK are the statuses that mean a planned gate was handled. `n/a` is success, not a
