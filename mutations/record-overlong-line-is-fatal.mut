@@ -8,6 +8,10 @@ why:    a bufio.Scanner caps the line length and then reports ErrTooLong, which 
 	for {
 		line, err := br.ReadString('\n')
 		if line != "" {
+			// The \r half is defensive only, and deliberately untested: a trailing \r
+			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
+			// whitespace, so no assertion here can distinguish trimming it from not. A
+			// test for it would pass either way, which is worse than no test.
 			lines = append(lines, strings.TrimRight(line, "\r\n"))
 		}
 		if err != nil {

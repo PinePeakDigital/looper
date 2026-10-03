@@ -1,24 +1,45 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestALastLineWithNoNewlineIsStillRead'
 expect: the unterminated last line was dropped
-why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, so the append has to happen before the error is tested. Moving it below the break silently drops the last line of any store that does not end in a newline — and that line is usually the finish row, so losing it turns a finished run into an unfinished one without any error.
+why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, so the append has to happen before the error is tested. Breaking on EOF first silently drops the last line of any store that does not end in a newline — and that line is usually the finish row, so losing it turns a finished run into an unfinished one without any error.
 --- old
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
 		line, err := br.ReadString('\n')
 		if line != "" {
+			// The \r half is defensive only, and deliberately untested: a trailing \r
+			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
+			// whitespace, so no assertion here can distinguish trimming it from not. A
+			// test for it would pass either way, which is worse than no test.
 			lines = append(lines, strings.TrimRight(line, "\r\n"))
 		}
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
+			return nil, err // a real I/O error still surfaces; only size does not
+		}
+	}
 --- new
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
 		line, err := br.ReadString('\n')
+		if err != nil && err == io.EOF {
+			break // the append now never sees the final unterminated line
+		}
+		if line != "" {
+			// The \r half is defensive only, and deliberately untested: a trailing \r
+			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
+			// whitespace, so no assertion here can distinguish trimming it from not. A
+			// test for it would pass either way, which is worse than no test.
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
+			return nil, err // a real I/O error still surfaces; only size does not
 		}
-		if line != "" {
-			lines = append(lines, strings.TrimRight(line, "\r\n"))
-		}
-		if err != nil {
+	}
