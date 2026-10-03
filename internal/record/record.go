@@ -170,6 +170,16 @@ func (r *Run) Convergence() string {
 
 // num reads a JSON number, treating absent and null as zero. json.Unmarshal into `any`
 // gives float64 for every number, so there is one numeric type to handle.
+//
+// It also maps a NON-numeric value — a string where a count belongs — to zero, and that is
+// a deliberate divergence from the Python rather than an oversight. The Python does
+// arithmetic on the raw value, so `agents: "5"` raises TypeError and the process dies with
+// a traceback instead of returning any of the four words; `agent_cap: "40"` likewise.
+// Matching that exactly would mean reproducing an unhandled crash, which is not a decision
+// the original made, just a place it has none. Degrading to zero is safe in the only
+// direction that matters here: every answer it can produce for a malformed numeric is
+// non-converged, so a corrupt row can never buy a clean push — it can only understate a
+// capped run as halted, and both deny the push. Reviewed and kept 2026-10-03.
 func num(v any) float64 {
 	f, _ := v.(float64)
 	return f

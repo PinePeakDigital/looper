@@ -1,10 +1,10 @@
 package record
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -153,25 +153,11 @@ var fixtures = map[string][]string{
 	},
 }
 
-func writeFixture(t *testing.T, rows []string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "runs.jsonl")
-	body := ""
-	for _, r := range rows {
-		body += r + "\n"
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func TestConvergenceMatchesThePython(t *testing.T) {
 	script := runlogPath(t)
 	for name, rows := range fixtures {
 		t.Run(name, func(t *testing.T) {
-			path := writeFixture(t, rows)
+			path := store(t, rows...)
 
 			runs, err := Load(path, 0)
 			if err != nil {
@@ -202,7 +188,7 @@ func TestCycleCountMatchesThePython(t *testing.T) {
 	script := runlogPath(t)
 	for name, rows := range fixtures {
 		t.Run(name, func(t *testing.T) {
-			path := writeFixture(t, rows)
+			path := store(t, rows...)
 
 			runs, err := Load(path, 0)
 			if err != nil {
@@ -224,15 +210,10 @@ func TestCycleCountMatchesThePython(t *testing.T) {
 				t.Fatalf("python side failed: %v\n%s", err, out)
 			}
 			want := strings.TrimSpace(string(out))
-			if gotS := itoa(got); gotS != want {
+			if gotS := strconv.Itoa(got); gotS != want {
 				t.Errorf("cycle count disagrees: Go %s, Python %s\nfixture:\n%s",
 					gotS, want, strings.Join(rows, "\n"))
 			}
 		})
 	}
 }
-
-func itoa(n int) string { return strings.TrimSpace(fmt_Sprint(n)) }
-
-// fmt_Sprint keeps the import list honest about what this file uses it for.
-func fmt_Sprint(n int) string { return fmt.Sprint(n) }
