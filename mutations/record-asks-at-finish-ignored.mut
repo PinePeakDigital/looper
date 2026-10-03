@@ -1,12 +1,10 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
-expect: convergence = "converged", want "halted"
-why:    moving the unresolved-asks test after the converged test reopens the omission path the Python records — a zero-fix last cycle with the asks recorded only at finish derived converged, with no disclosure, while seven findings sat unresolved
+expect: asks_recorded_only_at_finish_are_still_outstanding
+why:    deleting the unresolved-asks guard reopens the omission path the Python records — a zero-fix last cycle with the asks recorded only at finish derived converged, with no disclosure, while seven findings sat unresolved with the user and the report said nothing was left to apply. Pinned to the subtest name rather than to `convergence = "converged", want "halted"`, which several table cases can print.
 --- old
-	if num(r.Fields["unresolved_asks"]) > 0 {
+	if asksOutstanding(r.Fields["unresolved_asks"]) {
 		return Halted
 	}
 
-	// Converged means the loop stopped with nothing left to do
 --- new
-	// Converged means the loop stopped with nothing left to do
