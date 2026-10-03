@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTailLimitKeepsTheNewestRows'
+expect: the tail dropped the newest run
+why:    taking the first n lines instead of the last makes every derived answer describe runs that have already scrolled away, while looking exactly as healthy
+--- old
+	if limit > 0 && len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+--- new
+	if limit > 0 && len(lines) > limit {
+		lines = lines[:limit]
+	}

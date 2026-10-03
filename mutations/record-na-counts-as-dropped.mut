@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDroppedGatesTreatsNAAsHandled'
+expect: an `n/a` gate was reported dropped
+why:    a gate that cannot apply was not dropped. With a done-only test instead, every n/a counted as a dropped gate and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a reader to scroll past the alarms that are right
+--- old
+var GateOK = []string{"done", "n/a"}
+--- new
+var GateOK = []string{"done"}

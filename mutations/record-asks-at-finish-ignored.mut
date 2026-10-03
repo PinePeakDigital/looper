@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: convergence = "converged", want "halted"
+why:    moving the unresolved-asks test after the converged test reopens the omission path the Python records — a zero-fix last cycle with the asks recorded only at finish derived converged, with no disclosure, while seven findings sat unresolved
+--- old
+	if num(r.Fields["unresolved_asks"]) > 0 {
+		return Halted
+	}
+
+	// Converged means the loop stopped with nothing left to do
+--- new
+	// Converged means the loop stopped with nothing left to do

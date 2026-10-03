@@ -35,6 +35,17 @@ jobs:
       - run: go vet ./...
       - run: go test -count=1 ./...
 
+      # A deleted catalog entry is silently accepted: the score is computed against
+      # however many .mut files are present, so dropping one gives n-1/n-1 and a green
+      # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
+      # Raise the floor deliberately when adding entries; that edit is the review trail.
+      # (The same gap was found and closed in the skills repo's workflow first.)
+      - name: no catalog entry has gone missing
+        run: |
+          n=$(ls mutations/*.mut | wc -l | tr -d ' ')
+          [ "$n" -ge 67 ] || { echo "only $n mutations, expected at least 67 — was one deleted?"; exit 1; }
+          echo "$n mutations present"
+
       # The suite passing says nothing on its own. This reintroduces each defect in
       # mutations/ and requires the suite to notice. A survivor is a hole: the
       # defect could ship with CI green.

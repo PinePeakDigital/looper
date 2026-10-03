@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: convergence = "halted", want "capped"
+why:    spend exactly at the cap is capped, not halted — a run that used its whole budget with work outstanding must not read as a run that merely stopped
+--- old
+	if cap > 0 && spent >= cap {
+--- new
+	if cap > 0 && spent > cap {

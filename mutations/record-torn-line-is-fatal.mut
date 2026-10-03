@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestUnreadableRowsDoNotInvalidateTheStore'
+expect: a torn line discarded the whole store
+why:    the store is append-only and written by concurrent sessions, so a half-written last line is expected — treating it as fatal throws away every run that was recorded correctly
+--- old
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue // a torn line never invalidates the rest of the store
+		}
+--- new
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			return nil, err
+		}
