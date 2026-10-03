@@ -112,8 +112,11 @@ func TestUnreadableRowsDoNotInvalidateTheStore(t *testing.T) {
 		``,
 		`{"phase":"cycle","n":9,"applied":9,"agents":9}`,
 		`{"run_id":"broke`), 0)
+	// The claim can fail two ways — an error back, or the good run missing — and both
+	// are the same defect, so both say so. A bare t.Fatal(err) here reported the JSON
+	// parse error instead, leaving the assertion below decorative.
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("a torn line discarded the whole store: %v", err)
 	}
 	if runs["r"] == nil {
 		t.Fatal("a torn line discarded the whole store")
