@@ -5,8 +5,6 @@ why:    Python's `not x` is False for an empty list or dict, so `asked: []` does
 --- old
 	case []any:
 		return len(t) != 0 // Python: an empty list is falsy
-	case map[string]any:
-		return len(t) != 0 // Python: an empty dict is falsy
-	default:
 --- new
-	default:
+	case []any:
+		return v != nil // the default branch's behaviour, restored for lists only

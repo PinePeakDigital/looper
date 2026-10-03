@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 74 mutations x the 5-minute per-command verify timeout is a ~370-minute worst case
+    # 76 mutations x the 5-minute per-command verify timeout is a ~380-minute worst case
     # if something makes every verify hang, and the GitHub default is 360. A typical run
     # is a couple of minutes, so this fails fast and cheap instead.
     timeout-minutes: 20
@@ -85,7 +85,7 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 74 ] || { echo "only $n mutations, expected at least 74 — was one deleted?"; exit 1; }
+          [ "$n" -ge 76 ] || { echo "only $n mutations, expected at least 76 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

@@ -64,6 +64,10 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	for {
 		line, err := br.ReadString('\n')
 		if line != "" {
+			// The \r half is defensive only, and deliberately untested: a trailing \r
+			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
+			// whitespace, so no assertion here can distinguish trimming it from not. A
+			// test for it would pass either way, which is worse than no test.
 			lines = append(lines, strings.TrimRight(line, "\r\n"))
 		}
 		if err != nil {
@@ -214,6 +218,10 @@ func truthy(v any) bool {
 	case map[string]any:
 		return len(t) != 0 // Python: an empty dict is falsy
 	default:
+		// Unreachable in practice: json.Unmarshal into `any` yields only nil, bool,
+		// float64, string, []any and map[string]any, and all six are handled above. Kept
+		// because the compiler cannot know that, and because a Row can in principle be
+		// built in Go rather than decoded.
 		return v != nil
 	}
 }

@@ -25,6 +25,17 @@ func store(t *testing.T, rows ...string) string {
 	return path
 }
 
+// rawStore writes the bytes verbatim. store() always ends the last row with a newline,
+// so it cannot produce the shape this exists for: a store whose final line has none.
+func rawStore(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "runs.jsonl")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func convergenceOf(t *testing.T, rows ...string) string {
 	t.Helper()
 	runs, err := Load(store(t, rows...), 0)
@@ -248,6 +259,47 @@ func TestAnOverlongLineDoesNotInvalidateTheStore(t *testing.T) {
 	// Cycle 1 alone would be Halted; only reading the over-long cycle 2 gives Converged.
 	if got := runs["r"].Convergence(); got != Converged {
 		t.Errorf("convergence = %q, want %q — the over-long row was not used", got, Converged)
+	}
+}
+
+// A store whose last line has no terminating newline must still yield that line. The
+// reader appends what ReadString returned BEFORE testing the error, because at EOF it
+// returns the final partial line together with io.EOF — move the append below the break
+// and the last row vanishes. That row is usually the finish row, so losing it silently
+// turns a finished run into an unfinished one.
+func TestALastLineWithNoNewlineIsStillRead(t *testing.T) {
+	body := plan + "\n" +
+		`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":6}` + "\n" +
+		`{"run_id":"r","phase":"cycle","n":2,"applied":0,"agents":2}` // no trailing newline
+	runs, err := Load(rawStore(t, body), 0)
+	if err != nil {
+		t.Fatalf("a store with no trailing newline failed to load: %v", err)
+	}
+	if runs["r"] == nil {
+		t.Fatal("a store with no trailing newline produced no run")
+	}
+	if n := len(runs["r"].Cycles); n != 2 {
+		t.Errorf("kept %d cycle rows, want 2 — the unterminated last line was dropped", n)
+	}
+	// Cycle 1 alone is Halted; only reading the unterminated cycle 2 gives Converged.
+	if got := runs["r"].Convergence(); got != Converged {
+		t.Errorf("convergence = %q, want %q — the unterminated last line was dropped", got, Converged)
+	}
+}
+
+// An empty collection is falsy in Python whether it is a list or a dict. The list half had
+// a test; the dict half had none, and the one catalog entry deleted both cases together so
+// it could not tell them apart either. Removing only the map case leaves Go's `v != nil`
+// default, which is true for a non-nil empty map — blocking a convergence Python grants.
+func TestAnEmptyAskedDictIsFalsy(t *testing.T) {
+	if got := convergenceOf(t, plan,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":{},"agents":2}`); got != Converged {
+		t.Errorf("convergence = %q, want %q — an empty dict read as truthy", got, Converged)
+	}
+	// And the converse, so the case is not satisfied by treating every map as falsy.
+	if got := convergenceOf(t, plan,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":{"a":1},"agents":2}`); got != Halted {
+		t.Errorf("convergence = %q, want %q — a non-empty dict read as falsy", got, Halted)
 	}
 }
 

@@ -1,0 +1,24 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestALastLineWithNoNewlineIsStillRead'
+expect: the unterminated last line was dropped
+why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, so the append has to happen before the error is tested. Moving it below the break silently drops the last line of any store that does not end in a newline — and that line is usually the finish row, so losing it turns a finished run into an unfinished one without any error.
+--- old
+		line, err := br.ReadString('\n')
+		if line != "" {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+--- new
+		line, err := br.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+		}
+		if line != "" {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err != nil {
