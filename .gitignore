@@ -1,2 +1,7 @@
 /looper
 .code-analysis/
+
+# CI checks the parity oracle (narthur/skills, for internal/record's parity gate) out
+# here. It must be IGNORED, not merely untracked: `git status --porcelain` lists
+# untracked paths, so the mutation-score step's clean-tree guard aborted on it.
+.parity-oracle/

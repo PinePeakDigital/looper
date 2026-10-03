@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 29 mutations x the 5-minute per-command verify timeout is a ~150-minute worst case
+    # 67 mutations x the 5-minute per-command verify timeout is a ~335-minute worst case
     # if something makes every verify hang, and the GitHub default is 360. A typical run
     # is a couple of minutes, so this fails fast and cheap instead.
     timeout-minutes: 20
@@ -33,7 +33,43 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
       - run: go vet ./...
+
+      # internal/record is a port of runlog.py's read half, and its parity gate compares
+      # against the thing being replaced. Without the script it calls t.Skip, and `go test`
+      # reports a skip as SUCCESS — so this job was green with all 26 parity subtests inert,
+      # which is the whole point of the gate going unmeasured in the one environment that
+      # runs it automatically. The skills repo is public, so no token is involved. Pinned to
+      # a commit, not a branch: a mutable ref would let the oracle change under the gate.
+      - name: fetch the parity oracle
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: narthur/skills
+          ref: 9e4ee3f79c79256afcffff0d6976853287cd2c89
+          path: .parity-oracle
+          persist-credentials: false
+
       - run: go test -count=1 ./...
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+
+      # And prove the gate ran, rather than trusting that it did. A skip is invisible in
+      # the step above: it passes identically whether 26 subtests compared against the
+      # Python or none did. This step fails on a SKIP and on a short count, so the gate
+      # cannot go inert again without CI saying so.
+      - name: the parity gate actually ran
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: |
+          out=$(go test -count=1 -v -run 'MatchesThePython' ./internal/record/ 2>&1) || {
+            echo "$out"; exit 1; }
+          if printf '%s\n' "$out" | grep -q -- '--- SKIP'; then
+            echo "the parity gate SKIPPED — the oracle was not reachable:"; echo "$out"; exit 1
+          fi
+          # awk, not `grep -c`: grep -c exits non-zero on a zero count, which under this
+          # step's `bash -e` would abort here and report the wrong reason for the failure.
+          n=$(printf '%s\n' "$out" | awk '/--- PASS/{c++} END{print c+0}')
+          [ "$n" -ge 26 ] || { echo "only $n parity subtests passed, expected at least 26"; echo "$out"; exit 1; }
+          echo "$n parity subtests compared against runlog.py"
 
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
