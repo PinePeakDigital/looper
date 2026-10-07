@@ -3,9 +3,10 @@ verify: go test ./internal/docs/ -count=1 -run 'TestDeclaredFlagsAreSilent'
 expect: --- FAIL:
 why:    flags that do exist are reported too, so the check gets ignored
 --- old
-					have, known := flags[script[1]]
-					if !known || have[flag[1]] {
+				if script == "" || flags[script][name] {
+					continue
+				}
 --- new
-					have, known := flags[script[1]]
-					_ = have
-					if !known {
+				if script == "" {
+					continue
+				}

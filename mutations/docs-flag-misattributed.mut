@@ -1,8 +1,8 @@
 target: internal/docs/docs.go
-verify: go test ./internal/docs/ -count=1 -run 'TestFlagsAreAttributedPerScript'
+verify: go test ./internal/docs/ -count=1 -run 'TestAStaleFlagIsStillCaughtBesideAnotherScript'
 expect: --- FAIL:
-why:    a flag is credited to the first script named on the line rather than the one it belongs to
+why:    a flag is credited to the first script named on the line rather than the nearest one, so a stale flag is reported against whichever tool the sentence happened to mention first
 --- old
-					out = append(out, Reference{Doc: rel, Line: i + 1, Script: script[1], Flag: flag[1]})
+				script := nearestKnown(line, named, flag[2], flag[3], flags)
 --- new
-					out = append(out, Reference{Doc: rel, Line: i + 1, Script: named[0][1], Flag: flag[1]})
+				script := line[named[0][2]:named[0][3]]

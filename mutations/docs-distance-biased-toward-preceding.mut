@@ -1,0 +1,8 @@
+target: internal/docs/docs.go
+verify: go test ./internal/docs/ -count=1 -run 'TestDistanceIsToTheNearerEdge'
+expect: --- FAIL: TestDistanceIsToTheNearerEdge
+why:    a FOLLOWING script was measured from the flag's start rather than its end, silently adding len(flag) to its distance and biasing every comparison toward preceding mentions. Enough to decide real cases: an owner following at a gap of 5 loses to a non-owner preceding at 10 once 7 characters of "--since" are added to it, and the check then reports the wrong tool. It also made a genuine tie almost unconstructible, which is how the tie rule went unpinned.
+--- old
+			if dist = start - flagEnd; dist < 0 {
+--- new
+			if dist = start - pos; dist < 0 {

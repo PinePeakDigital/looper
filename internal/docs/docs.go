@@ -52,6 +52,22 @@ const helpFlag = "--help"
 // A flag counts as attributed only when the same LINE also names the script. Prose
 // spanning lines is skipped rather than guessed at: the point is a signal that is
 // worth acting on every time it fires, not a complete one.
+//
+// Each flag is attributed to ONE script — the nearest one named on the line that this
+// directory actually contains. It used to be attributed to every script on the line,
+// which made the check fire on correct prose: a sentence naming two tools reported the
+// first as missing the second's flag. That cost the promise one line above, because a
+// signal that fires on correct prose is one readers learn to re-check rather than act
+// on. The original rationale for line-scoped attribution — do not guess across lines —
+// is untouched by this; it never argued for attributing one flag to every script.
+//
+// The cost, recorded here because the commit message is not where a later session will
+// look: a line that states one flag ONCE for several scripts is now checked only against
+// the nearest, so a flag that exists on one of them but not the others goes unreported.
+// "Pass --run-id to both runlog.py and plan.py" and the table row
+// "| --target | batch-files.py, runlog.py |" are the realistic shapes. A flag that exists
+// on NO script in the directory — the failure this package was built for — is unaffected:
+// a 300k-line differential run against the old cross product lost none of those.
 func Check(dir string) ([]Reference, error) {
 	flags, err := scriptFlags(dir)
 	if err != nil {
@@ -83,25 +99,56 @@ func Check(dir string) ([]Reference, error) {
 		}
 		rel, _ := filepath.Rel(dir, doc)
 		for i, line := range strings.Split(string(body), "\n") {
-			named := scriptRef.FindAllStringSubmatch(line, -1)
+			named := scriptRef.FindAllStringSubmatchIndex(line, -1)
 			if len(named) == 0 {
 				continue
 			}
-			for _, flag := range flagRef.FindAllStringSubmatch(line, -1) {
-				if flag[1] == helpFlag {
+			for _, flag := range flagRef.FindAllStringSubmatchIndex(line, -1) {
+				name := line[flag[2]:flag[3]]
+				if name == helpFlag {
 					continue
 				}
-				for _, script := range named {
-					have, known := flags[script[1]]
-					if !known || have[flag[1]] {
-						continue
-					}
-					out = append(out, Reference{Doc: rel, Line: i + 1, Script: script[1], Flag: flag[1]})
+				script := nearestKnown(line, named, flag[2], flag[3], flags)
+				if script == "" || flags[script][name] {
+					continue
 				}
+				out = append(out, Reference{Doc: rel, Line: i + 1, Script: script, Flag: name})
 			}
 		}
 	}
 	return out, nil
+}
+
+// nearestKnown returns the script named closest to pos on the line, among those this
+// directory contains. "" when the line names none of them — prose about some other
+// repo's tool is not this check's business.
+//
+// Known-only, not simply nearest: a line mentioning `setup.py` beside `runlog.py` would
+// otherwise attribute to the unknown one and silently skip the real check.
+func nearestKnown(line string, named [][]int, pos, flagEnd int, flags map[string]map[string]bool) string {
+	best, bestDist := "", -1
+	for _, m := range named {
+		start, end := m[2], m[3]
+		if _, ok := flags[line[start:end]]; !ok {
+			continue
+		}
+		// The GAP between the two spans, so "script.py --flag" and "--flag of script.py"
+		// are measured the same way. Measuring a following script from the flag's START
+		// instead silently added the flag's own length to its distance, biasing every
+		// comparison toward preceding mentions by len(flag) — enough to decide real
+		// cases, and it made a genuine tie almost unconstructible. Ties go to the
+		// preceding mention, which is the overwhelmingly common prose order.
+		dist := pos - end
+		if dist < 0 {
+			if dist = start - flagEnd; dist < 0 {
+				dist = 0
+			}
+		}
+		if bestDist < 0 || dist < bestDist {
+			best, bestDist = line[start:end], dist
+		}
+	}
+	return best
 }
 
 // scriptFlags maps each .py file's base name to the flags it declares.

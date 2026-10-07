@@ -1,0 +1,12 @@
+target: internal/docs/docs.go
+verify: go test ./internal/docs/ -count=1 -run 'TestAnUnknownScriptDoesNotSwallowTheAttribution'
+expect: --- FAIL: TestAnUnknownScriptDoesNotSwallowTheAttribution
+why:    attribution picks the nearest script named on the line, but it must be the nearest one this directory CONTAINS. Without the guard a nearer mention of some other repo's tool wins, the flag is attributed to a script whose flags are unknown, and the real check is skipped in silence — the failure mode this package exists to prevent, reached through its own attribution step.
+--- old
+		if _, ok := flags[line[start:end]]; !ok {
+			continue
+		}
+--- new
+		if false {
+			continue
+		}

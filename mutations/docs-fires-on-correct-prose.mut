@@ -1,0 +1,19 @@
+target: internal/docs/docs.go
+verify: go test ./internal/docs/ -count=1 -run 'TestEachFlagGoesToItsNearestScript|TestASecondScriptNamedNearbyIsNotBlamed'
+expect: --- FAIL:
+why:    every flag is attributed to EVERY script named on the line, so a sentence naming two tools reports the first as missing the second's flag. The check then fires on correct prose, which costs it the property its own doc comment claims — a signal worth acting on every time it fires. Found by `looper docs` failing CI on a SKILL.md line that correctly read `runlog.py cycle --width-reason` because the same sentence also mentioned batch-files.py.
+--- old
+				script := nearestKnown(line, named, flag[2], flag[3], flags)
+				if script == "" || flags[script][name] {
+					continue
+				}
+				out = append(out, Reference{Doc: rel, Line: i + 1, Script: script, Flag: name})
+--- new
+				for _, m := range named {
+					s := line[m[2]:m[3]]
+					have, known := flags[s]
+					if !known || have[name] {
+						continue
+					}
+					out = append(out, Reference{Doc: rel, Line: i + 1, Script: s, Flag: name})
+				}

@@ -85,7 +85,7 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 76 ] || { echo "only $n mutations, expected at least 76 — was one deleted?"; exit 1; }
+          [ "$n" -ge 79 ] || { echo "only $n mutations, expected at least 79 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
