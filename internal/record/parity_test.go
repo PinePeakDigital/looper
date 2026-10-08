@@ -67,7 +67,14 @@ func lastLine(s string) string {
 // for noise on stderr, because no fixture produces any.
 func saysNoSuchRun(err error, stderr string) bool {
 	ee, ok := err.(*exec.ExitError)
-	return ok && ee.ExitCode() == 2 && lastLine(stderr) == "unknown"
+	if !ok || ee.ExitCode() != 2 {
+		return false
+	}
+	// Equality, not Contains or HasSuffix. A real argparse failure ends with the word:
+	// `convergence --run-id r --unknown` exits 2 with "runlog.py: error: unrecognized
+	// arguments: --unknown" as its last line, and a suffix test reports that as a missing
+	// run — the wrong-cause failure this guard has already shipped three times.
+	return lastLine(stderr) == "unknown"
 }
 
 // noRun is what an oracle prints when the fixture holds no run "r". Without it the Python
@@ -174,8 +181,8 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 	// A real *exec.ExitError, since its ExitCode is what the guard reads.
 	exitWith := func(code int) error {
 		err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
-		if err == nil && code != 0 {
-			t.Fatalf("sh did not exit %d", code)
+		if (err == nil) != (code == 0) {
+			t.Fatalf("sh exit %d gave err %v", code, err)
 		}
 		return err
 	}
@@ -197,6 +204,22 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 		{"success is not a missing run", nil, "", false},
 		{"the word must be the LAST line, not merely present", exitWith(2),
 			"unknown\nruntime shutdown error\n", false},
+		// The cases below exist because five wrong versions of this guard passed the seven
+		// above. Each is a healthy-OTHER-failure: the process failed for a reason that is
+		// not a missing run, on the same channel, in a shape a loose test accepts.
+		{"a last line that ENDS with the word is not the word", exitWith(2),
+			"usage: runlog.py [-h] ...\nrunlog.py: error: unrecognized arguments: --unknown", false},
+		{"a last line that STARTS with the word is not the word", exitWith(2),
+			"usage: runlog.py [-h] ...\nunknown option --x", false},
+		{"exit 0 is not a missing run however stderr reads", exitWith(0), "unknown\n", false},
+		{"nor is any other non-2 code", exitWith(4), "unknown\n", false},
+		// And these two keep lastLine honest: a weakening that trims only newlines, or that
+		// skips the inner trim, breaks one of them.
+		// Padding on a line that is NOT the whole buffer: with only one line the outer trim
+		// already strips it, so the inner one is never reached and dropping it survives.
+		{"padding around the word is still the word", exitWith(2), "warn\n  unknown  \n", true},
+		{"a whitespace-only last line does not hide the word", exitWith(2),
+			"unknown\n   \n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := saysNoSuchRun(tc.err, tc.stderr); got != tc.want {

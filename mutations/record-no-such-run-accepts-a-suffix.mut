@@ -1,0 +1,8 @@
+target: internal/record/parity_test.go
+verify: go test ./internal/record/ -count=1 -run 'TestSaysNoSuchRunReadsBothSignals'
+expect: FAIL: TestSaysNoSuchRunReadsBothSignals
+why:    a suffix or substring test reads as the tolerant, robust choice and is the fourth wrong version. argparse produces a real exit-2 failure whose last stderr line ENDS with the word — `convergence --run-id r --unknown` gives "runlog.py: error: unrecognized arguments: --unknown" — so HasSuffix reports a flag typo as a missing run, which is the same wrong-cause failure the first three versions shipped. Five wrong versions passed the table before this case existed; it is the healthy-other-failure direction, where the process failed for a reason that is not a missing run, on the same channel, in a shape a loose test accepts.
+--- old
+	return lastLine(stderr) == "unknown"
+--- new
+	return strings.HasSuffix(lastLine(stderr), "unknown")
