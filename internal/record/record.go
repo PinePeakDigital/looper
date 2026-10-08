@@ -273,35 +273,59 @@ func gateOK(status string) bool {
 	return false
 }
 
-// renderStatus is how the status reaches a report: review-stats.py interpolates it into
-// an f-string, so the Python's rendering is str(). fmt.Sprint agrees with str() on strings
-// and on JSON's numbers, but not on its booleans — str(True) is "True" and fmt.Sprint(true)
-// is "true" — and `status: true` is reachable for the same reason `status: false` is, since
-// cmd_finish never validates the vocabulary. The parity gate found this; the unit tests
-// could not have, because they assert against a reading of the Python rather than the
-// Python.
+// pyStr renders a JSON-decoded value the way Python's str() does. review-stats.py calls
+// str() on a gate status EXPLICITLY (review-stats.py:197) before testing it or printing it,
+// and its comment there records why: a non-string status is not rejected at write time, and
+// formatting one into the message crashed the whole alarm with a TypeError. So this is the
+// Python's own coercion, not an inference from how the text is later interpolated.
 //
-// A container status (a list, an object) still diverges: str(['a']) is "['a']" and Go has
-// no cheap Python repr. Left alone deliberately — a container there means the record is
-// already corrupt and neither rendering is usable — rather than papered over in the gate,
-// so `TestDroppedGatesMatchesThePython` carries no fixture claiming otherwise.
-func renderStatus(raw any) string {
-	switch v := raw.(type) {
-	case nil:
-		return ""
-	case bool:
-		if v {
-			return "True"
-		}
-		return "False"
-	case string:
-		return v
+// Named for the operation rather than for the status, because the operation is not
+// status-specific: disclosure() — the remaining piece of the read-and-derive half this
+// package ports — renders raw record values at three sites the same way, and one of them
+// (`asked`) can hold a list.
+//
+// Where it agrees with str(), and where it does not. Strings agree. Booleans needed the case:
+// str(True) is "True" and fmt.Sprint(true) is "true". Numbers agree only for integer-valued
+// JSON literals below 1e6 — JSON numbers decode to float64 here and to int or float there, so
+// `5` agrees while `5.0` gives "5" against "5.0", `1000000` gives "1e+06" against "1000000",
+// a JSON integer past 2^53 loses its digits entirely, and `-0` gives "-0" against "0".
+// Containers disagree too: ['a'] against [a].
+//
+// The number and container gaps are left open deliberately, and no fixture claims otherwise.
+// Closing them means either Python's float repr and arbitrary-precision ints in Go, or
+// decoding the whole store with json.Decoder.UseNumber() — which would change what num(),
+// truthy() and isZero() receive for every field, to buy parity on a status that is already a
+// malformed record. The bool case earned its two lines because `status: false` is load-bearing
+// (it collapses to "unreported") and `true` is its direct mirror.
+func pyStr(raw any) string {
+	if v, ok := raw.(bool); ok && v {
+		return "True"
 	}
+	// No nil case and no string case: fmt.Sprint is already the identity on a string, and
+	// DroppedGates replaces every falsy status — nil and false included — with "unreported"
+	// before anything reads it, so a nil arm here would be unobservable. Verified by
+	// mutation: a sentinel in either place survives the whole suite and the parity gate.
 	return fmt.Sprint(raw)
 }
 
 // DroppedGates returns the planned-to-run gates that did not report a GateOK status,
 // mapped to the status they did report ("unreported" when there is no entry at all).
+//
+// Both type assertions below have no parity fixture, because the Python has no answer to
+// compare: review-stats.py does `(run.get("gates") or {}).items()` and `executed.get(g)`, so
+// a truthy NON-mapping raises AttributeError there and takes the whole alarm down with it.
+// Go degrades instead, and the two directions are not equally safe — which is why the
+// direction is stated here, as num() and asksOutstanding() each state theirs:
+//
+//	executed: "nope"  -> Python raises; Go reports {"g":"unreported"}. Denies silence. Safe.
+//	gates: ["g"]      -> Python raises; Go reports {}. GRANTS silence: a run whose gate
+//	                     record is corrupt reports nothing dropped, and the alarm that
+//	                     exists to notice a missing gate sees a clean run.
+//
+// The second is the bad direction and it is accepted knowingly: a crash is not available as
+// a behaviour here, the shape is unreachable through cmd_finish (runlog.py:597 refuses a
+// non-dict executed value), and inventing a sentinel gate name would put a word in the
+// alarm that no gate has. record_test.go pins both answers so the direction cannot drift.
 func (r *Run) DroppedGates() map[string]string {
 	planned := map[string]bool{}
 	if g, ok := r.Fields["gates"].(map[string]any); ok {
@@ -320,7 +344,7 @@ func (r *Run) DroppedGates() map[string]string {
 		if e, ok := executed[name].(map[string]any); ok {
 			raw = e["status"]
 		}
-		status := renderStatus(raw)
+		status := pyStr(raw)
 		if gateOK(status) {
 			continue
 		}
