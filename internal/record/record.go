@@ -290,21 +290,28 @@ func gateOK(status string) bool {
 // that it is.
 //
 // WHERE IT AGREES WITH str(), AND WHERE IT DOES NOT. Strings agree. Booleans needed the
-// case: str(True) is "True" and fmt.Sprint(true) is "true". Beyond that:
+// case: str(True) is "True" and fmt.Sprint(true) is "true". Beyond that, every row measured:
 //
-//	5, 999999        agree — JSON integer literals under 1e6 in absolute value
-//	1000000          "1e+06" against "1000000" — Go's %g switches at 7 significant digits
-//	9007199254740993 loses its digits entirely; Python ints are unbounded, float64 is not
-//	5.0, 1e3         "5" and "1000" against "5.0" and "1000.0" — every integral-valued
-//	                 FLOAT literal diverges, which is why the rule is integer-SPELLED
-//	                 (no '.', no exponent) rather than integer-valued
-//	-0               "-0" against "0"
-//	0.1, 1e-05, 1e21 agree — many non-integers do; "only integers agree" would be false
+//	5, 999999        agree — integer-SPELLED literals (no '.', no exponent) under 1e6 in
+//	                 absolute value, with the one exception below
+//	-0               "-0" against "0" — inside that class, and the reason it says "with one
+//	                 exception" rather than naming a clean boundary
+//	1000000          "1e+06" against "1000000"
+//	9007199254740993 "9.007199254740992e+15" — the value cannot be recovered from the text
+//	5.0, 1e3, 5e15   "5", "1000", "5e+15" against "5.0", "1000.0", "5000000000000000.0" —
+//	                 integral-valued FLOAT literals diverge BELOW 1e16
+//	1e16, 1e21, 1e300 agree — at and above 1e16 Python's repr goes exponential too
+//	0.1, 1e-05, 999999.5 agree — plenty of non-integers do; "only integers" would be false
 //	["a"]            "[a]" against "['a']"; a map likewise
 //	nil              "<nil>" against "None"
 //	false            "false" against "False" — the bool case deliberately handles only true
 //
-// The last two are unobservable at the sole caller and that is why they are not handled:
+// The threshold is Go's, not a digit count: shortest-form %v/%g goes scientific once the
+// decimal exponent reaches 6 (|v| >= 1e6) or falls below -4, whatever the number of
+// significant digits — strconv's formatDigits hardcodes eprec=6 for shortest. So 999999.5
+// has seven significant digits and prints plain, while 1000000 has one and does not.
+//
+// The last two rows are unobservable at the sole caller and that is why they are not handled:
 // DroppedGates replaces every falsy status with "unreported", and no rendering a falsy value
 // can produce is a GateOK word, so neither result can change an answer. Note the second
 // clause — gateOK() reads this string BEFORE the falsy collapse, so "nothing reads it" would
@@ -320,7 +327,9 @@ func gateOK(status string) bool {
 func pyStr(raw any) string {
 	// `raw == true`, not a type assertion plus `&& v`: the conjunct was unobservable on its
 	// own, since asserting bool without testing the value only changes what false renders as,
-	// and false is collapsed. One expression leaves nothing that can be mutated for free.
+	// and false is collapsed. No OPERATOR in the one expression survives mutation — that was
+	// measured. A widening still would (`raw == true || raw == nil` survives), because the
+	// unobservability lives at the caller, not in the spelling.
 	if raw == true {
 		return "True"
 	}

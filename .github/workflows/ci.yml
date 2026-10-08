@@ -13,10 +13,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The catalog is at least the floor below, so the worst case is at least that many x the
-    # 5-minute per-command verify timeout — 400 minutes today, against GitHub's 360 default
-    # if something makes every verify hang, and the GitHub default is 360. A typical run
-    # is a couple of minutes, so this fails fast and cheap instead.
+    # The catalog is at least the floor below, so if something made every verify hang the
+    # worst case would be at least that many x the 5-minute per-command verify timeout —
+    # 400 minutes today, against GitHub's 360 default. A typical run is a couple of
+    # minutes, so this fails fast and cheap instead.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -80,9 +80,14 @@ jobs:
           # losing the whole DroppedGates oracle would still count 100 and pass — which is
           # exactly the regression that oracle was added to fix.
           for t in Convergence CycleCount DroppedGates; do
-            # Anchored at line start: unanchored, any line merely CONTAINING the substring
-            # counted, and a fixture is free text as far as this pattern is concerned.
-            c=$(awk -v t="$t" '$0 ~ "^[[:space:]]*--- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
+            # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
+            # The reason first written here — that a fixture could carry the needle — does
+            # not hold: go test replaces spaces with underscores in subtest names, and a
+            # fixture's text only reaches the log inside a failing t.Errorf, which go test
+            # indents EIGHT. So `^[[:space:]]*` admitted the one case it was meant to
+            # exclude. This excludes it, and the honest claim is narrow: nothing in a green
+            # log can produce a matching line that is not a subtest result.
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
             [ "$c" -ge 30 ] || { echo "only $c $t parity subtests passed, expected at least 30"; cat record.log; exit 1; }
             echo "$c $t parity subtests compared against the Python"
           done

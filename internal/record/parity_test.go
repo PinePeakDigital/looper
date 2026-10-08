@@ -53,8 +53,14 @@ func runlogPath(t *testing.T) string {
 const noRun = "NO-SUCH-RUN"
 
 // pyOracle runs one Python statement block against a script loaded with runpy and returns
-// what it printed. `m` is the loaded module and `json`, `os`, `sys` are imported; the block
-// must end in a print.
+// what it printed. `m` is the script's GLOBALS DICT, not a module — run_path returns the
+// executed globals, which is why every call site writes m['load'] and not m.load — and
+// `json`, `os`, `sys` are imported. The block must end in a print.
+//
+// It centralises DETECTION of the noRun sentinel, not its EMISSION: the branch that prints
+// the sentinel lives in each caller's body string, so a fourth oracle added through here
+// without one reintroduces exactly the vacuity this helper was extracted to fix, with
+// nothing red. Copy the shape from a caller below rather than assuming the helper covers it.
 //
 // runpy rather than an import: review-stats.py's name has a hyphen and is therefore not
 // importable, and its own `import runlog` needs the skill directory on sys.path — run_path
@@ -98,7 +104,7 @@ func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 	// A store with a run, just not the one anything asks about.
 	path := store(t, `{"run_id":"other","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`)
 
-	t.Run("review-stats dropped_gates", func(t *testing.T) {
+	t.Run("review-stats load", func(t *testing.T) {
 		got := pyOracle(t, stats, path,
 			"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
 				"print('ABSENT' if run is None else 'FOUND')")
@@ -125,6 +131,14 @@ func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 		if !ok || ee.ExitCode() != 2 {
 			t.Errorf("cmd_convergence no longer exits 2 for a missing run: err=%v, stdout=%q",
 				err, out)
+		}
+		// And the word, not just the code. Asserting exit 2 alone passed when the
+		// subcommand was RENAMED — argparse exits 2 for a usage error with empty stdout,
+		// which is exactly the shape this subtest was checking for. The single likeliest
+		// way for the contract to break was the one break it could not see.
+		if e := strings.TrimSpace(errOut.String()); e != "unknown" {
+			t.Errorf("cmd_convergence no longer says %q on stderr for a missing run; got %q",
+				"unknown", e)
 		}
 		// And it must not put the word on stdout, where it would be read as a verdict —
 		// "unknown" on STDOUT with exit 1 is the legitimate answer for a cycle-less run.
@@ -418,20 +432,25 @@ func TestConvergenceMatchesThePython(t *testing.T) {
 			cmd.Stderr = &errOut
 			out, runErr := cmd.Output()
 			want := strings.TrimSpace(string(out))
-			// Exit 2 is "no such run", and ONLY the exit code says so: cmd_convergence
-			// prints "unknown" to stderr and returns 2 for a missing run, and the same word
-			// to STDOUT with exit 1 for a run that exists with no cycles (runlog.py:576-584).
-			// Keying this on the text instead broke the `no cycles` fixture, whose correct
-			// verdict is "unknown" — a guard asserting a cause it never checked, which is
-			// the defect class this whole file exists to catch.
-			if ee, ok := runErr.(*exec.ExitError); ok && ee.ExitCode() == 2 {
-				t.Fatalf("Python side found no run %q in the fixture (stderr: %s)",
-					"r", strings.TrimSpace(errOut.String()))
+			// "No such run" is exit 2 AND the word on stderr, and it takes both. For a
+			// missing run cmd_convergence prints "unknown" to stderr and returns 2; for a
+			// run that exists with no cycles it prints the same word to STDOUT with exit 1
+			// (runlog.py:576-584). Keying on the text alone broke the `no cycles` fixture,
+			// whose correct verdict IS "unknown"; keying on the code alone then swallowed
+			// argparse, which also exits 2 — so a renamed or mistyped subcommand reported
+			// "found no run" for all 36 fixtures while the real cause was `invalid choice`.
+			// Two wrong guards in a row, each asserting a cause it did not check.
+			if ee, ok := runErr.(*exec.ExitError); ok && ee.ExitCode() == 2 &&
+				strings.TrimSpace(errOut.String()) == "unknown" {
+				t.Fatalf("Python side found no run %q in the fixture", "r")
 			}
 
 			if got != want {
-				t.Errorf("convergence disagrees: Go %q, Python %q\nstderr:\n%s\nfixture:\n%s",
-					got, want, errOut.String(), strings.Join(rows, "\n"))
+				// runErr is in the message because a non-ExitError failure — python3 absent,
+				// say — leaves stdout and stderr both empty, and without it the report
+				// blames the comparison for a process that never ran.
+				t.Errorf("convergence disagrees: Go %q, Python %q\nrun error: %v\nstderr:\n%s\nfixture:\n%s",
+					got, want, runErr, errOut.String(), strings.Join(rows, "\n"))
 			}
 		})
 	}
@@ -525,6 +544,11 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// review-stats' own load() takes no limit and so reads at runlog's DEFAULT
+			// 4000-line tail, where the CycleCount site below passes limit=None and the Go
+			// side reads the whole store. Bare is the more faithful oracle — it is the entry
+			// point review-stats actually uses — and fixtures are a handful of rows, so the
+			// tail never bites; a fixture past 4000 rows would need runlog.load directly.
 			want := pyOracle(t, stats, path,
 				"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
 					"print("+strconv.Quote(noRun)+" if run is None else "+
