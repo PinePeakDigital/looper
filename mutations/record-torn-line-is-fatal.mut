@@ -1,12 +1,12 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestUnreadableRowsDoNotInvalidateTheStore'
 expect: a torn line discarded the whole store
-why:    the store is append-only and written by concurrent sessions, so a half-written last line is expected — treating it as fatal throws away every run that was recorded correctly
+why:    the store is append-only and written by concurrent sessions, so a half-written last line is expected — treating it as fatal throws away every run that was recorded correctly Re-anchored for the typed port: the tolerant continue is on the ENVELOPE decode now, which is the first thing every row goes through.
 --- old
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
 			continue // a torn line never invalidates the rest of the store
 		}
 --- new
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
 			return nil, err
 		}

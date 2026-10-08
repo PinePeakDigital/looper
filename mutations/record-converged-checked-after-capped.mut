@@ -1,38 +1,32 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: a_converged_last_cycle_wins_over_a_cap_it_also_reached
-why:    the converged test is placed before the capped test deliberately: a last cycle that applied nothing has finished the work even if the spend also reached the cap, and reporting `capped` there would understate a run that actually converged. Every fixture but one has only one of the two predicates true, so swapping the branches passed the entire suite AND the Python parity gate — the ordering was free to invert until the both-true case existed.
+why:    the converged test is placed before the capped test deliberately: a last cycle that applied nothing has finished the work even if the spend also reached the cap, and reporting `capped` there would understate a run that actually converged. Every fixture but one has only one of the two predicates true, so swapping the branches passed the entire suite AND the Python parity gate — the ordering was free to invert until the both-true case existed. Re-anchored for the typed port. Re-anchored for the typed port, and reshaped: the first attempt moved the capped test above `var spent`, which does not compile, so it scored `broken` rather than `caught` — a mutation that does not build tests nothing.
 --- old
-	if isZero(last["applied"]) && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
-		return Converged
+	if last.Applied != nil && *last.Applied == 0 &&
+		(last.Asked == nil || *last.Asked == 0) &&
+		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
+		return Converged, nil
 	}
 
-	cap := num(r.Fields["agent_cap"])
-	var spent float64
+	var spent int
 	for _, c := range r.Cycles {
-		spent += num(c["agents"])
-	}
-	// `cap != 0`, not `cap > 0`: the Python guard is a bare `if cap`, so a negative cap is
-	// truthy there and any spend clears it. cmd_plan refuses a non-positive --agent-cap,
-	// so no NEW row can carry one, but the store is append-only and never rewritten, so a
-	// legacy or hand-written row still reads differently in the two implementations.
-	if cap != 0 && spent >= cap {
-		return Capped
+		if c.Agents != nil {
+			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
+		}
 	}
 --- new
-	cap := num(r.Fields["agent_cap"])
-	var spent float64
+	var spent int
 	for _, c := range r.Cycles {
-		spent += num(c["agents"])
+		if c.Agents != nil {
+			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
+		}
 	}
-	// `cap != 0`, not `cap > 0`: the Python guard is a bare `if cap`, so a negative cap is
-	// truthy there and any spend clears it. cmd_plan refuses a non-positive --agent-cap,
-	// so no NEW row can carry one, but the store is append-only and never rewritten, so a
-	// legacy or hand-written row still reads differently in the two implementations.
-	if cap != 0 && spent >= cap {
-		return Capped
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
+		return Capped, nil
 	}
-
-	if isZero(last["applied"]) && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
-		return Converged
+	if last.Applied != nil && *last.Applied == 0 &&
+		(last.Asked == nil || *last.Asked == 0) &&
+		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
+		return Converged, nil
 	}

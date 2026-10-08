@@ -21,20 +21,93 @@ import (
 	"strings"
 )
 
-// Row is one line of the append-only store. The record's vocabulary is open — cmd_finish
-// requires a reason for any status but `done` and never validates the string — so fields
-// stay as decoded JSON rather than a struct that would quietly drop what it did not model.
-type Row map[string]any
+// The store's schema, typed PER PHASE rather than as one flat row, because the same key
+// means different things in different phases. `agents` is a COUNT on a cycle row and an
+// operator-supplied roster on a finish row — one real run recorded
+// `{"cycle1":6,"cycle2":3,"scorers":"batched haiku"}` — and a flat map[string]any hid that
+// difference behind one name.
+//
+// Only the fields something derives from are modelled. Unknown fields decode away silently,
+// which is deliberate: the store is append-only and carries plenty this package never
+// reads, and a struct that refused them would break on every field a future writer adds.
+//
+// Typed at the boundary, which is the whole point of this layer. A field that is present
+// but the wrong shape is an ERROR naming the run and the field, not a value coerced into
+// a verdict. Measured against the real store before choosing this: across 153 rows every
+// numeric field is a number in every row, so the shapes the old coercion helpers guarded
+// against never actually occur — while ABSENCE and null are everywhere (`subagent_tokens`
+// null in 46 of 57 cycles, `agent_cap` absent in 18 of 38 plans). So the real work is
+// telling absent from null from zero, which is exactly what the pointers below do and
+// exactly the distinction `converged` turns on.
+type GateSpec struct {
+	Planned string `json:"planned"`
+}
+
+// GateResult.Status is a pointer so that absent, null and "" stay distinguishable here and
+// are collapsed by the one reader that wants them collapsed. A status that is not a string
+// is a decode error: the Python rendered `status: true` as "True" and a number as itself,
+// and reproducing that meant a str()-alike with number and container gaps that could never
+// be closed. Refusing the shape is both simpler and louder.
+type GateResult struct {
+	Status *string `json:"status"`
+}
+
+// Plan is the planned half of a run, written once by cmd_plan.
+type Plan struct {
+	AgentCap *int                `json:"agent_cap"`
+	Gates    map[string]GateSpec `json:"gates"`
+}
+
+// Cycle is one pass of the loop. Every count is a pointer because absence is load-bearing:
+// `applied` MISSING must not read as zero, or a cycle that recorded nothing earns the
+// `converged` that absence was hiding.
+type Cycle struct {
+	N               *int  `json:"n"`
+	Applied         *int  `json:"applied"`
+	Asked           *int  `json:"asked"`
+	Agents          *int  `json:"agents"`
+	AnalysisChanged *bool `json:"analysis_changed"`
+}
+
+// Finish is the terminal row. Agents stays raw because its schema is the operator's: the
+// `--agents` flag takes arbitrary JSON and the store holds both lists and objects for it.
+// Typing it would reject real rows to no benefit, since nothing derives from it.
+type Finish struct {
+	Outcome        string                `json:"outcome"`
+	UnresolvedAsks *int                  `json:"unresolved_asks"`
+	Executed       map[string]GateResult `json:"executed"`
+	Agents         json.RawMessage       `json:"agents"`
+}
 
 // Run is one run's phases, merged the way load() merges them.
 type Run struct {
 	ID     string
-	Fields Row
+	Plan   *Plan
+	Finish *Finish
 	// Cycles ACCUMULATE where every other phase merges. A run has one plan and one
 	// finish, so merging is right for those — but it would make each cycle clobber the
 	// last, leaving only the final one and destroying the sequence convergence is
 	// derived from.
-	Cycles []Row
+	//
+	// No deduplication by `n`, deliberately. It used to dedupe, last write winning, on the
+	// theory that a corrected row sits after the one it corrects — but nothing in the
+	// skill corrects a cycle row, and the only thing that revisits an `n` is the Step 13
+	// restart, which resets the counter to 1. The dedupe served a corrector that does not
+	// exist while deleting the first pass of every restart: rows n=1/20, n=2/15, n=1/5
+	// counted 20 of the 40 agents spent. Every reader here takes this one list, which is
+	// also a fix: disclosure() once read the raw rows while convergence() read the deduped
+	// ones, so a rendered report contradicted its own derivation.
+	Cycles []Cycle
+	// Err is the first field in THIS run that could not be decoded. Non-nil means no
+	// answer derived from this run is trustworthy, so every derivation below returns it
+	// rather than a verdict.
+	//
+	// Per run, not per store: the record is append-only and shared by every repo on the
+	// machine, so one bad row written months ago must not block reads of unrelated runs.
+	// But nothing may derive a verdict from a field it could not read, which is what the
+	// coercion helpers this replaced did — `unresolved_asks: "7"` read as 0 and bought a
+	// `converged` with seven findings outstanding.
+	Err error
 }
 
 // DefaultTail matches runlog.TAIL_LINES. Reading the whole store is the right default for
@@ -83,28 +156,59 @@ func Load(path string, limit int) (map[string]*Run, error) {
 
 	runs := map[string]*Run{}
 	for _, line := range lines {
-		var rec Row
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		// Two-stage: the envelope first, so a row for one run can never fail another's
+		// decode, then the phase body into its own type.
+		var env struct {
+			RunID string `json:"run_id"`
+			Phase string `json:"phase"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
 			continue // a torn line never invalidates the rest of the store
 		}
-		rid, _ := rec["run_id"].(string)
-		if rid == "" {
+		if env.RunID == "" {
 			continue
 		}
-		r := runs[rid]
+		r := runs[env.RunID]
 		if r == nil {
-			r = &Run{ID: rid, Fields: Row{}}
-			runs[rid] = r
+			r = &Run{ID: env.RunID}
+			runs[env.RunID] = r
 		}
-		if phase, _ := rec["phase"].(string); phase == "cycle" {
-			r.Cycles = append(r.Cycles, rec)
-			continue
+		switch env.Phase {
+		case "cycle":
+			var c Cycle
+			if err := json.Unmarshal([]byte(line), &c); err != nil {
+				r.setErr(env.Phase, err)
+				continue
+			}
+			r.Cycles = append(r.Cycles, c)
+		case "plan":
+			var pl Plan
+			if err := json.Unmarshal([]byte(line), &pl); err != nil {
+				r.setErr(env.Phase, err)
+				continue
+			}
+			r.Plan = &pl
+		case "finish":
+			var fi Finish
+			if err := json.Unmarshal([]byte(line), &fi); err != nil {
+				r.setErr(env.Phase, err)
+				continue
+			}
+			r.Finish = &fi
 		}
-		for k, v := range rec {
-			r.Fields[k] = v
-		}
+		// Any other phase — `nudge` today — carries nothing this package derives from, so
+		// it is skipped rather than modelled. It still created the Run above, which is
+		// what runlog.load does: a run known only by a nudge exists and has no cycles.
 	}
 	return runs, nil
+}
+
+// setErr keeps the FIRST decode failure. The first names the field a reader should go fix;
+// later ones are usually the same row read again by another phase's body.
+func (r *Run) setErr(phase string, err error) {
+	if r.Err == nil {
+		r.Err = fmt.Errorf("run %s: %s row has an unreadable field: %w", r.ID, phase, err)
+	}
 }
 
 // Convergence values. Unknown is the zero value on purpose: a run with no cycle rows
@@ -123,9 +227,12 @@ const (
 // safety question — was this finished being reviewed — was answered by the orchestrator
 // asserting it. One real run recorded outcome `clean` while its own author reported it had
 // not converged, which is exactly what that allows.
-func (r *Run) Convergence() string {
+func (r *Run) Convergence() (string, error) {
+	if r.Err != nil {
+		return Unknown, r.Err
+	}
 	if len(r.Cycles) == 0 {
-		return Unknown
+		return Unknown, nil
 	}
 	last := r.Cycles[len(r.Cycles)-1]
 
@@ -134,18 +241,14 @@ func (r *Run) Convergence() string {
 	// short-circuited this and the hole stayed open: `cycle --applied 0` with no --asked,
 	// then `finish --asks 7`, derived converged with no disclosure while seven findings
 	// sat unresolved and the report said nothing was left to apply.
-	// Not `num(...) > 0`. This is the one guard where FALSY means "carry on to the
-	// converged check", so a value num() cannot read — a string where a count belongs —
-	// collapsed to 0 and waved the run through. Measured: `unresolved_asks: "7"` with a
-	// zero-fix last cycle derived `converged` in Go while the Python raised TypeError. A
-	// clean push, no disclosure, seven findings outstanding: this guard's own hole,
-	// reopened through a type confusion rather than an ordering mistake.
 	//
-	// `asked` and `analysis_changed` below are safe from this by accident of polarity —
-	// they are tested with `!truthy(...)`, so an unreadable value BLOCKS convergence. Only
-	// this one had to be told.
-	if asksOutstanding(r.Fields["unresolved_asks"]) {
-		return Halted
+	// This used to need a helper that answered YES whenever it could not tell, because it
+	// is the one guard where a falsy reading WAVES A RUN THROUGH — `unresolved_asks: "7"`
+	// coerced to 0 and bought a clean push with seven findings open. Typing removes the
+	// question: a non-numeric value here is a decode error on the run, caught above, so
+	// there is no unreadable value left for this test to misread.
+	if r.Finish != nil && r.Finish.UnresolvedAsks != nil && *r.Finish.UnresolvedAsks > 0 {
+		return Halted, nil
 	}
 
 	// Converged means the loop stopped with nothing left to do — all three halves. The
@@ -153,108 +256,37 @@ func (r *Run) Convergence() string {
 	// auto-fix bucket, and so is the ask bucket: a cycle that routed every finding to the
 	// user and resolved none has not run out of findings, it has run out of what it may
 	// do unattended.
-	// `isZero`, not `num(...) == 0`. The Python is `last.get("applied") == 0`, where a
-	// MISSING or null `applied` is None and `None == 0` is False — absence does NOT read
-	// as zero here, unlike the `or 0` sites above and below. Routing this through num(),
-	// which maps absent and null to 0, made a cycle row with no `applied` field derive
-	// `converged` where the Python derives `halted`. That is the one direction that
-	// matters: it buys a clean result, with no disclosure, by omitting a field — which is
-	// the hole the unresolved_asks check above was added to close, reopened one line down.
-	if isZero(last["applied"]) && !truthy(last["asked"]) && !truthy(last["analysis_changed"]) {
-		return Converged
+	//
+	// `Applied != nil && *Applied == 0`, which is the Python's `last.get("applied") == 0`
+	// exactly: `None == 0` is False, so a MISSING or null `applied` is not zero here —
+	// unlike the `or 0` sites below. Reading absence as zero made a cycle row with no
+	// `applied` field derive `converged` where the Python derives `halted`, which is the
+	// one direction that matters: it buys a clean result, with no disclosure, by omitting
+	// a field. That is the hole the unresolved_asks check above exists to close, reopened
+	// one line down. The pointer is what makes the distinction unmissable now.
+	if last.Applied != nil && *last.Applied == 0 &&
+		(last.Asked == nil || *last.Asked == 0) &&
+		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
+		return Converged, nil
 	}
 
-	cap := num(r.Fields["agent_cap"])
-	var spent float64
+	var spent int
 	for _, c := range r.Cycles {
-		spent += num(c["agents"])
+		if c.Agents != nil {
+			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
+		}
 	}
-	// `cap != 0`, not `cap > 0`: the Python guard is a bare `if cap`, so a negative cap is
-	// truthy there and any spend clears it. cmd_plan refuses a non-positive --agent-cap,
-	// so no NEW row can carry one, but the store is append-only and never rewritten, so a
+	// `!= 0`, not `> 0`: the Python guard is a bare `if cap`, so a negative cap is truthy
+	// there and any spend clears it. cmd_plan refuses a non-positive --agent-cap, so no
+	// NEW row can carry one, but the store is append-only and never rewritten, so a
 	// legacy or hand-written row still reads differently in the two implementations.
-	if cap != 0 && spent >= cap {
-		return Capped
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
+		return Capped, nil
 	}
 
 	// Stopped with work outstanding and budget left: an operator interrupt, a test
 	// failure, or a run that simply stopped.
-	return Halted
-}
-
-// num reads a JSON number, treating absent and null as zero. json.Unmarshal into `any`
-// gives float64 for every number, so there is one numeric type to handle.
-//
-// It also maps a NON-numeric value — a string where a count belongs — to zero, and that is
-// a deliberate divergence from the Python rather than an oversight. The Python does
-// arithmetic on the raw value, so `agents: "5"` raises TypeError and the process dies with
-// a traceback instead of returning any of the four words; `agent_cap: "40"` likewise.
-// Matching that exactly would mean reproducing an unhandled crash, which is not a decision
-// the original made, just a place it has none. Degrading to zero is safe in the only
-// direction that matters here — but only because the ONE site where a falsy reading waves
-// a run through now refuses to use it. That was not true when this comment first claimed
-// it: `unresolved_asks: "7"` read as 0 and derived `converged`. See asksOutstanding below.
-// Everywhere else num() is reached, an unreadable value can only understate a capped run
-// as halted, and both of those deny the push. Reviewed and kept 2026-10-03.
-func num(v any) float64 {
-	f, _ := v.(float64)
-	return f
-}
-
-// truthy follows Python's `not x` for the values this record actually holds: absent, null,
-// 0 and false are falsy. A non-zero count or true is not.
-func truthy(v any) bool {
-	switch t := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return t
-	case float64:
-		return t != 0
-	case string:
-		return t != ""
-	case []any:
-		return len(t) != 0 // Python: an empty list is falsy
-	case map[string]any:
-		return len(t) != 0 // Python: an empty dict is falsy
-	default:
-		// Unreachable in practice: json.Unmarshal into `any` yields only nil, bool,
-		// float64, string, []any and map[string]any, and all six are handled above. Kept
-		// because the compiler cannot know that, and because a Row can in principle be
-		// built in Go rather than decoded.
-		return v != nil
-	}
-}
-
-// isZero mirrors Python's `x == 0` rather than its `not x`. The two differ on exactly the
-// case that matters: absence. `None == 0` is False, so a missing key is NOT zero — while
-// `False == 0` is True, so a JSON false is. Nothing else in this record compares this way;
-// `applied` is the one site, and it is the one where reading absence as zero awards a
-// `converged` the run did not earn.
-func isZero(v any) bool {
-	switch t := v.(type) {
-	case float64:
-		return t == 0
-	case bool:
-		return !t // Python: False == 0 is True, True == 0 is False
-	default:
-		return false // absent, null, a string, a list: none of them equal 0 in Python
-	}
-}
-
-// asksOutstanding answers "does the record say findings are still with the user", and it
-// answers YES whenever it cannot tell. Every other reader in this file can degrade a value
-// it cannot parse to zero, because zero there denies a push. Here zero GRANTS one: it is
-// the falsy reading that lets Convergence() go on to award `converged`. So a present
-// value that is neither a number nor empty — a string, a list, anything — counts as
-// outstanding rather than as none. That diverges from the Python, which raises TypeError
-// and dies, and the divergence is deliberate: both refuse the clean push, and this one
-// also keeps reading the rest of the store.
-func asksOutstanding(v any) bool {
-	if f, ok := v.(float64); ok {
-		return f > 0 // the ordinary case: a count
-	}
-	return truthy(v) // absent, null, 0 and "" are none; anything else is unreadable, so yes
+	return Halted, nil
 }
 
 // GateOK are the statuses that mean a planned gate was handled. `n/a` is success, not a
@@ -273,128 +305,41 @@ func gateOK(status string) bool {
 	return false
 }
 
-// pyStr renders a JSON-decoded value roughly the way Python's str() does — "roughly" is
-// load-bearing and the gaps are enumerated below. review-stats.py calls str() on a gate
-// status EXPLICITLY (review-stats.py:197), before it tests the value or prints it, and its
-// comment there records why: a non-string status is not rejected at write time, and one
-// reaching the message crashed the whole alarm with a TypeError. (The raise is actually in
-// _naming's sorted()/join() over the status set, not in the formatting; the Python's own
-// comment is imprecise about that and this one inherits it knowingly.) So str() is the
-// Python's own coercion, not an inference from how the text is later interpolated.
-//
-// Named for the operation rather than for the status, because the operation is not
-// status-specific: disclosure() — a remaining piece of the read-and-derive half this package
-// ports, alongside unfinished() — renders raw record values at three sites the same way
-// (runlog.py:248, :251, :252). Those three are all written through argparse type=int, so the
-// container gap below is not reachable there today; the point is the rendering, not a claim
-// that it is.
-//
-// WHERE IT AGREES WITH str(), AND WHERE IT DOES NOT. Strings agree. Booleans needed the
-// case: str(True) is "True" and fmt.Sprint(true) is "true". Beyond that, every row measured:
-//
-//	5, 999999        agree — integer-SPELLED literals (no '.', no exponent) under 1e6 in
-//	                 absolute value, with the one exception below
-//	-0               "-0" against "0" — inside that class, and the reason it says "with one
-//	                 exception" rather than naming a clean boundary
-//	1000000          "1e+06" against "1000000"
-//	9007199254740993 "9.007199254740992e+15" — the value cannot be recovered from the text
-//	5.0, 1e3, 5e15   "5", "1000", "5e+15" against "5.0", "1000.0", "5000000000000000.0" —
-//	                 integral-valued FLOAT literals diverge BELOW 1e16
-//	1e16, 1e21, 1e300 agree — at and above 1e16 Python's repr goes exponential too
-//	0.1, 1e-05, 999999.5 agree — plenty of non-integers do; "only integers" would be false
-//	["a"]            "[a]" against "['a']"; a map likewise
-//	nil              "<nil>" against "None"
-//	false            "false" against "False" — the bool case deliberately handles only true
-//
-// The threshold is Go's, not a digit count: shortest-form %v/%g goes scientific once the
-// decimal exponent reaches 6 (|v| >= 1e6) or falls below -4, whatever the number of
-// significant digits — strconv's formatDigits hardcodes eprec=6 for shortest. So 999999.5
-// has seven significant digits and prints plain, while 1000000 has one and does not.
-//
-// The last two rows are unobservable at the sole caller and that is why they are not handled:
-// DroppedGates replaces every falsy status with "unreported", and no rendering a falsy value
-// can produce is a GateOK word, so neither result can change an answer. Note the second
-// clause — gateOK() reads this string BEFORE the falsy collapse, so "nothing reads it" would
-// be false; verified by mutation, a nil arm returning "ZZZ" survives the whole suite and a
-// nil arm returning "done" fails it.
-//
-// The number and container gaps are left open deliberately, and no fixture claims otherwise.
-// Closing them means either Python's float repr and arbitrary-precision ints in Go, or
-// decoding the whole store with json.Decoder.UseNumber() — which would change what num(),
-// truthy(), isZero() and asksOutstanding() receive for every field, to buy parity on a status
-// that is already a malformed record. The bool case earned its two lines because
-// `status: false` is load-bearing (it collapses to "unreported") and `true` is its mirror.
-func pyStr(raw any) string {
-	// `raw == true`, not a type assertion plus `&& v`: the conjunct was unobservable on its
-	// own, since asserting bool without testing the value only changes what false renders as,
-	// and false is collapsed. No OPERATOR in the one expression survives mutation — that was
-	// measured. A widening still would (`raw == true || raw == nil` survives), because the
-	// unobservability lives at the caller, not in the spelling.
-	if raw == true {
-		return "True"
-	}
-	return fmt.Sprint(raw)
-}
-
 // DroppedGates returns the planned-to-run gates that did not report a GateOK status,
-// mapped to the status they did report ("unreported" when there is no entry at all).
+// mapped to the status they did report ("unreported" when there is none).
 //
-// Both type assertions below have no parity fixture, because the Python has no answer to
-// compare: review-stats.py does `(run.get("gates") or {}).items()` and `executed.get(g)`, so
-// a truthy NON-mapping raises AttributeError there and takes the whole alarm down with it.
-// Go degrades instead, and the two directions are not equally safe — which is why the
-// direction is stated here, as num() and asksOutstanding() each state theirs:
-//
-//	executed: "nope"  -> Python raises; Go reports {"g":"unreported"}. Denies silence. Safe.
-//	gates: ["g"]      -> Python raises; Go reports {}. GRANTS silence: a run whose gate
-//	                     record is corrupt reports nothing dropped, and the alarm that
-//	                     exists to notice a missing gate sees a clean run.
-//
-// The second is the bad direction and it is accepted knowingly: a crash is not available as
-// a behaviour here, and inventing a sentinel gate name would put a word in the alarm that no
-// gate has. Neither shape is reachable through the writers — `gates` is written by cmd_plan,
-// which dies on gates.items() (runlog.py:377), and `executed` by cmd_finish, which dies on
-// executed.items() (runlog.py:597). Both are uncaught AttributeErrors rather than refusals;
-// the clean refusal at runlog.py:597-609 is for a non-dict value INSIDE executed, which is
-// the different shape the "executed entry is not a dict" fixture covers.
-//
-// record_test.go pins the two answers, but only against a future change that adds handling.
-// It does NOT pin the assertions themselves: ranging a nil map and indexing one are both
-// safe in Go, so either guard can be deleted outright with the whole suite green. That is
-// defensive-and-untestable, labelled here rather than left to read as coverage.
-func (r *Run) DroppedGates() map[string]string {
-	planned := map[string]bool{}
-	if g, ok := r.Fields["gates"].(map[string]any); ok {
-		for name, v := range g {
-			if spec, ok := v.(map[string]any); ok {
-				if p, _ := spec["planned"].(string); p == "run" {
-					planned[name] = true
-				}
+// The two isinstance guards the Python needs here are gone with the types: a gate spec that
+// is a bare string, or an executed entry that is a bare string instead of an object, is now
+// a decode error on the run rather than a shape each reader has to guard. That removes the
+// asymmetry the old port had to document — a non-dict `executed` denied silence while a
+// non-dict `gates` granted it, reporting nothing dropped for a run whose gate record was
+// corrupt. Neither is reachable now.
+func (r *Run) DroppedGates() (map[string]string, error) {
+	if r.Err != nil {
+		return nil, r.Err
+	}
+	out := map[string]string{}
+	if r.Plan == nil {
+		return out, nil
+	}
+	for name, spec := range r.Plan.Gates {
+		if spec.Planned != "run" {
+			continue // only `run` is a planned gate; `skip` was never going to happen
+		}
+		// Absent, null and "" all collapse to "unreported", which is the Python's
+		// `st or "unreported"`. Defaulting only on ABSENCE reported "" for a gate that
+		// recorded an empty status, and an empty status names nothing about the gate —
+		// the status is the whole content of the alarm line.
+		status := "unreported"
+		if r.Finish != nil {
+			if res, ok := r.Finish.Executed[name]; ok && res.Status != nil && *res.Status != "" {
+				status = *res.Status
 			}
 		}
-	}
-	executed, _ := r.Fields["executed"].(map[string]any)
-	out := map[string]string{}
-	for name := range planned {
-		var raw any
-		if e, ok := executed[name].(map[string]any); ok {
-			raw = e["status"]
-		}
-		status := pyStr(raw)
 		if gateOK(status) {
 			continue
 		}
-		// The Python stores `st or "unreported"`, so EVERY falsy status collapses to
-		// "unreported" — not just an absent entry, but also "", 0 and false. Defaulting
-		// only on absence reported `""`, `"0"` and `"false"` instead, which is both a
-		// parity break and a worse alarm line: the status is what names the gate's
-		// problem, and an empty one names nothing. None of these is hypothetical — the
-		// vocabulary is open (cmd_finish never validates the status string) and a
-		// non-string status reaching this path has already happened once.
-		if !truthy(raw) {
-			status = "unreported"
-		}
 		out[name] = status
 	}
-	return out
+	return out, nil
 }

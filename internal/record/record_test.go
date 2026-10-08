@@ -12,6 +12,27 @@ import (
 // here, stating the expected answer directly. Parity then adds "and the Python agrees"
 // on a machine that has both. A gate that can skip is not a gate on its own.
 
+// mustConv and mustDropped assert the run decoded cleanly. A test that meant to exercise a
+// well-formed fixture must never swallow a decode error with `_` — that is how a typed
+// boundary turns back into a silent coercion.
+func mustConv(t *testing.T, r *Run) string {
+	t.Helper()
+	got, err := r.Convergence()
+	if err != nil {
+		t.Fatalf("Convergence: unexpected decode error: %v", err)
+	}
+	return got
+}
+
+func mustDropped(t *testing.T, r *Run) map[string]string {
+	t.Helper()
+	got, err := r.DroppedGates()
+	if err != nil {
+		t.Fatalf("DroppedGates: unexpected decode error: %v", err)
+	}
+	return got
+}
+
 func store(t *testing.T, rows ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "runs.jsonl")
@@ -46,7 +67,11 @@ func convergenceOf(t *testing.T, rows ...string) string {
 	if r == nil {
 		t.Fatal("no run r in the fixture")
 	}
-	return r.Convergence()
+	got, err := r.Convergence()
+	if err != nil {
+		t.Fatalf("Convergence: unexpected decode error: %v", err)
+	}
+	return got
 }
 
 const plan = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
@@ -71,10 +96,6 @@ func TestConvergenceRules(t *testing.T) {
 		{"a converged last cycle wins over a cap it also reached", Converged, []string{
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`}},
-		// An empty list is falsy in Python; treating a non-nil empty slice as truthy
-		// blocked the converged branch.
-		{"an empty asked list is falsy", Converged, []string{plan,
-			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":[],"agents":2}`}},
 		// The Python cap guard is a bare `if cap`, so a negative cap is truthy and any
 		// spend clears it. cmd_plan will not write one; the store keeps what it has.
 		{"a negative cap is still a cap", Capped, []string{
@@ -98,18 +119,6 @@ func TestConvergenceRules(t *testing.T) {
 		{"asks recorded only at finish are still outstanding", Halted, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
 			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
-		// An unreadable `unresolved_asks` must not read as "no asks". This is the only
-		// guard where falsy waves the run through, so a string where a count belongs
-		// collapsed to 0 and derived `converged` — a clean push, no disclosure, seven
-		// findings outstanding. The Python raises TypeError on the same input; halted and
-		// a crash both deny the push, and only one of them keeps reading the store.
-		{"an unreadable asks count is still outstanding", Halted, []string{plan,
-			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
-			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":"7"}`}},
-		// ...but an EMPTY one is genuinely none, the same as absent — Python's `"" or 0`.
-		{"an empty asks value is not outstanding", Converged, []string{plan,
-			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
-			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":""}`}},
 		// The deterministic pass changing files is unfinished work too.
 		{"analysis changing files is not converged", Halted, []string{plan,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3,"analysis_changed":true}`}},
@@ -151,7 +160,7 @@ func TestRestartsRepeatedCycleNumberIsKept(t *testing.T) {
 		t.Errorf("kept %d cycle rows, want 3 — a repeated n was collapsed", n)
 	}
 	// And the spend counts all three, which is what makes the cap honest.
-	if got := runs["r"].Convergence(); got != Capped {
+	if got := mustConv(t, runs["r"]); got != Capped {
 		t.Errorf("convergence = %q, want %q — 40 of 40 agents were spent", got, Capped)
 	}
 }
@@ -176,7 +185,7 @@ func TestUnreadableRowsDoNotInvalidateTheStore(t *testing.T) {
 	if n := len(runs["r"].Cycles); n != 1 {
 		t.Errorf("kept %d cycle rows, want 1 — a row with no run_id was attributed to r", n)
 	}
-	if got := runs["r"].Convergence(); got != Converged {
+	if got := mustConv(t, runs["r"]); got != Converged {
 		t.Errorf("convergence = %q, want %q", got, Converged)
 	}
 }
@@ -219,25 +228,28 @@ func TestMissingStoreIsEmpty(t *testing.T) {
 // absence reported `""`, `"0"` and `"false"` — a parity break, and an alarm line naming
 // nothing. The status vocabulary is open (cmd_finish never validates the string) and a
 // non-string status reaching this path has already happened once.
-func TestDroppedGatesCollapsesEveryFalsyStatus(t *testing.T) {
+// The falsy collapse, for the two falsy statuses a typed status can still hold: absent and
+// the empty string. `false` and `0` used to be here too — they were the point of the
+// original test, because the Python's `st or "unreported"` collapses every falsy value — but
+// a non-string status is now a decode error, asserted from the other side in
+// TestTypedDecodeRefusesTheShapesThePythonCoerced. The collapse itself is still a real rule
+// and still has to be tested: defaulting only on ABSENCE reported "" for a gate that
+// recorded an empty status, and an empty status names nothing about the gate.
+func TestDroppedGatesCollapsesTheFalsyStatusesAStringCanHold(t *testing.T) {
 	runs, err := Load(store(t,
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g_empty":{"planned":"run"},"g_false":{"planned":"run"},"g_zero":{"planned":"run"},"g_absent":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g_empty":{"status":""},"g_false":{"status":false},"g_zero":{"status":0}}}`), 0)
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g_empty":{"planned":"run"},"g_null":{"planned":"run"},"g_absent":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g_empty":{"status":""},"g_null":{"status":null}}}`), 0)
 	if err != nil {
-		t.Fatalf("store did not load: %v", err)
+		t.Fatal(err)
 	}
-	got := runs["r"].DroppedGates()
-	for _, g := range []string{"g_empty", "g_false", "g_zero", "g_absent"} {
+	got := mustDropped(t, runs["r"])
+	for _, g := range []string{"g_empty", "g_null", "g_absent"} {
 		if got[g] != "unreported" {
 			t.Errorf("gate %s reported %q, want \"unreported\" — a falsy status must not reach the caller verbatim", g, got[g])
 		}
 	}
 }
 
-// An over-long line must not invalidate the store either. A bufio.Scanner caps the line
-// length and then reports ErrTooLong, which discarded every run already parsed — and it
-// fires on the same input the torn-line tolerance exists for, a half-written line from a
-// concurrent writer. runlog.py has no ceiling on record size.
 func TestAnOverlongLineDoesNotInvalidateTheStore(t *testing.T) {
 	// The over-long row is valid JSON, just large — so it must be READ and USED, not
 	// merely survived. Making it the last cycle, with the fields that decide the answer,
@@ -257,7 +269,7 @@ func TestAnOverlongLineDoesNotInvalidateTheStore(t *testing.T) {
 		t.Errorf("kept %d cycle rows, want 2 — the over-long row was dropped", n)
 	}
 	// Cycle 1 alone would be Halted; only reading the over-long cycle 2 gives Converged.
-	if got := runs["r"].Convergence(); got != Converged {
+	if got := mustConv(t, runs["r"]); got != Converged {
 		t.Errorf("convergence = %q, want %q — the over-long row was not used", got, Converged)
 	}
 }
@@ -282,69 +294,32 @@ func TestALastLineWithNoNewlineIsStillRead(t *testing.T) {
 		t.Errorf("kept %d cycle rows, want 2 — the unterminated last line was dropped", n)
 	}
 	// Cycle 1 alone is Halted; only reading the unterminated cycle 2 gives Converged.
-	if got := runs["r"].Convergence(); got != Converged {
+	if got := mustConv(t, runs["r"]); got != Converged {
 		t.Errorf("convergence = %q, want %q — the unterminated last line was dropped", got, Converged)
 	}
 }
 
-// An empty collection is falsy in Python whether it is a list or a dict. The list half had
-// a test; the dict half had none, and the one catalog entry deleted both cases together so
-// it could not tell them apart either. Removing only the map case leaves Go's `v != nil`
-// default, which is true for a non-nil empty map — blocking a convergence Python grants.
-func TestAnEmptyAskedDictIsFalsy(t *testing.T) {
-	if got := convergenceOf(t, plan,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":{},"agents":2}`); got != Converged {
-		t.Errorf("convergence = %q, want %q — an empty dict read as truthy", got, Converged)
-	}
-	// And the converse, so the case is not satisfied by treating every map as falsy.
-	if got := convergenceOf(t, plan,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":{"a":1},"agents":2}`); got != Halted {
-		t.Errorf("convergence = %q, want %q — a non-empty dict read as falsy", got, Halted)
-	}
-}
-
-// A boolean status renders the way Python renders it, not the way Go does. This is the
-// alarm line's text: str(True) is "True", fmt.Sprint(true) is "true". A unit test here as
-// well as a parity fixture, because the mutation catalog runs without the oracle.
-func TestPyStrRendersATrueStatusLikePython(t *testing.T) {
-	path := store(t,
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
-	)
-	runs, err := Load(path, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := runs["r"].DroppedGates()["g"]
-	if got != "True" {
-		t.Errorf("a true status renders the way Python renders it: got %q, want %q", got, "True")
-	}
-}
-
-// The two type assertions in DroppedGates have no parity fixture: a truthy non-mapping makes
-// review-stats.py raise AttributeError, so the Python has no answer to compare against.
+// What replaced TestDroppedGatesPinsTheDegradedAnswers. That test pinned an ASYMMETRY the
+// types have removed: a non-dict `executed` value denied silence (every gate read as
+// unreported) while a non-dict `gates` value GRANTED it (nothing read as dropped at all, so
+// a run whose gate record was corrupt reported a clean sweep). The bad direction was the
+// second, and it was accepted knowingly because Go had no crash available where the Python
+// raised AttributeError.
 //
-// What this pins, precisely: the two documented ANSWERS, against a future change that starts
-// handling these shapes — add a []any arm treating `gates: ["g"]` as planned and the second
-// case fails. It does NOT pin the assertions themselves. Ranging a nil map and indexing one
-// are both safe in Go, so deleting either guard leaves the whole suite green; no assertion
-// can see it, and saying so is better than letting the test read as coverage it lacks.
-func TestDroppedGatesPinsTheDegradedAnswers(t *testing.T) {
-	for _, tc := range []struct {
-		name, plan, finish string
-		want               int
-	}{
+// Neither shape decodes now, so neither direction exists. This asserts that — and it is
+// worth asserting rather than deleting, because "it cannot happen" is the claim, and an
+// unasserted claim is how the asymmetry got in.
+func TestACorruptGateRecordCannotReportACleanSweep(t *testing.T) {
+	for _, tc := range []struct{ name, plan, finish string }{
 		{
-			name:   "a non-dict executed value denies silence",
-			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":"nope"}`,
-			want:   1,
-		},
-		{
-			name:   "a non-dict gates value grants it",
+			name:   "a non-dict gates value",
 			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":["g"]}`,
 			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
-			want:   0,
+		},
+		{
+			name:   "a non-dict executed value",
+			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":"nope"}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -352,11 +327,8 @@ func TestDroppedGatesPinsTheDegradedAnswers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if runs["r"] == nil {
-				t.Fatal("no run r in the fixture")
-			}
-			if got := runs["r"].DroppedGates(); len(got) != tc.want {
-				t.Errorf("got %d dropped gate(s) %v, want %d", len(got), got, tc.want)
+			if _, err := runs["r"].DroppedGates(); err == nil {
+				t.Error("a corrupt gate record returned a gate map instead of an error")
 			}
 		})
 	}
@@ -369,7 +341,7 @@ func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := runs["r"].DroppedGates()
+	got := mustDropped(t, runs["r"])
 	if _, ok := got["a"]; ok {
 		t.Error("a `done` gate was reported dropped")
 	}
@@ -387,7 +359,7 @@ func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	runs, _ = Load(store(t,
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"e":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`), 0)
-	if got := runs["r"].DroppedGates()["e"]; got != "unreported" {
+	if got := mustDropped(t, runs["r"])["e"]; got != "unreported" {
 		t.Errorf("an absent entry reported %q, want \"unreported\"", got)
 	}
 }

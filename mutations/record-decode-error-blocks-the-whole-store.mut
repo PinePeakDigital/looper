@@ -1,0 +1,13 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestABadRowDoesNotPoisonOtherRuns'
+expect: FAIL: TestABadRowDoesNotPoisonOtherRuns
+why:    loud per run, quiet elsewhere is the decided semantics, and this is the half that is easy to lose. The record is append-only and shared by every repo on the machine, so a malformed row written months ago for an unrelated run must not block reads of this one — there is no repair short of hand-editing the store. Failing the whole Load makes one bad row fatal to everything, which is the pressure that argues for coercing in the first place. Anchored on the cycle arm rather than on setErr: the first version of this entry mutated setErr to reassign the run to itself, which is a no-op, and it scored `survived` — the mutation has to change behaviour, not just look like it does.
+--- old
+			if err := json.Unmarshal([]byte(line), &c); err != nil {
+				r.setErr(env.Phase, err)
+				continue
+			}
+--- new
+			if err := json.Unmarshal([]byte(line), &c); err != nil {
+				return nil, err
+			}

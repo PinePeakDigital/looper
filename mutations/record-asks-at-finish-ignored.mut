@@ -1,10 +1,9 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: asks_recorded_only_at_finish_are_still_outstanding
-why:    deleting the unresolved-asks guard reopens the omission path the Python records — a zero-fix last cycle with the asks recorded only at finish derived converged, with no disclosure, while seven findings sat unresolved with the user and the report said nothing was left to apply. Pinned to the subtest name rather than to `convergence = "converged", want "halted"`, which several table cases can print.
+why:    deleting the unresolved-asks guard reopens the omission path the Python records — a zero-fix last cycle with the asks recorded only at finish derived converged, with no disclosure, while seven findings sat unresolved with the user and the report said nothing was left to apply. Pinned to the subtest name rather than to `convergence = "converged", want "halted"`, which several table cases can print. Re-anchored for the typed port: the guard is a pointer test now, and deleting it still buys a clean push with findings outstanding.
 --- old
-	if asksOutstanding(r.Fields["unresolved_asks"]) {
-		return Halted
+	if r.Finish != nil && r.Finish.UnresolvedAsks != nil && *r.Finish.UnresolvedAsks > 0 {
+		return Halted, nil
 	}
-
 --- new

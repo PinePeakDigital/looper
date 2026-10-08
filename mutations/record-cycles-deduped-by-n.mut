@@ -1,20 +1,17 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestRestartsRepeatedCycleNumberIsKept'
 expect: a repeated n was collapsed
-why:    a Step 13 restart resets the cycle counter, so two rows legitimately share n=1; collapsing them deleted the first pass of every restart from the spend, and the cap counted 20 of the 40 agents actually used
+why:    a Step 13 restart resets the cycle counter, so two rows legitimately share n=1; collapsing them deleted the first pass of every restart from the spend, and the cap counted 20 of the 40 agents actually used Re-anchored for the typed port.
 --- old
-		if phase, _ := rec["phase"].(string); phase == "cycle" {
-			r.Cycles = append(r.Cycles, rec)
-			continue
-		}
+			r.Cycles = append(r.Cycles, c)
 --- new
-		if phase, _ := rec["phase"].(string); phase == "cycle" {
-			for i, c := range r.Cycles {
-				if num(c["n"]) == num(rec["n"]) {
-					r.Cycles[i] = rec
-					return runs, nil
+			replaced := false
+			for i, ex := range r.Cycles {
+				if ex.N != nil && c.N != nil && *ex.N == *c.N {
+					r.Cycles[i], replaced = c, true
+					break
 				}
 			}
-			r.Cycles = append(r.Cycles, rec)
-			continue
-		}
+			if !replaced {
+				r.Cycles = append(r.Cycles, c)
+			}
