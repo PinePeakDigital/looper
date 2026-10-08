@@ -220,15 +220,10 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 		{"a last line that STARTS with the word is not the word", exitWith(2),
 			"usage: runlog.py [-h] ...\nunknown option --x", false},
 		{"nor is any other non-2 code", exitWith(4), "unknown\n", false},
-		// A SHORT wrong token. Every other wrong-last-line case here is long and wordy, so
-		// three length-based guards (len == len("unknown"), len <=, HasPrefix with the
-		// operands swapped) passed the whole table.
-		{"a short wrong last line is not the word", exitWith(2), "boom", false},
-		// Exit 2 with NOTHING on stderr. argparse always says something and cmd_convergence
-		// always prints the word, so silence is some third failure — and it is the case that
-		// separates `lastLine == "unknown"` from `HasPrefix("unknown", lastLine)`, which is
-		// true of every prefix including the empty string.
-		{"exit 2 saying nothing is not a missing run", exitWith(2), "", false},
+		// A strict PREFIX of the word, which is what separates equality from
+		// HasPrefix("unknown", lastLine) — true of every prefix, the empty string included.
+		// This case strictly dominates an empty-stderr one: no mutation is killed by that
+		// and not by this, so there is only this.
 		{"a strict prefix of the word is not the word", exitWith(2), "unk", false},
 		// Case, and punctuation. EqualFold and TrimSuffix(".") both passed the table.
 		{"the word is case-sensitive", exitWith(2), "UNKNOWN", false},
@@ -239,6 +234,16 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 		// the bare word, and that is a missing-run report for a subcommand typo.
 		{"a last field that IS the word is still not the word", exitWith(2),
 			"runlog.py: error: argument cmd: invalid choice: unknown", false},
+		// TWO consecutive warnings with no blank line between them. The noise case above has
+		// a blank middle line, which hides a SplitN(..., 2) weakening of lastLine — and two
+		// import warnings on a healthy oracle is the likeliest noise there is.
+		{"two warnings above the word are still the word", exitWith(2),
+			"DeprecationWarning: a\nUserWarning: b\nunknown\n", true},
+		// CRLF, and a non-breaking space. Both trims are TrimSpace, which is unicode-aware;
+		// narrowing either to a " \t\n" cutset survives without these.
+		{"a CRLF line ending does not hide the word", exitWith(2), "warn\r\nunknown\r\n", true},
+		{"unicode whitespace around the word does not hide it", exitWith(2),
+			"warn\n\u00a0unknown\u00a0\n", true},
 		// And these two keep lastLine honest where it CAN be wrong: a weakening of the outer
 		// trim to newlines only breaks the second. The inner trim is a different story —
 		// see its own note at lastLine; only its left half is reachable.
@@ -247,6 +252,12 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 		{"padding around the word is still the word", exitWith(2), "warn\n  unknown  \n", true},
 		{"a whitespace-only last line does not hide the word", exitWith(2),
 			"unknown\n   \n", true},
+		// The same, but whitespace no ASCII cutset covers. A trailing JUNK LINE is the only
+		// thing that exercises the OUTER trim: when the junk is on the verdict line itself
+		// the inner trim absorbs it, so narrowing the outer one to " \t\n" or " \t\n\r"
+		// survives every other case here.
+		{"a trailing line of unicode whitespace does not hide the word", exitWith(2),
+			"unknown\n\u00a0\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := saysNoSuchRun(tc.err, tc.stderr); got != tc.want {

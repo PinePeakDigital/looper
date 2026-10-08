@@ -1,7 +1,7 @@
 target: internal/record/parity_test.go
 verify: go test ./internal/record/ -count=1 -run 'TestSaysNoSuchRunReadsBothSignals'
 expect: FAIL: TestSaysNoSuchRunReadsBothSignals
-why:    comparing the WHOLE stderr buffer against "unknown" is the third wrong version of this guard and the one a reviewer is most likely to restore, because it reads as stricter. It is not stricter, it is brittle: any interpreter warning at import makes a HEALTHY oracle fail the gate, which is the exact sensitivity that separating stderr from stdout was introduced to remove. No fixture puts noise on stderr, so this entry and its test are the only things that can see the regression. Renamed from `reads-one-signal`, which was wrong: this mutation leaves the exit-code half intact, so it does not reduce the guard to one signal.
+why:    comparing the WHOLE stderr buffer against "unknown" is the third wrong version of this guard and the one a reviewer is most likely to restore, because it reads as stricter. It is not stricter, it is brittle: any interpreter warning at import makes a HEALTHY oracle fail the gate, which is the exact sensitivity that separating stderr from stdout was introduced to remove. No fixture puts noise on stderr, so this entry and its test are the only things that can see the regression. Renamed from `reads-one-signal`, which was wrong: this mutation leaves the exit-code half intact, so it does not reduce the guard to one signal. The mutation collapses lastLine's split rather than editing saysNoSuchRun directly — a PROXY for the whole-buffer regression, in the other function, chosen so no two entries anchor the same line. Same observable effect: the comparison then sees the entire buffer.
 --- old
 	fields := strings.Split(strings.TrimSpace(s), "\n")
 --- new
