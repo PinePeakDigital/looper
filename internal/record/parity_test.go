@@ -53,6 +53,12 @@ func runlogPath(t *testing.T) string {
 // not the buffer.
 func lastLine(s string) string {
 	fields := strings.Split(strings.TrimSpace(s), "\n")
+	// Only the LEFT half of this trim is reachable, and no test can cover the right half:
+	// the outer TrimSpace has already removed trailing whitespace from the buffer, so the
+	// final field cannot end in any. Narrowing it to TrimLeft therefore survives every
+	// mutation and always will. Left as TrimSpace because the symmetry is what a reader
+	// expects; labelled because an unreachable half that scores as covered is worse than
+	// one that is named.
 	return strings.TrimSpace(fields[len(fields)-1])
 }
 
@@ -181,6 +187,8 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 	// A real *exec.ExitError, since its ExitCode is what the guard reads.
 	exitWith := func(code int) error {
 		err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+		// sh always honours an explicit exit, so the mismatch branch is a guard against the
+		// environment, not a case under test — it fires only if sh is missing or broken.
 		if (err == nil) != (code == 0) {
 			t.Fatalf("sh exit %d gave err %v", code, err)
 		}
@@ -211,10 +219,29 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 			"usage: runlog.py [-h] ...\nrunlog.py: error: unrecognized arguments: --unknown", false},
 		{"a last line that STARTS with the word is not the word", exitWith(2),
 			"usage: runlog.py [-h] ...\nunknown option --x", false},
-		{"exit 0 is not a missing run however stderr reads", exitWith(0), "unknown\n", false},
 		{"nor is any other non-2 code", exitWith(4), "unknown\n", false},
-		// And these two keep lastLine honest: a weakening that trims only newlines, or that
-		// skips the inner trim, breaks one of them.
+		// A SHORT wrong token. Every other wrong-last-line case here is long and wordy, so
+		// three length-based guards (len == len("unknown"), len <=, HasPrefix with the
+		// operands swapped) passed the whole table.
+		{"a short wrong last line is not the word", exitWith(2), "boom", false},
+		// Exit 2 with NOTHING on stderr. argparse always says something and cmd_convergence
+		// always prints the word, so silence is some third failure — and it is the case that
+		// separates `lastLine == "unknown"` from `HasPrefix("unknown", lastLine)`, which is
+		// true of every prefix including the empty string.
+		{"exit 2 saying nothing is not a missing run", exitWith(2), "", false},
+		{"a strict prefix of the word is not the word", exitWith(2), "unk", false},
+		// Case, and punctuation. EqualFold and TrimSuffix(".") both passed the table.
+		{"the word is case-sensitive", exitWith(2), "UNKNOWN", false},
+		{"the word with a full stop is not the word", exitWith(2), "unknown.", false},
+		// The WORD-level form of the suffix bug: splitting on spaces and taking the last
+		// field. The argparse fixture above ends in "--unknown", whose last FIELD is
+		// "--unknown", so it did not catch this — but argparse also produces lines ending in
+		// the bare word, and that is a missing-run report for a subcommand typo.
+		{"a last field that IS the word is still not the word", exitWith(2),
+			"runlog.py: error: argument cmd: invalid choice: unknown", false},
+		// And these two keep lastLine honest where it CAN be wrong: a weakening of the outer
+		// trim to newlines only breaks the second. The inner trim is a different story —
+		// see its own note at lastLine; only its left half is reachable.
 		// Padding on a line that is NOT the whole buffer: with only one line the outer trim
 		// already strips it, so the inner one is never reached and dropping it survives.
 		{"padding around the word is still the word", exitWith(2), "warn\n  unknown  \n", true},
