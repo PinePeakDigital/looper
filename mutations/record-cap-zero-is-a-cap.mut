@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: a_recorded_cap_of_zero_is_not_a_cap
+why:    the ZERO direction of the `!= 0` cap guard, which nothing covered. `negative-cap-is-no-cap` pins the `> 0` mutant; deleting the comparison entirely survived the whole suite and changed 2,730 of 18,041 synthetic stores from halted to capped, because `spent >= 0` is true for every run. "no recorded cap is never capped" could not catch it: ABSENCE leaves AgentCap nil and never reaches this comparison. Same reachability class as the negative case — cmd_plan will not write a 0, and the store is append-only.
+--- old
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
+--- new
+	if r.Plan != nil && r.Plan.AgentCap != nil && spent >= *r.Plan.AgentCap {

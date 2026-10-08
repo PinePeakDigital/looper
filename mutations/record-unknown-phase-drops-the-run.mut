@@ -1,0 +1,15 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a_run_known_only_by_a_nudge_exists_and_has_no_cycles
+why:    runlog.load does `runs.setdefault(rid, {})` BEFORE it looks at the phase, so a run known only by a nudge row exists and has no cycles. Skipping unmodelled phases before the run is created makes it vanish instead, which survived the whole suite: no fixture carried a nudge row, though the real store has 17. It matters because review-stats' abandonment accounting keys on a plan with no finish, so a disappearing run changes a number rather than erroring.
+--- old
+		r := runs[env.RunID]
+		if r == nil {
+--- new
+		switch env.Phase {
+		case "cycle", "plan", "finish":
+		default:
+			continue
+		}
+		r := runs[env.RunID]
+		if r == nil {

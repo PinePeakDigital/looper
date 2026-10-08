@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTypedDecodeRefusesTheShapesThePythonCoerced'
+expect: gate_zero_status_is_unreported
+why:    encoding/json never names a map key, so a finish row with eight gates and one unreadable status produced "GateResult.executed.status" and left the operator to guess which of the eight — while the whole run is refused, so none of the other seven statuses is readable either. That combination is the one place the typed boundary is less diagnosable than the coercion it replaced. nameBadGates re-reads the map on the error path only to say which gate.
+--- old
+	return fmt.Errorf("%s gate(s) %s: %w", field, strings.Join(bad, ", "), err)
+--- new
+	return err

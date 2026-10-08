@@ -15,16 +15,18 @@ package record
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 )
 
 // The store's schema, typed PER PHASE rather than as one flat row, because the same key
 // means different things in different phases. `agents` is a COUNT on a cycle row and an
 // operator-supplied roster on a finish row — one real run recorded
-// `{"cycle1":6,"cycle2":3,"scorers":"batched haiku"}` — and a flat map[string]any hid that
+// `{"cycle1":6,"cycle2":3,"cycle3":2,"scorers":"batched haiku"}` — and a flat map hid that
 // difference behind one name.
 //
 // Only the fields something derives from are modelled. Unknown fields decode away silently,
@@ -37,14 +39,20 @@ import (
 // numeric field is a number in every row, so the shapes the old coercion helpers guarded
 // against never actually occur — while ABSENCE and null are everywhere (`subagent_tokens`
 // null in 46 of 57 cycles, `agent_cap` absent in 18 of 38 plans). So the real work is
-// telling absent from null from zero, which is exactly what the pointers below do and
-// exactly the distinction `converged` turns on.
+// telling ABSENT-OR-NULL from zero, which is what the pointers below do and is the
+// distinction `converged` turns on. Not three states: a *int is nil for absent and for
+// null alike, and no reader here wants them apart. `disclosure()` is the first function
+// that would — Python renders absent as `?` and null as `None` — and that divergence is
+// decided there, on the measurement that no row in the store holds a null count.
 type GateSpec struct {
 	Planned string `json:"planned"`
 }
 
-// GateResult.Status is a pointer so that absent, null and "" stay distinguishable here and
-// are collapsed by the one reader that wants them collapsed. A status that is not a string
+// GateResult.Status is a pointer, which separates "" from absent-or-null — NOT all three.
+// encoding/json leaves a pointer nil both for JSON null and for an absent key, so absent and
+// null are indistinguishable by construction, and the one reader collapses "" in with them
+// anyway. A plain string would behave identically today; the pointer is kept because it makes
+// the collapse explicit at the reader rather than implicit in a zero value. A status that is not a string
 // is a decode error: the Python rendered `status: true` as "True" and a number as itself,
 // and reproducing that meant a str()-alike with number and container gaps that could never
 // be closed. Refusing the shape is both simpler and louder.
@@ -58,28 +66,38 @@ type Plan struct {
 	Gates    map[string]GateSpec `json:"gates"`
 }
 
-// Cycle is one pass of the loop. Every count is a pointer because absence is load-bearing:
+// Cycle is one pass of the loop. Applied is a pointer because ITS absence is load-bearing:
 // `applied` MISSING must not read as zero, or a cycle that recorded nothing earns the
-// `converged` that absence was hiding.
+// `converged` that absence was hiding. The others are pointers for uniformity, not for that
+// reason — Asked and Agents both read absence AS zero, which is the Python's `or 0`.
 type Cycle struct {
-	N               *int  `json:"n"`
 	Applied         *int  `json:"applied"`
 	Asked           *int  `json:"asked"`
 	Agents          *int  `json:"agents"`
 	AnalysisChanged *bool `json:"analysis_changed"`
 }
 
-// Finish is the terminal row. Agents stays raw because its schema is the operator's: the
-// `--agents` flag takes arbitrary JSON and the store holds both lists and objects for it.
-// Typing it would reject real rows to no benefit, since nothing derives from it.
+// Finish is the terminal row. Agents stays raw because `--agents` is a bare json.loads with
+// no shape validation and the store holds 26 lists and 1 object for it, so typing it would
+// reject real rows. Nothing in THIS package derives from it — runlog's own derive_tier does,
+// reading `status` and `id` out of it to force `tier_executed: "partial"`, so the schema is
+// documented in runlog's --agents help rather than being genuinely the operator's.
 type Finish struct {
-	Outcome        string                `json:"outcome"`
 	UnresolvedAsks *int                  `json:"unresolved_asks"`
 	Executed       map[string]GateResult `json:"executed"`
 	Agents         json.RawMessage       `json:"agents"`
 }
 
-// Run is one run's phases, merged the way load() merges them.
+// Run is one run's phases, merged the way load() merges them — with one measured, unreachable
+// exception. load() merges a non-cycle row into the run dict FIELD-WISE (`run.update(rec)`),
+// where Plan and Finish below are replaced wholesale, so a SECOND plan row omitting a key the
+// first carried keeps that key in Python and loses it here. It cannot happen from the writer:
+// cmd_plan writes every key it owns on every call (`agent_cap` has DEFAULT_AGENT_CAP = 40 and
+// type=int, `gates` is always written), as does cmd_finish, so repeated rows always carry
+// identical key sets. Verified on the real store — the two runs that do have duplicate finish
+// rows carry the same keys in each, so merge and last-wins give the same answer — and a
+// differential over 18,041 synthetic stores finds it in exactly 2, both hand-built. Cycle rows
+// are not affected: load() appends those and merges nothing, which is what Cycles below does.
 type Run struct {
 	ID     string
 	Plan   *Plan
@@ -98,15 +116,26 @@ type Run struct {
 	// also a fix: disclosure() once read the raw rows while convergence() read the deduped
 	// ones, so a rendered report contradicted its own derivation.
 	Cycles []Cycle
-	// Err is the first field in THIS run that could not be decoded. Non-nil means no
+	// Err is every field in THIS run that could not be decoded, joined. Non-nil means no
 	// answer derived from this run is trustworthy, so every derivation below returns it
 	// rather than a verdict.
 	//
+	// It also means the DATA is incomplete, not merely suspect: a row that failed to decode
+	// was skipped, so Cycles above is short by one for each bad cycle row, and Plan or Finish
+	// is nil where the row existed but was unreadable — byte-identical to the row never
+	// having been written. Nothing on this Run may be read while Err is non-nil, the exported
+	// slices included; that is why every derivation checks it first instead of leaving the
+	// check to the caller.
+	//
 	// Per run, not per store: the record is append-only and shared by every repo on the
 	// machine, so one bad row written months ago must not block reads of unrelated runs.
-	// But nothing may derive a verdict from a field it could not read, which is what the
-	// coercion helpers this replaced did — `unresolved_asks: "7"` read as 0 and bought a
-	// `converged` with seven findings outstanding.
+	// But nothing may derive a verdict from a field it could not read. The case that names
+	// the hazard is `unresolved_asks: "7"` reading as 0 and buying a `converged` with seven
+	// findings outstanding — which belonged to the port BEFORE asksOutstanding existed, not
+	// to the code this commit replaces. asksOutstanding was written to fix exactly that and
+	// did: at HEAD~1 it answered "outstanding" whenever it could not read the value. Typing
+	// retires the rule rather than restating it, but it is not rescuing that defect from the
+	// code it deletes, and saying so would be the flattering version.
 	Err error
 }
 
@@ -132,6 +161,15 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// input: a half-written line from a concurrent writer is where an over-long read
 	// comes from. runlog.py iterates the file with no ceiling on record size, and its
 	// own comment says records are unbounded, so a ceiling here is a parity break too.
+	//
+	// What this does NOT match is RETENTION, and the parity argument above covers only
+	// record size. `runlog.py:136` is `deque(fh, maxlen=limit)`, which streams and holds at
+	// most `limit` lines; this holds every line and applies the limit afterwards, so
+	// retention is O(file) — measured at roughly 3-4x file size resident (a 200 MiB store
+	// costs ~600 MiB to return one run with limit=1). Deliberately not fixed: every caller
+	// passes 0, which reads the whole store by design, so a ring buffer would bound a path
+	// nothing takes. The narrow claim is the true one — `limit` bounds what is RETURNED, not
+	// what is read. Fix the retention when a caller first passes a limit.
 	var lines []string
 	br := bufio.NewReader(f)
 	for {
@@ -150,12 +188,18 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			return nil, err // a real I/O error still surfaces; only size does not
 		}
 	}
+	// How many lines the tail dropped, so the number in an error is the line an operator
+	// can `sed -n Np` out of the real file. Computed before the slice, because after it
+	// the index is relative to the window and names the wrong row.
+	dropped := 0
 	if limit > 0 && len(lines) > limit {
-		lines = lines[len(lines)-limit:]
+		dropped = len(lines) - limit
+		lines = lines[dropped:]
 	}
 
 	runs := map[string]*Run{}
-	for _, line := range lines {
+	for i, line := range lines {
+		lineNo := dropped + i + 1
 		// Two-stage: the envelope first, so a row for one run can never fail another's
 		// decode, then the phase body into its own type.
 		var env struct {
@@ -163,10 +207,19 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			Phase string `json:"phase"`
 		}
 		if err := json.Unmarshal([]byte(line), &env); err != nil {
-			continue // a torn line never invalidates the rest of the store
+			// A torn line never invalidates the rest of the store. This also swallows
+			// well-formed JSON whose envelope is unusable — `"phase": 7`, `"run_id": 7`, a
+			// top-level array, a bare string — and that sounds louder than it is: the
+			// Python drops those rows too. Measured on a store whose last cycle row carries
+			// outstanding work, a wrong-typed OR misspelled `phase` reads `converged` on
+			// BOTH sides, because `rec.get("phase") == "cycle"` is false and the row never
+			// reaches `cycles`. So the silence is parity, not a gap. And a row with an
+			// unreadable `run_id` belongs to no run, which is why there is nowhere to hang
+			// an error for it even if we wanted one.
+			continue
 		}
 		if env.RunID == "" {
-			continue
+			continue // `if not rid: continue`; without it these collect under a phantom ""
 		}
 		r := runs[env.RunID]
 		if r == nil {
@@ -177,21 +230,27 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		case "cycle":
 			var c Cycle
 			if err := json.Unmarshal([]byte(line), &c); err != nil {
-				r.setErr(env.Phase, err)
+				r.setErr(lineNo, env.Phase, err)
 				continue
 			}
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
 			var pl Plan
 			if err := json.Unmarshal([]byte(line), &pl); err != nil {
-				r.setErr(env.Phase, err)
+				r.setErr(lineNo, env.Phase, nameBadGates(line, "gates", err, func(v json.RawMessage) error {
+					var spec GateSpec
+					return json.Unmarshal(v, &spec)
+				}))
 				continue
 			}
 			r.Plan = &pl
 		case "finish":
 			var fi Finish
 			if err := json.Unmarshal([]byte(line), &fi); err != nil {
-				r.setErr(env.Phase, err)
+				r.setErr(lineNo, env.Phase, nameBadGates(line, "executed", err, func(v json.RawMessage) error {
+					var res GateResult
+					return json.Unmarshal(v, &res)
+				}))
 				continue
 			}
 			r.Finish = &fi
@@ -203,12 +262,63 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	return runs, nil
 }
 
-// setErr keeps the FIRST decode failure. The first names the field a reader should go fix;
-// later ones are usually the same row read again by another phase's body.
-func (r *Run) setErr(phase string, err error) {
-	if r.Err == nil {
-		r.Err = fmt.Errorf("run %s: %s row has an unreadable field: %w", r.ID, phase, err)
+// nameBadGates says WHICH gate failed, because encoding/json never names a map key. A
+// finish row with eight gates and one unreadable status produced
+// "cannot unmarshal number into Go struct field GateResult.executed.status of type string",
+// which tells an operator the field and leaves them to guess the gate out of eight — and
+// the whole run is refused, so none of the other seven statuses is readable either. That
+// combination is the one place the typed boundary is less diagnosable than the coercion it
+// replaced, and the gate name is what closes it.
+//
+// Runs on the error path only, so a healthy row pays nothing. Returns `err` untouched when
+// the bad field is not one of these maps, when the map's own type is wrong (json's message
+// already covers that case), or when nothing in it individually fails — never a bare
+// "gate : " with an empty name.
+func nameBadGates(line, field string, err error, decode func(json.RawMessage) error) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &top) != nil {
+		return err
 	}
+	raw, ok := top[field]
+	if !ok {
+		return err
+	}
+	var entries map[string]json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		return err
+	}
+	var bad []string
+	for name, v := range entries {
+		if decode(v) != nil {
+			bad = append(bad, name)
+		}
+	}
+	if len(bad) == 0 {
+		return err
+	}
+	sort.Strings(bad) // map order is random; an error message must not be
+	return fmt.Errorf("%s gate(s) %s: %w", field, strings.Join(bad, ", "), err)
+}
+
+// setErr accumulates every decode failure on the run. It used to keep only the first, on
+// the stated ground that "later ones are usually the same row read again by another phase's
+// body" — which describes code that does not exist: `switch env.Phase` has one arm per
+// phase, so every line decodes into exactly one type and is never re-read. What keeping the
+// first actually did was pick by position: encoding/json reports whichever bad field comes
+// first in the WRITER's key order, and across rows the first bad row in file order. Measured,
+// that put `n` (which nothing derived from) in the message while hiding `unresolved_asks` —
+// the one field whose misreading motivated this whole layer — and an append-only store with
+// no repair tooling turns each hidden error into another hand-edit round trip.
+//
+// %q on the id, not %s. `run_id` is writer-supplied and `runlog.py` never validates it
+// (`a.run_id or uuid.uuid4().hex[:12]`), the store is shared by every repo on the machine,
+// and this string is read by a human deciding whether a push is safe. An id holding
+// "\x1b[2K\r" erases the line and reprints a forged verdict above the real error; %q
+// escapes the control bytes instead. The phase needs no quoting — only the three literals
+// below reach here.
+func (r *Run) setErr(lineNo int, phase string, err error) {
+	r.Err = errors.Join(r.Err, fmt.Errorf(
+		"run %q: line %d (%s row) has an unreadable field: %w", r.ID, lineNo, phase, err))
 }
 
 // Convergence values. Unknown is the zero value on purpose: a run with no cycle rows
@@ -257,9 +367,17 @@ func (r *Run) Convergence() (string, error) {
 	// user and resolved none has not run out of findings, it has run out of what it may
 	// do unattended.
 	//
-	// `Applied != nil && *Applied == 0`, which is the Python's `last.get("applied") == 0`
-	// exactly: `None == 0` is False, so a MISSING or null `applied` is not zero here —
-	// unlike the `or 0` sites below. Reading absence as zero made a cycle row with no
+	// `Applied != nil && *Applied == 0` matches the Python's `last.get("applied") == 0` on
+	// the case that matters and NOT exactly. `None == 0` is False, so a MISSING or null
+	// `applied` is not zero here either — unlike the `or 0` sites below. Where it diverges
+	// is Python's bool/float arithmetic: `False == 0` is True and `0.0 == 0` is True, so the
+	// Python derives `converged` for `applied: false` and `applied: 0.0` (and for
+	// `asked: false`, and `analysis_changed: 0`) where the typed port returns a decode error.
+	// The retired isZero carried that case with the comment `False == 0 is True, True == 0 is
+	// False`, so claiming exactness here would delete documented behaviour and then assert
+	// agreement over it. All four shapes are enumerated in parity_test.go's `refused`; none
+	// is writer-reachable, because every one of these flags is argparse `type=int`.
+	// Reading absence as zero made a cycle row with no
 	// `applied` field derive `converged` where the Python derives `halted`, which is the
 	// one direction that matters: it buys a clean result, with no disclosure, by omitting
 	// a field. That is the hole the unresolved_asks check above exists to close, reopened

@@ -3,6 +3,7 @@ package record
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -96,6 +97,26 @@ func TestConvergenceRules(t *testing.T) {
 		{"a converged last cycle wins over a cap it also reached", Converged, []string{
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`}},
+		// The ZERO direction of the `!= 0` cap guard, which nothing covered. Deleting
+		// `*r.Plan.AgentCap != 0` from the cap test survived the whole suite and changed
+		// 2,730 of 18,041 synthetic stores from halted to capped: with the guard gone, a
+		// recorded cap of 0 makes `spent >= 0` true for every run. The negative direction
+		// already had `a negative cap is still a cap` below; "no recorded cap is never
+		// capped" tested only ABSENCE, and absent takes a different branch (AgentCap is
+		// nil) so it could never reach this comparison. Same reachability class as the
+		// negative case — cmd_plan will not write a 0, and the store keeps what it has.
+		{"a recorded cap of zero is not a cap", Halted, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":0}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":5}`}},
+		// The `c.Agents != nil` arm of the spend sum, which also survived. Absence must
+		// contribute 0, matching the Python's `or 0`; a mutant contributing 1 instead needs
+		// a cap small enough for one agent to cross it, which no case had. Not reachable
+		// from the writer (`--agents` is required=True) and absent from all 57 real cycle
+		// rows, so this pins a parity claim that would otherwise stand with nothing behind
+		// it rather than guarding a live defect.
+		{"a cycle with no agents field spends nothing", Halted, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":1}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":3}`}},
 		// The Python cap guard is a bare `if cap`, so a negative cap is truthy and any
 		// spend clears it. cmd_plan will not write one; the store keeps what it has.
 		{"a negative cap is still a cap", Capped, []string{
@@ -327,8 +348,15 @@ func TestACorruptGateRecordCannotReportACleanSweep(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := runs["r"].DroppedGates(); err == nil {
-				t.Error("a corrupt gate record returned a gate map instead of an error")
+			got, err := runs["r"].DroppedGates()
+			if err == nil {
+				// The two subtests are OPPOSITE directions and the old message could not
+				// tell them apart: `gates: ["g"]` returned {} — the clean sweep this test
+				// is named for — while `executed: "nope"` returned {g: "unreported"}, the
+				// safe direction. Printing the map is what makes the failure readable.
+				t.Errorf("a corrupt gate record returned %d gate(s) %v instead of an error; "+
+					"an empty map is the clean sweep this test is named for, a populated one is the safe direction",
+					len(got), got)
 			}
 		})
 	}
@@ -362,4 +390,98 @@ func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	if got := mustDropped(t, runs["r"])["e"]; got != "unreported" {
 		t.Errorf("an absent entry reported %q, want \"unreported\"", got)
 	}
+}
+
+// Three rules the mutation sweep found standing on nothing: the blank-run_id guard, the fact
+// that an unknown phase still CREATES the run, and the convergence value returned alongside
+// an error. Each mutation survived the whole suite before this test existed.
+func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
+	t.Run("rows with no run id do not collect under a phantom empty key", func(t *testing.T) {
+		// Deleting `if env.RunID == "" { continue }` survives every other test: the rows
+		// still decode, so no verdict changes — they just land in a run keyed "". Python's
+		// `if not rid: continue` drops them, so the phantom run is a Go-only invention, and
+		// nothing counted the runs map, which is the only place it is visible.
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+			`{"run_id":"","phase":"cycle","n":9,"applied":9,"agents":9}`,
+			`{"run_id":null,"phase":"cycle","n":9,"applied":9,"agents":9}`,
+			`{"phase":"cycle","n":9,"applied":9,"agents":9}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a store with unidentified rows: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Errorf("got %d run(s) %v, want exactly 1: a row with no run_id belongs to no run", len(runs), keysOf(runs))
+		}
+		if _, ok := runs[""]; ok {
+			t.Error(`a run keyed "" exists, so unidentified rows were collected instead of dropped`)
+		}
+	})
+
+	t.Run("a run known only by a nudge exists and has no cycles", func(t *testing.T) {
+		// The code comment asserts this parity and no fixture carried a nudge row, though
+		// the real store has 17 of them. Inserting a `default: continue` before the run is
+		// created survives the suite and makes the run vanish — which matters because
+		// review-stats' abandonment accounting keys on a plan with no finish, so a run that
+		// disappears changes a number rather than erroring.
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"nudge","nudged_at":"2026-01-01T00:00:00"}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a nudge-only store: %v", err)
+		}
+		run := runs["r"]
+		if run == nil {
+			t.Fatal("a run known only by a nudge must still exist, as runlog.load's setdefault does")
+		}
+		if len(run.Cycles) != 0 {
+			t.Errorf("got %d cycle(s), want 0: a nudge row carries no cycle", len(run.Cycles))
+		}
+		got, err := mustConvErr(t, run)
+		if got != Unknown {
+			t.Errorf("got %q, want %q for a run with no cycle rows", got, Unknown)
+		}
+		_ = err
+	})
+
+	t.Run("an undecodable run reports Unknown alongside its error", func(t *testing.T) {
+		// `return Unknown, r.Err` -> `return Converged, r.Err` survives, because both error
+		// paths assert only that err != nil and never look at the value returned with it.
+		// The file's own reasoning is the argument for pinning it: Unknown is the zero value
+		// on purpose, so a caller that reads the string and drops the error still gets "did
+		// not converge" rather than a clean result.
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":"not a number","agents":2}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a store containing one bad row: %v", err)
+		}
+		got, cErr := runs["r"].Convergence()
+		if cErr == nil {
+			t.Fatal("an undecodable run must not derive a verdict")
+		}
+		if got != Unknown {
+			t.Errorf("got %q alongside the error, want %q: a caller that drops the error must still read 'did not converge'", got, Unknown)
+		}
+	})
+}
+
+// keysOf names the runs in a failure message, since the map's own order is random.
+func keysOf(runs map[string]*Run) []string {
+	out := make([]string, 0, len(runs))
+	for k := range runs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// mustConvErr is mustConv's sibling for a run expected to decode: it fails rather than
+// returning a verdict derived from an error.
+func mustConvErr(t *testing.T, r *Run) (string, error) {
+	t.Helper()
+	got, err := r.Convergence()
+	if err != nil {
+		t.Fatalf("this run must decode cleanly: %v", err)
+	}
+	return got, nil
 }
