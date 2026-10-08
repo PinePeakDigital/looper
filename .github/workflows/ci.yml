@@ -13,7 +13,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The catalog floor below x the 5-minute per-command verify timeout is the worst case
+    # The catalog is at least the floor below, so the worst case is at least that many x the
+    # 5-minute per-command verify timeout — 400 minutes today, against GitHub's 360 default
     # if something makes every verify hang, and the GitHub default is 360. A typical run
     # is a couple of minutes, so this fails fast and cheap instead.
     timeout-minutes: 20
@@ -65,21 +66,23 @@ jobs:
       # a short count, so the gate cannot go inert again without CI saying so.
       - name: the parity gate actually ran
         run: |
+          # First, before anything reads it. -r not -f: an UNREADABLE log produced exactly
+          # the wrong-reason failure the awk-over-grep note below exists to avoid — awk's own
+          # "can't open file" and no message from this step at all.
+          [ -r record.log ] || { echo "record.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
           if grep -q -- '--- SKIP' record.log; then
             echo "the parity gate SKIPPED — the oracle was not reachable:"; cat record.log; exit 1
           fi
           # awk, not `grep -c`: grep -c exits non-zero on a zero count, which under this
           # step's `bash -e` would abort here and report the wrong reason for the failure.
-          # The log must exist before anything is counted. Under `bash -e` a missing file
-          # aborts the assignment below with only awk's own stderr, which is the same
-          # wrong-reason failure the awk-over-grep note above exists to avoid.
-          [ -f record.log ] || { echo "record.log is missing — the test step above produced no log"; exit 1; }
           # A floor PER TEST, not one total. A single aggregate is a product of fixtures and
           # oracles, so growth in one dimension masks collapse in another: at 50 fixtures,
           # losing the whole DroppedGates oracle would still count 100 and pass — which is
           # exactly the regression that oracle was added to fix.
           for t in Convergence CycleCount DroppedGates; do
-            c=$(awk -v t="$t" '$0 ~ "--- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
+            # Anchored at line start: unanchored, any line merely CONTAINING the substring
+            # counted, and a fixture is free text as far as this pattern is concerned.
+            c=$(awk -v t="$t" '$0 ~ "^[[:space:]]*--- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
             [ "$c" -ge 30 ] || { echo "only $c $t parity subtests passed, expected at least 30"; cat record.log; exit 1; }
             echo "$c $t parity subtests compared against the Python"
           done

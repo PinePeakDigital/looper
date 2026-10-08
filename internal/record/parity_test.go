@@ -12,9 +12,11 @@ import (
 
 // The parity gate. Until runlog.py is retired, the two implementations must not be able to
 // disagree: this runs the Python against the same fixture and requires the same answer —
-// except where a divergence is recorded as deliberate at the code that causes it, which
-// today means pyStr's number and container gaps (record.go). A gap with a written reason is
-// a different thing from one nobody noticed, and only the second kind is what this forbids.
+// except where a divergence is recorded as deliberate at the code that causes it. Today that
+// is four places, not one: pyStr's number, container, nil and false gaps; num() and
+// asksOutstanding() degrading where the Python raises TypeError and dies; and DroppedGates'
+// two type assertions degrading where it raises AttributeError. A gap with a written reason
+// is a different thing from one nobody noticed, and only the second kind is what this forbids.
 //
 // A port is the one refactor with a free oracle — the thing being replaced still runs — and
 // not using it is how a port ships a behaviour change nobody intended. Every fixture below
@@ -40,6 +42,96 @@ func runlogPath(t *testing.T) string {
 		t.Skip("runlog.py not found; set REVIEW_LOOP_RUNLOG to run the parity gate")
 	}
 	return p
+}
+
+// noRun is what an oracle prints when the fixture holds no run "r". Without it the Python
+// half of every comparison degrades silently: `next(..., {})` and `.get('r') or {}` both
+// render a missing run as "nothing", so a typo'd run_id or rows that fail to parse compared
+// an empty Go answer against an empty Python one and reported PASS. Guarding only the Go
+// side — which is all the first fix did — left 23 of 36 DroppedGates subtests able to pass
+// having compared nothing, and still counting toward the CI floor.
+const noRun = "NO-SUCH-RUN"
+
+// pyOracle runs one Python statement block against a script loaded with runpy and returns
+// what it printed. `m` is the loaded module and `json`, `os`, `sys` are imported; the block
+// must end in a print.
+//
+// runpy rather than an import: review-stats.py's name has a hyphen and is therefore not
+// importable, and its own `import runlog` needs the skill directory on sys.path — run_path
+// does not put the script's directory there. runlog.py needs neither, but both oracles go
+// through here so a third cannot invent a third mechanism.
+//
+// Output, not CombinedOutput: stderr merged into stdout is parsed as part of the answer, so
+// one DeprecationWarning at import turned 72 subtests red across the two tests that had it
+// and blamed the comparison for it. Captured separately and reported on failure instead.
+func pyOracle(t *testing.T, script, store, body string) string {
+	t.Helper()
+	cmd := exec.Command("python3", "-c",
+		"import json,os,sys,runpy;"+
+			"sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])));"+
+			"m=runpy.run_path(sys.argv[1]);"+body, script)
+	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store)
+	var errOut strings.Builder
+	cmd.Stderr = &errOut
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
+	}
+	got := strings.TrimSpace(string(out))
+	if got == noRun {
+		t.Fatalf("Python side found no run %q in the fixture", "r")
+	}
+	return got
+}
+
+// The vacuity guards above are tripwires no fixture can trip: every fixture holds run "r",
+// so `got == noRun` and the exit-2 check are unreachable, and mutation confirms both survive
+// the whole suite. Labelled rather than left to read as coverage.
+//
+// What IS testable is the half that can change underneath us — whether the Python still
+// SIGNALS a missing run at all. A refactor that made review-stats' load() return a default
+// run, or dropped cmd_convergence's exit 2, would silence the tripwires without touching Go,
+// and nothing else would notice. So this pins the oracles' side of the contract directly.
+func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
+	script := runlogPath(t)
+	stats := reviewStatsPath(t)
+	// A store with a run, just not the one anything asks about.
+	path := store(t, `{"run_id":"other","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`)
+
+	t.Run("review-stats dropped_gates", func(t *testing.T) {
+		got := pyOracle(t, stats, path,
+			"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
+				"print('ABSENT' if run is None else 'FOUND')")
+		if got != "ABSENT" {
+			t.Errorf("the oracle no longer distinguishes a missing run: got %q", got)
+		}
+	})
+
+	t.Run("runlog load", func(t *testing.T) {
+		got := pyOracle(t, script, path,
+			"print('ABSENT' if m['load'](limit=None).get('r') is None else 'FOUND')")
+		if got != "ABSENT" {
+			t.Errorf("the oracle no longer distinguishes a missing run: got %q", got)
+		}
+	})
+
+	t.Run("convergence exits 2", func(t *testing.T) {
+		cmd := exec.Command("python3", script, "convergence", "--run-id", "r")
+		cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
+		var errOut strings.Builder
+		cmd.Stderr = &errOut
+		out, err := cmd.Output()
+		ee, ok := err.(*exec.ExitError)
+		if !ok || ee.ExitCode() != 2 {
+			t.Errorf("cmd_convergence no longer exits 2 for a missing run: err=%v, stdout=%q",
+				err, out)
+		}
+		// And it must not put the word on stdout, where it would be read as a verdict —
+		// "unknown" on STDOUT with exit 1 is the legitimate answer for a cycle-less run.
+		if strings.TrimSpace(string(out)) != "" {
+			t.Errorf("a missing run printed %q to stdout; it belongs on stderr", out)
+		}
+	})
 }
 
 // fixtures are stores to compare on. Each is a list of JSONL rows.
@@ -176,19 +268,19 @@ var fixtures = map[string][]string{
 	"gate waived is still dropped": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":"waived","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"waived","reason":"r"}}}`,
 	},
 	// done and n/a are the whole of GATE_OK: nothing is dropped.
 	"gate done and na are accounted": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"a":{"planned":"run"},"b":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"a":{"status":"done","reason":"r"},"b":{"status":"n/a","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"a":{"status":"done","reason":"r"},"b":{"status":"n/a","reason":"r"}}}`,
 	},
 	// No executed entry at all: the gate was planned and nobody said anything.
 	"gate missing from a present executed map": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
 	},
 	// Every FALSY status collapses to "unreported", not just an absent entry. The Python
 	// writes `st or "unreported"`, so "", 0 and false all take the default; defaulting
@@ -197,28 +289,28 @@ var fixtures = map[string][]string{
 	"gate empty-string status is unreported": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":"","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"","reason":"r"}}}`,
 	},
 	// `false` is the same collapse spelled as a boolean, and the direct mirror of the
 	// `true` fixture below, which does NOT collapse and so prints its rendering.
 	"gate false status is unreported": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":false,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":false,"reason":"r"}}}`,
 	},
 	// `0` is the same collapse spelled as a number. Defaulting only on absence reported
 	// "0" here, which names nothing about the gate.
 	"gate zero status is unreported": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":0,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":0,"reason":"r"}}}`,
 	},
 	// An explicit JSON null, as distinct from the key being absent above: four different
 	// Python routes to the same answer, which is the thing worth pinning.
 	"gate null status is unreported": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":null,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":null,"reason":"r"}}}`,
 	},
 	// A SMALL INTEGER status, which is the only numeric class where the two renderings agree.
 	// Named narrowly on purpose: this fixture passing says nothing about numbers in general,
@@ -232,7 +324,7 @@ var fixtures = map[string][]string{
 	"gate small-integer status renders as itself": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":5,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":5,"reason":"r"}}}`,
 	},
 	// `status: true` is the mirror of the false fixture above, and the one case where
 	// Python's rendering and Go's are not the same word: str(True) is "True" and
@@ -241,23 +333,26 @@ var fixtures = map[string][]string{
 	"gate true status renders as True": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":true,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
 	},
 	// `passed` and `blocked` are the two statuses most likely to be quietly accounted, and
-	// both are deliberately absent from GATE_OK after a documented add-and-revert each
-	// (runlog.py:466-470, review-stats.py:96-110). `passed` is report-line PROSE for a gate
-	// line, not a status word, and accounting it made the tier read `full` while the alarm
-	// read `did not complete (passed)` — two instruments contradicting each other about one
-	// record. Each must surface under its own name.
+	// both are deliberately absent from the accounted vocabularies — but for different
+	// reasons, and not the same tuple. `passed` was added to GATE_ACCOUNTED and taken back
+	// out (runlog.py:466-470, review-stats.py:104-112): it is report-line PROSE for a gate
+	// line rather than a status word, and accounting it made the tier read `full` while the
+	// alarm read `did not complete (passed)` — two instruments contradicting each other about
+	// one record. `blocked` has no add-and-revert; its absence is argued from the docs' own
+	// asymmetry, that a waived gate pushes and a blocked one does not
+	// (review-stats.py:95-102). Each must surface under its own name.
 	"gate passed is still dropped": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":"passed","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"passed","reason":"r"}}}`,
 	},
 	"gate blocked is still dropped": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":"blocked","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"blocked","reason":"r"}}}`,
 	},
 	// Only `planned == "run"` is a planned gate. A gate the plan said to skip is not
 	// dropped however badly it reports, which is why the Python tests the value rather
@@ -265,7 +360,7 @@ var fixtures = map[string][]string{
 	"gate planned to skip is not dropped": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"skip"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":"failed","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"failed","reason":"r"}}}`,
 	},
 	// A gate spec that is a bare string, not a dict. The Python guards with isinstance,
 	// so this is not planned at all; reading `v["planned"]` would raise, and treating
@@ -273,14 +368,14 @@ var fixtures = map[string][]string{
 	"gate spec is not a dict": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":"run"}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
 	},
 	// The mirror case on the other side: an executed entry that is a bare string. The
 	// isinstance guard means no status is read, so the gate is unreported — NOT "done".
 	"executed entry is not a dict": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":"done"}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":"done"}}`,
 	},
 	// `executed` absent entirely, which is what a run that never reached finish looks
 	// like once a later row merges in.
@@ -293,7 +388,7 @@ var fixtures = map[string][]string{
 	"several gates drop for different reasons": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"ok":{"planned":"run"},"waived":{"planned":"run"},"failed":{"planned":"run"},"silent":{"planned":"run"},"skipped":{"planned":"skip"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"ok":{"status":"done","reason":"r"},"waived":{"status":"waived","reason":"r"},"failed":{"status":"failed","reason":"r"},"skipped":{"status":"failed","reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"ok":{"status":"done","reason":"r"},"waived":{"status":"waived","reason":"r"},"failed":{"status":"failed","reason":"r"},"skipped":{"status":"failed","reason":"r"}}}`,
 	},
 }
 
@@ -313,14 +408,30 @@ func TestConvergenceMatchesThePython(t *testing.T) {
 			}
 			got := run.Convergence()
 
+			// The CLI, not pyOracle: convergence has a subcommand, and its exit code is
+			// non-zero for anything but converged by design, so the error is not a signal.
+			// Stderr still has to come off the answer — merged in, one warning at import
+			// would be compared as the verdict.
 			cmd := exec.Command("python3", script, "convergence", "--run-id", "r")
 			cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
-			out, _ := cmd.CombinedOutput() // exits 1 for anything but converged, by design
+			var errOut strings.Builder
+			cmd.Stderr = &errOut
+			out, runErr := cmd.Output()
 			want := strings.TrimSpace(string(out))
+			// Exit 2 is "no such run", and ONLY the exit code says so: cmd_convergence
+			// prints "unknown" to stderr and returns 2 for a missing run, and the same word
+			// to STDOUT with exit 1 for a run that exists with no cycles (runlog.py:576-584).
+			// Keying this on the text instead broke the `no cycles` fixture, whose correct
+			// verdict is "unknown" — a guard asserting a cause it never checked, which is
+			// the defect class this whole file exists to catch.
+			if ee, ok := runErr.(*exec.ExitError); ok && ee.ExitCode() == 2 {
+				t.Fatalf("Python side found no run %q in the fixture (stderr: %s)",
+					"r", strings.TrimSpace(errOut.String()))
+			}
 
 			if got != want {
-				t.Errorf("convergence disagrees: Go %q, Python %q\nfixture:\n%s",
-					got, want, strings.Join(rows, "\n"))
+				t.Errorf("convergence disagrees: Go %q, Python %q\nstderr:\n%s\nfixture:\n%s",
+					got, want, errOut.String(), strings.Join(rows, "\n"))
 			}
 		})
 	}
@@ -345,17 +456,11 @@ func TestCycleCountMatchesThePython(t *testing.T) {
 			}
 			got := len(runs["r"].Cycles)
 
-			cmd := exec.Command("python3", "-c",
-				"import json,sys,runpy,os;"+
-					"m=runpy.run_path(sys.argv[1]);"+
-					"print(len(m['cycles_of'](m['load'](limit=None).get('r') or {})))",
-				script)
-			cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("python side failed: %v\n%s", err, out)
-			}
-			want := strings.TrimSpace(string(out))
+			// limit=None, not the default tail: a correctness check that silently sees no
+			// plan because the record scrolled past 4000 lines is worse than a slow one.
+			want := pyOracle(t, script, path,
+				"run=m['load'](limit=None).get('r');"+
+					"print("+strconv.Quote(noRun)+" if run is None else len(m['cycles_of'](run)))")
 			if gotS := strconv.Itoa(got); gotS != want {
 				t.Errorf("cycle count disagrees: Go %s, Python %s\nfixture:\n%s",
 					gotS, want, strings.Join(rows, "\n"))
@@ -420,45 +525,21 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// runpy rather than an import: the file name has a hyphen in it, so it is not
-			// importable, and its own `import runlog` needs the skill directory on the path
-			// (run_path does not put the script's directory there).
-			//
-			// `load` here is review-stats.py's own, not runlog's: it takes no limit, returns a
-			// list, and internally reads at runlog's DEFAULT tail of 4000 lines — where the
-			// sibling test above deliberately passes limit=None, and the Go side reads the
-			// whole store. Calling it bare is the more faithful oracle, since it is the entry
-			// point review-stats actually uses. Fixtures are a handful of rows so the tail
-			// never bites; a fixture longer than 4000 rows would need runlog.load directly.
-			cmd := exec.Command("python3", "-c",
-				"import json,os,sys,runpy;"+
-					"sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])));"+
-					"m=runpy.run_path(sys.argv[1]);"+
-					"run=next((r for r in m['load']() if r.get('run_id')=='r'), {});"+
-					"print(json.dumps({k: str(v) for k, v in m['dropped_gates'](run).items()}, sort_keys=True))",
-				stats)
-			cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
-			// Output, not CombinedOutput: stderr merged into stdout would be parsed as part
-			// of the JSON, so one DeprecationWarning at import turns every subtest red and
-			// blames the status map for it. Captured separately instead, and reported in
-			// both failure paths so a traceback is still visible.
-			var errOut strings.Builder
-			cmd.Stderr = &errOut
-			out, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
-			}
+			want := pyOracle(t, stats, path,
+				"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
+					"print("+strconv.Quote(noRun)+" if run is None else "+
+					"json.dumps({k: str(v) for k, v in m['dropped_gates'](run).items()}, sort_keys=True))")
 
 			// Re-marshal through Go so the two strings differ only where the maps do:
 			// Python's json.dumps spaces its separators and Go's does not.
 			var pyMap map[string]string
-			if err := json.Unmarshal(out, &pyMap); err != nil {
+			if err := json.Unmarshal([]byte(want), &pyMap); err != nil {
 				// %q, and the byte count: "printed something that is not a status map" sent
 				// the reader hunting for malformed output when the real answer was zero bytes
 				// and exit 0, which %s renders as nothing at all.
 				t.Fatalf("python side's %d bytes of output are not a status map: %v\n"+
-					"stdout: %q\nstderr:\n%s\nfixture:\n%s",
-					len(out), err, out, errOut.String(), strings.Join(rows, "\n"))
+					"stdout: %q\nfixture:\n%s",
+					len(want), err, want, strings.Join(rows, "\n"))
 			}
 			wantJSON, err := json.Marshal(pyMap)
 			if err != nil {

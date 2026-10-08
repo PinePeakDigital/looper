@@ -309,7 +309,7 @@ func TestAnEmptyAskedDictIsFalsy(t *testing.T) {
 func TestPyStrRendersATrueStatusLikePython(t *testing.T) {
 	path := store(t,
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":true,"reason":"r"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
 	)
 	runs, err := Load(path, 0)
 	if err != nil {
@@ -322,10 +322,14 @@ func TestPyStrRendersATrueStatusLikePython(t *testing.T) {
 }
 
 // The two type assertions in DroppedGates have no parity fixture: a truthy non-mapping makes
-// review-stats.py raise AttributeError, so the Python has no answer to compare against. These
-// pin the Go answers so the direction documented on DroppedGates cannot drift — in particular
-// the gates case, which GRANTS silence and is the one that would hide a corrupt record.
-func TestDroppedGatesDegradesWhereThePythonWouldRaise(t *testing.T) {
+// review-stats.py raise AttributeError, so the Python has no answer to compare against.
+//
+// What this pins, precisely: the two documented ANSWERS, against a future change that starts
+// handling these shapes — add a []any arm treating `gates: ["g"]` as planned and the second
+// case fails. It does NOT pin the assertions themselves. Ranging a nil map and indexing one
+// are both safe in Go, so deleting either guard leaves the whole suite green; no assertion
+// can see it, and saying so is better than letting the test read as coverage it lacks.
+func TestDroppedGatesPinsTheDegradedAnswers(t *testing.T) {
 	for _, tc := range []struct {
 		name, plan, finish string
 		want               int
@@ -333,13 +337,13 @@ func TestDroppedGatesDegradesWhereThePythonWouldRaise(t *testing.T) {
 		{
 			name:   "a non-dict executed value denies silence",
 			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-			finish: `{"run_id":"r","phase":"finish","outcome":"converged","executed":"nope"}`,
+			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":"nope"}`,
 			want:   1,
 		},
 		{
 			name:   "a non-dict gates value grants it",
 			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":["g"]}`,
-			finish: `{"run_id":"r","phase":"finish","outcome":"converged","executed":{}}`,
+			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
 			want:   0,
 		},
 	} {
