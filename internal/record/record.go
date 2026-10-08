@@ -273,6 +273,33 @@ func gateOK(status string) bool {
 	return false
 }
 
+// renderStatus is how the status reaches a report: review-stats.py interpolates it into
+// an f-string, so the Python's rendering is str(). fmt.Sprint agrees with str() on strings
+// and on JSON's numbers, but not on its booleans — str(True) is "True" and fmt.Sprint(true)
+// is "true" — and `status: true` is reachable for the same reason `status: false` is, since
+// cmd_finish never validates the vocabulary. The parity gate found this; the unit tests
+// could not have, because they assert against a reading of the Python rather than the
+// Python.
+//
+// A container status (a list, an object) still diverges: str(['a']) is "['a']" and Go has
+// no cheap Python repr. Left alone deliberately — a container there means the record is
+// already corrupt and neither rendering is usable — rather than papered over in the gate,
+// so `TestDroppedGatesMatchesThePython` carries no fixture claiming otherwise.
+func renderStatus(raw any) string {
+	switch v := raw.(type) {
+	case nil:
+		return ""
+	case bool:
+		if v {
+			return "True"
+		}
+		return "False"
+	case string:
+		return v
+	}
+	return fmt.Sprint(raw)
+}
+
 // DroppedGates returns the planned-to-run gates that did not report a GateOK status,
 // mapped to the status they did report ("unreported" when there is no entry at all).
 func (r *Run) DroppedGates() map[string]string {
@@ -293,10 +320,7 @@ func (r *Run) DroppedGates() map[string]string {
 		if e, ok := executed[name].(map[string]any); ok {
 			raw = e["status"]
 		}
-		status := ""
-		if raw != nil {
-			status = fmt.Sprint(raw)
-		}
+		status := renderStatus(raw)
 		if gateOK(status) {
 			continue
 		}

@@ -303,6 +303,24 @@ func TestAnEmptyAskedDictIsFalsy(t *testing.T) {
 	}
 }
 
+// A boolean status renders the way Python renders it, not the way Go does. This is the
+// alarm line's text: str(True) is "True", fmt.Sprint(true) is "true". A unit test here as
+// well as a parity fixture, because the mutation catalog runs without the oracle.
+func TestDroppedGatesRendersATrueStatusLikePython(t *testing.T) {
+	path := store(t,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"converged","executed":{"g":{"status":true}}}`,
+	)
+	runs, err := Load(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runs["r"].DroppedGates()["g"]
+	if got != "True" {
+		t.Errorf("a true status renders the way Python renders it: got %q, want %q", got, "True")
+	}
+}
+
 func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	runs, err := Load(store(t,
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"a":{"planned":"run"},"b":{"planned":"run"},"c":{"planned":"run"},"d":{"planned":"skip"}}}`,

@@ -44,13 +44,13 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: narthur/skills
-          ref: 9e4ee3f79c79256afcffff0d6976853287cd2c89
+          ref: b9f21b9d58a534e5fcaf154131d0f93fb7b63de3 # narthur/skills main, 2026-10-07
           path: .parity-oracle
           persist-credentials: false
 
       # internal/record runs here, verbosely and ONCE, because the next assertion needs
       # its per-subtest output. Running it again to check that it ran would re-pay the
-      # whole parity cost — 40 subtests, each spawning a python3 subprocess — on every
+      # whole parity cost — 100 subtests, each spawning a python3 subprocess — on every
       # push, so the rest of the tree is tested separately below.
       - name: go test (record, with the oracle)
         env:
@@ -60,7 +60,7 @@ jobs:
           tail -5 record.log
 
       # Prove the gate RAN, rather than trusting that it did. A skip is invisible in the
-      # step above: it passes identically whether 40 subtests compared against the Python
+      # step above: it passes identically whether 100 subtests compared against the Python
       # or none did, because `go test` reports a skip as success. Fails on any SKIP and on
       # a short count, so the gate cannot go inert again without CI saying so.
       - name: the parity gate actually ran
@@ -70,8 +70,8 @@ jobs:
           fi
           # awk, not `grep -c`: grep -c exits non-zero on a zero count, which under this
           # step's `bash -e` would abort here and report the wrong reason for the failure.
-          n=$(awk '/--- PASS: Test(Convergence|CycleCount)MatchesThePython\//{c++} END{print c+0}' record.log)
-          [ "$n" -ge 40 ] || { echo "only $n parity subtests passed, expected at least 40"; cat record.log; exit 1; }
+          n=$(awk '/--- PASS: Test(Convergence|CycleCount|DroppedGates)MatchesThePython\//{c++} END{print c+0}' record.log)
+          [ "$n" -ge 100 ] || { echo "only $n parity subtests passed, expected at least 100"; cat record.log; exit 1; }
           echo "$n parity subtests compared against runlog.py"
 
       - name: go test (everything else)
@@ -85,7 +85,7 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 79 ] || { echo "only $n mutations, expected at least 79 — was one deleted?"; exit 1; }
+          [ "$n" -ge 80 ] || { echo "only $n mutations, expected at least 80 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
