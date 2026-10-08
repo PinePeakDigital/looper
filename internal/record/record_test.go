@@ -98,8 +98,10 @@ func TestConvergenceRules(t *testing.T) {
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
 			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`}},
 		// The ZERO direction of the `!= 0` cap guard, which nothing covered. Deleting
-		// `*r.Plan.AgentCap != 0` from the cap test survived the whole suite and changed
-		// 2,730 of 18,041 synthetic stores from halted to capped: with the guard gone, a
+		// `*r.Plan.AgentCap != 0` from the cap test survived the whole suite, and a
+		// differential over 18,041 synthetic stores run during review put the change at
+		// 2,730 of them, halted -> capped (that count is the review's; what is reproduced
+		// here is only that the mutation changes behaviour at all). With the guard gone a
 		// recorded cap of 0 makes `spent >= 0` true for every run. The negative direction
 		// already had `a negative cap is still a cap` below; "no recorded cap is never
 		// capped" tested only ABSENCE, and absent takes a different branch (AgentCap is
