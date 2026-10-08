@@ -1,0 +1,8 @@
+target: internal/record/parity_test.go
+verify: go test ./internal/record/ -count=1 -run 'TestSaysNoSuchRunReadsBothSignals'
+expect: FAIL: TestSaysNoSuchRunReadsBothSignals
+why:    comparing the WHOLE stderr buffer against "unknown" is the third wrong version of this guard and the one a reviewer is most likely to restore, because it reads as stricter. It is not stricter, it is brittle: any interpreter warning at import makes a HEALTHY oracle fail the gate, which is the exact sensitivity that separating stderr from stdout was introduced to remove. Four review cycles produced four versions of this guard and validated every one of them by simulating the break it names; none by perturbing a correct system and checking it stayed green, which is where all four failed. No fixture puts noise on stderr, so this entry and its test are the only things that can see the regression.
+--- old
+	return ok && ee.ExitCode() == 2 && lastLine(stderr) == "unknown"
+--- new
+	return ok && ee.ExitCode() == 2 && strings.TrimSpace(stderr) == "unknown"

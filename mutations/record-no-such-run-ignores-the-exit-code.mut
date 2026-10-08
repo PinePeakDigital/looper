@@ -1,0 +1,8 @@
+target: internal/record/parity_test.go
+verify: go test ./internal/record/ -count=1 -run 'TestSaysNoSuchRunReadsBothSignals'
+expect: FAIL: TestSaysNoSuchRunReadsBothSignals
+why:    dropping the exit-code half is the SECOND wrong version of this guard, restored. The word "unknown" is not unique to a missing run: cmd_convergence prints it to STDOUT with exit 1 as the legitimate verdict for a run that exists with no cycles (runlog.py:583-584), so keying on the word alone turned the `no cycles` fixture into a false "the Python found no run". One entry per defect, so the sibling entry covers the other half: these are the two signals, and each has been wrong on its own once.
+--- old
+	return ok && ee.ExitCode() == 2 && lastLine(stderr) == "unknown"
+--- new
+	return ok && ee.ExitCode() >= 0 && lastLine(stderr) == "unknown"

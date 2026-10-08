@@ -2,6 +2,7 @@ package record
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,31 @@ func runlogPath(t *testing.T) string {
 		t.Skip("runlog.py not found; set REVIEW_LOOP_RUNLOG to run the parity gate")
 	}
 	return p
+}
+
+// lastLine is the last non-blank line of a captured stderr. The verdict word is what the
+// Python prints LAST; anything above it is noise from the interpreter, and an equality
+// against the whole buffer fails the moment a DeprecationWarning appears at import. That
+// brittleness is the same thing separating stderr from stdout was meant to prevent — a
+// healthy oracle must not turn the gate red — so the comparisons below read the last line,
+// not the buffer.
+func lastLine(s string) string {
+	fields := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(fields[len(fields)-1])
+}
+
+// saysNoSuchRun reports whether cmd_convergence's failure means "that run is not in this
+// store", as opposed to any other way it can fail. It takes BOTH signals because each alone
+// has been wrong once: the word "unknown" also arrives on STDOUT as the legitimate verdict
+// for a run with no cycles, and exit 2 is also argparse's usage-error code, so a renamed
+// subcommand reported "no such run" for every fixture.
+//
+// A function rather than an inline condition so the cases can be asserted directly — see
+// TestSaysNoSuchRunReadsBothSignals, which is the only thing that exercises the tolerance
+// for noise on stderr, because no fixture produces any.
+func saysNoSuchRun(err error, stderr string) bool {
+	ee, ok := err.(*exec.ExitError)
+	return ok && ee.ExitCode() == 2 && lastLine(stderr) == "unknown"
 }
 
 // noRun is what an oracle prints when the fixture holds no run "r". Without it the Python
@@ -127,18 +153,9 @@ func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 		var errOut strings.Builder
 		cmd.Stderr = &errOut
 		out, err := cmd.Output()
-		ee, ok := err.(*exec.ExitError)
-		if !ok || ee.ExitCode() != 2 {
-			t.Errorf("cmd_convergence no longer exits 2 for a missing run: err=%v, stdout=%q",
-				err, out)
-		}
-		// And the word, not just the code. Asserting exit 2 alone passed when the
-		// subcommand was RENAMED — argparse exits 2 for a usage error with empty stdout,
-		// which is exactly the shape this subtest was checking for. The single likeliest
-		// way for the contract to break was the one break it could not see.
-		if e := strings.TrimSpace(errOut.String()); e != "unknown" {
-			t.Errorf("cmd_convergence no longer says %q on stderr for a missing run; got %q",
-				"unknown", e)
+		if !saysNoSuchRun(err, errOut.String()) {
+			t.Errorf("cmd_convergence no longer signals a missing run: err=%v, stdout=%q, stderr=%q",
+				err, out, errOut.String())
 		}
 		// And it must not put the word on stdout, where it would be read as a verdict —
 		// "unknown" on STDOUT with exit 1 is the legitimate answer for a cycle-less run.
@@ -146,6 +163,47 @@ func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 			t.Errorf("a missing run printed %q to stdout; it belongs on stderr", out)
 		}
 	})
+}
+
+// The healthy-with-noise case, which four review cycles never ran. Every guard in this file
+// was validated by simulating the break it names and confirming red; not one was validated
+// by perturbing a CORRECT system and confirming green, and that is where each of them failed
+// in turn. No fixture puts noise on stderr, so without this nothing exercises the tolerance
+// and a return to comparing the whole buffer would score as caught by nothing.
+func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
+	// A real *exec.ExitError, since its ExitCode is what the guard reads.
+	exitWith := func(code int) error {
+		err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+		if err == nil && code != 0 {
+			t.Fatalf("sh did not exit %d", code)
+		}
+		return err
+	}
+	argparse := "usage: runlog.py [-h] {plan,finish} ...\n" +
+		"runlog.py: error: argument cmd: invalid choice: 'convergence'"
+
+	for _, tc := range []struct {
+		name   string
+		err    error
+		stderr string
+		want   bool
+	}{
+		{"exit 2 and the word", exitWith(2), "unknown\n", true},
+		{"a warning above the word is still the word", exitWith(2),
+			"DeprecationWarning: noise\n\nunknown\n", true},
+		{"argparse shares the exit code but not the word", exitWith(2), argparse, false},
+		{"the word without the code is a cycle-less run", exitWith(1), "unknown\n", false},
+		{"a process that never ran is not a missing run", errors.New("exec: not found"), "", false},
+		{"success is not a missing run", nil, "", false},
+		{"the word must be the LAST line, not merely present", exitWith(2),
+			"unknown\nruntime shutdown error\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := saysNoSuchRun(tc.err, tc.stderr); got != tc.want {
+				t.Errorf("saysNoSuchRun(%v, %q) = %v, want %v", tc.err, tc.stderr, got, tc.want)
+			}
+		})
+	}
 }
 
 // fixtures are stores to compare on. Each is a list of JSONL rows.
@@ -440,8 +498,7 @@ func TestConvergenceMatchesThePython(t *testing.T) {
 			// argparse, which also exits 2 — so a renamed or mistyped subcommand reported
 			// "found no run" for all 36 fixtures while the real cause was `invalid choice`.
 			// Two wrong guards in a row, each asserting a cause it did not check.
-			if ee, ok := runErr.(*exec.ExitError); ok && ee.ExitCode() == 2 &&
-				strings.TrimSpace(errOut.String()) == "unknown" {
+			if saysNoSuchRun(runErr, errOut.String()) {
 				t.Fatalf("Python side found no run %q in the fixture", "r")
 			}
 
@@ -545,7 +602,7 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 			}
 
 			// review-stats' own load() takes no limit and so reads at runlog's DEFAULT
-			// 4000-line tail, where the CycleCount site below passes limit=None and the Go
+			// 4000-line tail, where the CycleCount site above passes limit=None and the Go
 			// side reads the whole store. Bare is the more faithful oracle — it is the entry
 			// point review-stats actually uses — and fixtures are a handful of rows, so the
 			// tail never bites; a fixture past 4000 rows would need runlog.load directly.

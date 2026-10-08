@@ -81,12 +81,16 @@ jobs:
           # exactly the regression that oracle was added to fix.
           for t in Convergence CycleCount DroppedGates; do
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
-            # The reason first written here — that a fixture could carry the needle — does
-            # not hold: go test replaces spaces with underscores in subtest names, and a
-            # fixture's text only reaches the log inside a failing t.Errorf, which go test
-            # indents EIGHT. So `^[[:space:]]*` admitted the one case it was meant to
-            # exclude. This excludes it, and the honest claim is narrow: nothing in a green
-            # log can produce a matching line that is not a subtest result.
+            # Two reasons written here before were wrong, and the third is deliberately
+            # narrow. A fixture NAME cannot carry the needle: go test replaces spaces with
+            # underscores. A fixture's TEXT reaches the log only inside a failing t.Errorf,
+            # and that is excluded by the `file.go:NN:` prefix on its first line, not by the
+            # indent — only continuation lines are indented eight, so the earlier claim
+            # about t.Errorf was false as a general statement. What is actually true, and
+            # all that is claimed: a green log contains no t.Errorf output at all, so
+            # nothing in one can match this but a subtest result. A deeper-nested parity
+            # table would be indented eight and UNDER-count, which fails the floor rather
+            # than passing it.
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
             [ "$c" -ge 30 ] || { echo "only $c $t parity subtests passed, expected at least 30"; cat record.log; exit 1; }
             echo "$c $t parity subtests compared against the Python"
@@ -106,7 +110,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 80 ] || { echo "only $n mutations, expected at least 80 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 82 ] || { echo "only $n mutations, expected at least 82 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
