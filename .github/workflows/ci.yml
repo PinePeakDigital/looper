@@ -13,9 +13,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 76 mutations x the 5-minute per-command verify timeout is a ~380-minute worst case
-    # if something makes every verify hang, and the GitHub default is 360. A typical run
-    # is a couple of minutes, so this fails fast and cheap instead.
+    # The catalog is at least the floor below, so if something made every verify hang the
+    # worst case would be at least that many x the 5-minute per-command verify timeout —
+    # 400 minutes today, against GitHub's 360 default. A typical run is a couple of
+    # minutes, so this fails fast and cheap instead.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -44,13 +45,13 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: narthur/skills
-          ref: 9e4ee3f79c79256afcffff0d6976853287cd2c89
+          ref: b9f21b9d58a534e5fcaf154131d0f93fb7b63de3 # narthur/skills main, 2026-10-07
           path: .parity-oracle
           persist-credentials: false
 
       # internal/record runs here, verbosely and ONCE, because the next assertion needs
       # its per-subtest output. Running it again to check that it ran would re-pay the
-      # whole parity cost — 40 subtests, each spawning a python3 subprocess — on every
+      # whole parity cost — ~100 subtests, each spawning a python3 subprocess — on every
       # push, so the rest of the tree is tested separately below.
       - name: go test (record, with the oracle)
         env:
@@ -60,19 +61,40 @@ jobs:
           tail -5 record.log
 
       # Prove the gate RAN, rather than trusting that it did. A skip is invisible in the
-      # step above: it passes identically whether 40 subtests compared against the Python
+      # step above: it passes identically whether every subtest compared against the Python
       # or none did, because `go test` reports a skip as success. Fails on any SKIP and on
       # a short count, so the gate cannot go inert again without CI saying so.
       - name: the parity gate actually ran
         run: |
+          # First, before anything reads it. -r not -f: an UNREADABLE log produced exactly
+          # the wrong-reason failure the awk-over-grep note below exists to avoid — awk's own
+          # "can't open file" and no message from this step at all.
+          [ -r record.log ] || { echo "record.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
           if grep -q -- '--- SKIP' record.log; then
             echo "the parity gate SKIPPED — the oracle was not reachable:"; cat record.log; exit 1
           fi
           # awk, not `grep -c`: grep -c exits non-zero on a zero count, which under this
           # step's `bash -e` would abort here and report the wrong reason for the failure.
-          n=$(awk '/--- PASS: Test(Convergence|CycleCount)MatchesThePython\//{c++} END{print c+0}' record.log)
-          [ "$n" -ge 40 ] || { echo "only $n parity subtests passed, expected at least 40"; cat record.log; exit 1; }
-          echo "$n parity subtests compared against runlog.py"
+          # A floor PER TEST, not one total. A single aggregate is a product of fixtures and
+          # oracles, so growth in one dimension masks collapse in another: at 50 fixtures,
+          # losing the whole DroppedGates oracle would still count 100 and pass — which is
+          # exactly the regression that oracle was added to fix.
+          for t in Convergence CycleCount DroppedGates; do
+            # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
+            # Two reasons written here before were wrong, and the third is deliberately
+            # narrow. A fixture NAME cannot carry the needle: go test replaces spaces with
+            # underscores. A fixture's TEXT reaches the log only inside a failing t.Errorf,
+            # and that is excluded by the `file.go:NN:` prefix on its first line, not by the
+            # indent — only continuation lines are indented eight, so the earlier claim
+            # about t.Errorf was false as a general statement. What is actually true, and
+            # all that is claimed: a green log contains no t.Errorf output at all, so
+            # nothing in one can match this but a subtest result. A deeper-nested parity
+            # table would be indented eight and UNDER-count, which fails the floor rather
+            # than passing it.
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
+            [ "$c" -ge 30 ] || { echo "only $c $t parity subtests passed, expected at least 30"; cat record.log; exit 1; }
+            echo "$c $t parity subtests compared against the Python"
+          done
 
       - name: go test (everything else)
         run: go test -count=1 $(go list ./... | grep -v '/internal/record$')
@@ -84,8 +106,11 @@ jobs:
       # (The same gap was found and closed in the skills repo's workflow first.)
       - name: no catalog entry has gone missing
         run: |
-          n=$(ls mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 79 ] || { echo "only $n mutations, expected at least 79 — was one deleted?"; exit 1; }
+          n=$(ls mutations/*.mut 2>/dev/null | wc -l | tr -d ' ')
+          # Zero is a different failure from n-1: the directory or the glob is gone, not one
+          # file, and "was one deleted?" would name the wrong cause.
+          [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
+          [ "$n" -ge 83 ] || { echo "only $n mutations, expected at least 83 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

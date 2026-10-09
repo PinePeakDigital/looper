@@ -303,6 +303,65 @@ func TestAnEmptyAskedDictIsFalsy(t *testing.T) {
 	}
 }
 
+// A boolean status renders the way Python renders it, not the way Go does. This is the
+// alarm line's text: str(True) is "True", fmt.Sprint(true) is "true". A unit test here as
+// well as a parity fixture, because the mutation catalog runs without the oracle.
+func TestPyStrRendersATrueStatusLikePython(t *testing.T) {
+	path := store(t,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
+	)
+	runs, err := Load(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runs["r"].DroppedGates()["g"]
+	if got != "True" {
+		t.Errorf("a true status renders the way Python renders it: got %q, want %q", got, "True")
+	}
+}
+
+// The two type assertions in DroppedGates have no parity fixture: a truthy non-mapping makes
+// review-stats.py raise AttributeError, so the Python has no answer to compare against.
+//
+// What this pins, precisely: the two documented ANSWERS, against a future change that starts
+// handling these shapes — add a []any arm treating `gates: ["g"]` as planned and the second
+// case fails. It does NOT pin the assertions themselves. Ranging a nil map and indexing one
+// are both safe in Go, so deleting either guard leaves the whole suite green; no assertion
+// can see it, and saying so is better than letting the test read as coverage it lacks.
+func TestDroppedGatesPinsTheDegradedAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name, plan, finish string
+		want               int
+	}{
+		{
+			name:   "a non-dict executed value denies silence",
+			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":"nope"}`,
+			want:   1,
+		},
+		{
+			name:   "a non-dict gates value grants it",
+			plan:   `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":["g"]}`,
+			finish: `{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
+			want:   0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runs, err := Load(store(t, tc.plan, tc.finish), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if runs["r"] == nil {
+				t.Fatal("no run r in the fixture")
+			}
+			if got := runs["r"].DroppedGates(); len(got) != tc.want {
+				t.Errorf("got %d dropped gate(s) %v, want %d", len(got), got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDroppedGatesTreatsNAAsHandled(t *testing.T) {
 	runs, err := Load(store(t,
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"a":{"planned":"run"},"b":{"planned":"run"},"c":{"planned":"run"},"d":{"planned":"skip"}}}`,

@@ -273,8 +273,95 @@ func gateOK(status string) bool {
 	return false
 }
 
+// pyStr renders a JSON-decoded value roughly the way Python's str() does — "roughly" is
+// load-bearing and the gaps are enumerated below. review-stats.py calls str() on a gate
+// status EXPLICITLY (review-stats.py:197), before it tests the value or prints it, and its
+// comment there records why: a non-string status is not rejected at write time, and one
+// reaching the message crashed the whole alarm with a TypeError. (The raise is actually in
+// _naming's sorted()/join() over the status set, not in the formatting; the Python's own
+// comment is imprecise about that and this one inherits it knowingly.) So str() is the
+// Python's own coercion, not an inference from how the text is later interpolated.
+//
+// Named for the operation rather than for the status, because the operation is not
+// status-specific: disclosure() — a remaining piece of the read-and-derive half this package
+// ports, alongside unfinished() — renders raw record values at three sites the same way
+// (runlog.py:248, :251, :252). Those three are all written through argparse type=int, so the
+// container gap below is not reachable there today; the point is the rendering, not a claim
+// that it is.
+//
+// WHERE IT AGREES WITH str(), AND WHERE IT DOES NOT. Strings agree. Booleans needed the
+// case: str(True) is "True" and fmt.Sprint(true) is "true". Beyond that, every row measured:
+//
+//	5, 999999        agree — integer-SPELLED literals (no '.', no exponent) under 1e6 in
+//	                 absolute value, with the one exception below
+//	-0               "-0" against "0" — inside that class, and the reason it says "with one
+//	                 exception" rather than naming a clean boundary
+//	1000000          "1e+06" against "1000000"
+//	9007199254740993 "9.007199254740992e+15" — the value cannot be recovered from the text
+//	5.0, 1e3, 5e15   "5", "1000", "5e+15" against "5.0", "1000.0", "5000000000000000.0" —
+//	                 integral-valued FLOAT literals diverge BELOW 1e16
+//	1e16, 1e21, 1e300 agree — at and above 1e16 Python's repr goes exponential too
+//	0.1, 1e-05, 999999.5 agree — plenty of non-integers do; "only integers" would be false
+//	["a"]            "[a]" against "['a']"; a map likewise
+//	nil              "<nil>" against "None"
+//	false            "false" against "False" — the bool case deliberately handles only true
+//
+// The threshold is Go's, not a digit count: shortest-form %v/%g goes scientific once the
+// decimal exponent reaches 6 (|v| >= 1e6) or falls below -4, whatever the number of
+// significant digits — strconv's formatDigits hardcodes eprec=6 for shortest. So 999999.5
+// has seven significant digits and prints plain, while 1000000 has one and does not.
+//
+// The last two rows are unobservable at the sole caller and that is why they are not handled:
+// DroppedGates replaces every falsy status with "unreported", and no rendering a falsy value
+// can produce is a GateOK word, so neither result can change an answer. Note the second
+// clause — gateOK() reads this string BEFORE the falsy collapse, so "nothing reads it" would
+// be false; verified by mutation, a nil arm returning "ZZZ" survives the whole suite and a
+// nil arm returning "done" fails it.
+//
+// The number and container gaps are left open deliberately, and no fixture claims otherwise.
+// Closing them means either Python's float repr and arbitrary-precision ints in Go, or
+// decoding the whole store with json.Decoder.UseNumber() — which would change what num(),
+// truthy(), isZero() and asksOutstanding() receive for every field, to buy parity on a status
+// that is already a malformed record. The bool case earned its two lines because
+// `status: false` is load-bearing (it collapses to "unreported") and `true` is its mirror.
+func pyStr(raw any) string {
+	// `raw == true`, not a type assertion plus `&& v`: the conjunct was unobservable on its
+	// own, since asserting bool without testing the value only changes what false renders as,
+	// and false is collapsed. No OPERATOR in the one expression survives mutation — that was
+	// measured. A widening still would (`raw == true || raw == nil` survives), because the
+	// unobservability lives at the caller, not in the spelling.
+	if raw == true {
+		return "True"
+	}
+	return fmt.Sprint(raw)
+}
+
 // DroppedGates returns the planned-to-run gates that did not report a GateOK status,
 // mapped to the status they did report ("unreported" when there is no entry at all).
+//
+// Both type assertions below have no parity fixture, because the Python has no answer to
+// compare: review-stats.py does `(run.get("gates") or {}).items()` and `executed.get(g)`, so
+// a truthy NON-mapping raises AttributeError there and takes the whole alarm down with it.
+// Go degrades instead, and the two directions are not equally safe — which is why the
+// direction is stated here, as num() and asksOutstanding() each state theirs:
+//
+//	executed: "nope"  -> Python raises; Go reports {"g":"unreported"}. Denies silence. Safe.
+//	gates: ["g"]      -> Python raises; Go reports {}. GRANTS silence: a run whose gate
+//	                     record is corrupt reports nothing dropped, and the alarm that
+//	                     exists to notice a missing gate sees a clean run.
+//
+// The second is the bad direction and it is accepted knowingly: a crash is not available as
+// a behaviour here, and inventing a sentinel gate name would put a word in the alarm that no
+// gate has. Neither shape is reachable through the writers — `gates` is written by cmd_plan,
+// which dies on gates.items() (runlog.py:377), and `executed` by cmd_finish, which dies on
+// executed.items() (runlog.py:597). Both are uncaught AttributeErrors rather than refusals;
+// the clean refusal at runlog.py:597-609 is for a non-dict value INSIDE executed, which is
+// the different shape the "executed entry is not a dict" fixture covers.
+//
+// record_test.go pins the two answers, but only against a future change that adds handling.
+// It does NOT pin the assertions themselves: ranging a nil map and indexing one are both
+// safe in Go, so either guard can be deleted outright with the whole suite green. That is
+// defensive-and-untestable, labelled here rather than left to read as coverage.
 func (r *Run) DroppedGates() map[string]string {
 	planned := map[string]bool{}
 	if g, ok := r.Fields["gates"].(map[string]any); ok {
@@ -293,10 +380,7 @@ func (r *Run) DroppedGates() map[string]string {
 		if e, ok := executed[name].(map[string]any); ok {
 			raw = e["status"]
 		}
-		status := ""
-		if raw != nil {
-			status = fmt.Sprint(raw)
-		}
+		status := pyStr(raw)
 		if gateOK(status) {
 			continue
 		}
