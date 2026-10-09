@@ -410,7 +410,7 @@ func misplacedRunField(line, phase string) error {
 	if len(bad) == 0 {
 		return nil
 	}
-	sort.Strings(bad) // map order is random; an error message must not be
+	sort.Strings(bad) // field order must not vary with Go map iteration order
 	// %q on the phase, and truncated: it is writer-supplied like run_id and the gate names,
 	// and an earlier version of this site had no bound at all — a 1 MiB phase produced a
 	// 4 MiB message, and 20 such rows produced 80 MiB.
