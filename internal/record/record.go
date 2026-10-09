@@ -257,6 +257,13 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			r = &Run{ID: env.RunID}
 			runs[env.RunID] = r
 		}
+		// The envelope's own two names fold too: `Run_ID` and `PHASE` both decode here and
+		// are invisible to the Python, which drops such a row for want of a `run_id` or
+		// files it under no phase. Checked after the run exists so the error has an owner.
+		if err := foldedKeys([]byte(line), "run_id", "phase"); err != nil {
+			r.setErr(lineNo, "folded-key", err)
+			continue
+		}
 		// A row whose FIELDS this build would not place is an ERROR. Keying that on the
 		// phase WORD, which is what the first version of this guard did, closed three
 		// spellings of one forgery and left three open.
@@ -298,6 +305,10 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		}
 		switch phase {
 		case "cycle":
+			if err := foldedKeys([]byte(line), "applied", "asked", "agents", "analysis_changed"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
 			var c Cycle
 			if err := json.Unmarshal([]byte(line), &c); err != nil {
 				r.setErr(lineNo, phase, err)
@@ -305,6 +316,14 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			}
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
+			if err := foldedKeys([]byte(line), "agent_cap", "gates"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
+			if err := foldedEntryKeys([]byte(line), "gates", "planned"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
 			var pl Plan
 			if err := json.Unmarshal([]byte(line), &pl); err != nil {
 				r.setErr(lineNo, phase, nameBadGates(line, "gates", err, func(v json.RawMessage) error {
@@ -315,6 +334,14 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			}
 			r.Plan = &pl
 		case "finish":
+			if err := foldedKeys([]byte(line), "unresolved_asks", "executed", "agents"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
+			if err := foldedEntryKeys([]byte(line), "executed", "status"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
 			var fi Finish
 			if err := json.Unmarshal([]byte(line), &fi); err != nil {
 				r.setErr(lineNo, phase, nameBadGates(line, "executed", err, func(v json.RawMessage) error {
@@ -340,6 +367,93 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		}
 	}
 	return runs, nil
+}
+
+// foldedKeys reports a key that encoding/json would FOLD onto a field this build decodes,
+// but that the Python's exact `rec.get(...)` would never read. Go's decoder matches struct
+// tags case-insensitively and has no case-sensitive mode, so this is a divergence the type
+// system cannot express — the fifth distinct mechanism for the same forgery on this branch,
+// and the one `misplacedRunField` cannot see, because these keys fold onto fields the row's
+// phase legitimately owns.
+//
+// Measured on a store whose earlier cycle applied 5, all against the oracle:
+//
+//	{"phase":"cycle","Applied":0,...}                          python=halted   go=CONVERGED
+//	{"phase":"cycle","applied":3,"APPLIED":0,...}              python=halted   go=CONVERGED
+//	{"phase":"finish","unresolved_asks":7,"Unresolved_Asks":0} python=halted   go=CONVERGED
+//	{"Run_ID":"r","phase":"cycle","applied":0,...}             python=halted   go=CONVERGED
+//	{"run_id":"r","PHASE":"cycle","applied":0,...}             python=halted   go=CONVERGED
+//
+// and on the gate maps, where it buys a CLEAN SWEEP rather than a converged verdict:
+//
+//	"executed":{"g":{"status":"failed","Status":"done"}}  python={g:failed}      go={}
+//	"gates":{"g":{"planned":"run","PLANNED":"skip"}}      python={g:unreported}  go={}
+//
+// Two of the eight go the safe way (`Asked`, `Agents`: Go refuses or caps where the Python
+// converges), and they are refused here too — the rule is that a key Go reads and the Python
+// does not is unreadable, not that only the dangerous half is.
+//
+// strings.EqualFold is the same simple case folding encoding/json uses, so it also catches
+// the long s and the Kelvin sign. Checked per phase against the names that phase's struct
+// actually decodes: folding `Agents` on a PLAN row would be over-firing, since nothing reads
+// it there and the Python ignores it too.
+func foldedKeys(raw []byte, names ...string) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil // not an object; the caller's own decode reports that
+	}
+	var bad []string
+	for k := range top {
+		for _, n := range names {
+			if k != n && strings.EqualFold(k, n) {
+				bad = append(bad, fmt.Sprintf("%s (folds onto %q)", quoteCapped(k), n))
+				break
+			}
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad) // field order must not vary with Go map iteration order
+	return fmt.Errorf(
+		"key(s) %s differ from a field this build reads only by case; encoding/json folds them "+
+			"onto it and the Python's exact lookup does not read them at all",
+		strings.Join(bad, ", "))
+}
+
+// foldedEntryKeys is foldedKeys one level down, for the gate maps whose VALUES are objects.
+func foldedEntryKeys(raw []byte, field string, names ...string) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	var entries map[string]json.RawMessage
+	if _, ok := top[field]; !ok {
+		return nil
+	}
+	if json.Unmarshal(top[field], &entries) != nil {
+		return nil // the map's own type is wrong; the caller's decode covers it
+	}
+	gates := make([]string, 0, len(entries))
+	for g := range entries {
+		gates = append(gates, g)
+	}
+	sort.Strings(gates)
+	for _, g := range gates {
+		if err := foldedKeys(entries[g], names...); err != nil {
+			return fmt.Errorf("%s gate %s: %w", field, quoteCapped(g), err)
+		}
+	}
+	return nil
+}
+
+// quoteCapped is %q plus the bound every operator message in this file carries, because the
+// keys and gate names it prints are writer-supplied and unvalidated.
+func quoteCapped(s string) string {
+	if len(s) > maxGateNameLen {
+		s = s[:maxGateNameLen] + "..."
+	}
+	return strconv.Quote(s)
 }
 
 // runLevelFields are the fields a derivation reads off the MERGED run dict, mapped to the

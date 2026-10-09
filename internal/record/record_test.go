@@ -480,6 +480,64 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
+	t.Run("a key that only differs in case is unreadable, not a field", func(t *testing.T) {
+		// encoding/json matches struct tags CASE-INSENSITIVELY and Go has no case-sensitive
+		// mode, so every one of these decodes into a field here while the Python's exact
+		// `rec.get(...)` never reads it. Found by CodeRabbit on the PR, after four cycles of
+		// review had closed four other mechanisms for the same forgery and missed this one —
+		// and `misplacedRunField` cannot see it, because these keys fold onto fields the
+		// row's phase legitimately owns.
+		//
+		// Measured against the oracle on a store whose earlier cycle applied 5. The first
+		// five forge a clean verdict; the last two go the safe way and are refused on the
+		// same rule, because "Go reads it and the Python does not" is the defect, not the
+		// direction it happens to point.
+		for _, bad := range []string{
+			`{"run_id":"r","phase":"cycle","n":2,"Applied":0,"asked":0,"agents":1}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":3,"APPLIED":0,"asked":0,"agents":1}`,
+			`{"Run_ID":"r","phase":"cycle","n":2,"applied":0,"asked":0,"agents":1}`,
+			`{"run_id":"r","PHASE":"cycle","n":2,"applied":0,"asked":0,"agents":1}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"Asked":3,"agents":1}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":3,"asked":0,"Agents":99}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"asked":0,"agents":1,"Analysis_Changed":true}`,
+		} {
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":5,"asked":0,"agents":2}`,
+				bad), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if _, cErr := runs["r"].Convergence(); cErr == nil {
+				t.Errorf("row %s decoded; a key Go folds onto a field and the Python never reads is unreadable", bad)
+			}
+		}
+	})
+
+	t.Run("a folded key inside a gate cannot buy a clean sweep", func(t *testing.T) {
+		// The gate maps are the worse half: here a folded key makes this report NOTHING
+		// dropped where the Python reports the gate. Measured — `status:"failed"` beside
+		// `Status:"done"` gives python={g:failed} and used to give go={}; `planned:"run"`
+		// beside `PLANNED:"skip"` gives python={g:unreported} and used to give go={}.
+		for _, tc := range []struct{ plan, finish string }{
+			{`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+				`{"run_id":"r","phase":"finish","executed":{"g":{"status":"failed","Status":"done"}}}`},
+			{`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run","PLANNED":"skip"}}}`,
+				`{"run_id":"r","phase":"finish","executed":{}}`},
+		} {
+			runs, err := Load(store(t, tc.plan,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				tc.finish), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			got, dErr := runs["r"].DroppedGates()
+			if dErr == nil {
+				t.Errorf("plan %s finish %s returned %d gate(s) %v instead of an error; an empty map here is the clean sweep",
+					tc.plan, tc.finish, len(got), got)
+			}
+		}
+	})
+
 	t.Run("a phase word this build does not model is ignored, not refused", func(t *testing.T) {
 		// The word-based guard refused these, which would mean every Go build older than
 		// runlog.py's next new phase refuses every run carrying one. The Python ignores
@@ -496,6 +554,12 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			// The check reads the TOP level only. A key named like a run-level field, nested
 			// under another, is not merged into the run by either implementation.
 			`{"run_id":"r","phase":"nudge","inputs":{"gates":{"g":1},"unresolved_asks":7}}`,
+			// The folded-key check is per phase, against the names that phase's struct
+			// actually decodes. `Agents` on a PLAN row folds onto nothing Plan reads, and
+			// the Python ignores it too, so refusing it would be over-firing.
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","Agents":99}`,
+			// Unmodelled keys that merely resemble record fields are not folded names.
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"Finished_At":"x","TIER_EXECUTED":"full"}`,
 		} {
 			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,

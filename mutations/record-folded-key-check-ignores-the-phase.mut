@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: must be ignored, as the Python's merge effectively does
+why:    the OVER-FIRING half. The folded-key check is per phase, against the names that phase's struct actually decodes, because `Agents` on a PLAN row folds onto nothing Plan reads and the Python ignores it too — refusing it would redden a healthy run for a non-reason. Checking every modelled name on every row is the tempting simplification and it is wrong in exactly that way.
+--- old
+			if err := foldedKeys([]byte(line), "agent_cap", "gates"); err != nil {
+--- new
+			if err := foldedKeys([]byte(line), "agent_cap", "gates", "agents", "applied", "asked", "unresolved_asks", "executed"); err != nil {
