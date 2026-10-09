@@ -793,9 +793,25 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 				t.Errorf("the error must say %q; naming one owner for the whole list is wrong for half of them. got %v", want, got)
 			}
 		}
-		// Sorted, because Go map order is random and an error message must not be.
-		if i, j := strings.Index(got, "agent_cap"), strings.Index(got, "unresolved_asks"); i > j {
-			t.Errorf("the fields are not in a fixed order, so the same bad row prints differently run to run: %v", got)
+		// Sorted, because Go map order is random and an error message must not be. Asserted
+		// over repeated loads and against the whole expected sequence, not two positions:
+		// with four fields a random permutation is already sorted about 4% of the time, so
+		// the single-comparison version passed in CI while failing locally — a guard that
+		// fires 96% of the time reads as a flaky catalog entry rather than the unguarded
+		// rule it is. Ten loads put a chance pass at (1/24)^10.
+		want := "agent_cap (only a plan row may set it), executed (only a finish row may set it), " +
+			"gates (only a plan row may set it), unresolved_asks (only a finish row may set it)"
+		for i := 0; i < 10; i++ {
+			runs, err := Load(store(t,
+				`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				`{"run_id":"r","phase":"nudge","agent_cap":1,"executed":{},"gates":{},"unresolved_asks":7}`), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if g := runs["r"].Err.Error(); !strings.Contains(g, want) {
+				t.Fatalf("load %d: the fields are not in a fixed order, so the same bad row prints differently run to run.\nwant the sequence: %s\ngot: %v", i, want, g)
+			}
 		}
 	})
 
