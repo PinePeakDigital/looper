@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/pinepeakdigital/looper/internal/push"
+	"github.com/pinepeakdigital/looper/internal/record"
 )
 
 // shimGh puts a scripted `gh` first on PATH and returns the path of the file it logs its
@@ -332,5 +333,62 @@ func TestAnUnknownConvergenceAppliesNoLabel(t *testing.T) {
 	}
 	if !strings.Contains(diag.String(), `no label for convergence "mostly-fine"`) {
 		t.Errorf("stderr does not say the label was skipped: %q", diag.String())
+	}
+}
+
+// The two halves of the gate, pinned to each other end to end: Render writes the artifact,
+// WritePending puts it where the gate looks, and push.ReportLanded is the reader. If the
+// marker, the `## review-loop` heading or the `N cycle(s) · M agent(s)` line moves on either
+// side, every push is refused on advice that cannot succeed — post the report, which this
+// run already did.
+//
+// Asserted by RUNNING the reader rather than by comparing format strings: the two constants
+// could agree while the line they produce is assembled differently, which is the whole class
+// of near-miss a string comparison misses.
+func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
+	const id = "fp01"
+	dir := gitRepo(t)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	rows := strings.Join([]string{
+		`{"run_id":"` + id + `","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+		`{"run_id":"` + id + `","phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":"` + id + `","phase":"cycle","n":2,"applied":1,"agents":4}`,
+		`{"run_id":"` + id + `","phase":"finish","outcome":"cycle-limit"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(store, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := record.Load(store, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runs[id]
+	conv, err := r.Convergence()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := Render(r, id, conv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WritePending(dir, id, conv, body); err != nil {
+		t.Fatal(err)
+	}
+	// No gh on PATH, so the probe falls through to the pending file this just wrote — which
+	// is the path Step 14 actually takes, since the push gate forces loop-then-push-then-PR.
+	noGh(t)
+	if !push.ReportLanded(id, r, dir) {
+		t.Errorf("the push gate does not recognise the report this package just rendered.\n"+
+			"it was looking for %q\nthe body was:\n%s", push.Fingerprint(r), body)
+	}
+	// And it is not satisfied by SOME report. Checked by putting THIS body at another run's
+	// pending path, so the gate has a file to read and must reject it on the marker — not on
+	// the file being absent, which is what a bare second call would have measured.
+	if _, err := WritePending(dir, "fp02", conv, body); err != nil {
+		t.Fatal(err)
+	}
+	if push.ReportLanded("fp02", r, dir) {
+		t.Error("one run's report, filed under another run's id, satisfied that run's gate — " +
+			"the marker is not being checked")
 	}
 }

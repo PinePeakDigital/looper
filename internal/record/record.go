@@ -72,6 +72,14 @@ type GateSpec struct {
 // A status that is not a string is still a decode error: the Python rendered `status: true` as
 // "True" and a number as itself, and reproducing that meant a str()-alike with number and
 // container gaps that could never be closed. Refusing the shape is both simpler and louder.
+//
+// One accepted cost, pinned by TestTheDecodeErrorNamesWhatTheOperatorMustGoFix's "a bad gate
+// status masks the rest of its own row": encoding/json returns an Unmarshaler's error
+// IMMEDIATELY rather than saving it and decoding on, so a bad status now hides every other
+// bad field in the same row — `unresolved_asks` included, which decides the verdict. Across
+// rows nothing is hidden, because setErr accumulates. The alternative is moving `executed`
+// out of this typed boundary so presence can be read without an Unmarshaler, and the cost is
+// one extra round trip on a row that is bad in two places at once.
 type GateStatus struct {
 	Present bool
 	Value   string

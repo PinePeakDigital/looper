@@ -3,8 +3,10 @@
 // A port of pr-report.py, and the other half of the gate in internal/push: this writes the
 // artifact that push-check verifies. The two must agree on the fingerprint — the marker, the
 // `## review-loop` heading, and the `N cycle(s) · M agent(s)` line — or every push is refused
-// on advice that cannot succeed. push.Fingerprint is the reader; Render is the writer, and
-// TestTheFingerprintPushCheckLooksFor pins them to each other.
+// on advice that cannot succeed. push.Fingerprint is the reader and Render the writer;
+// TestThePushGateFindsWhatThisPackageWrites pins them by RUNNING the reader against what this
+// renders, rather than by comparing the two format strings, which could agree while the lines
+// they assemble do not.
 //
 // The split the Python states and this keeps: FACTS come from the record and are not retyped
 // by the orchestrator, so they cannot drift from what was recorded; NARRATIVE arrives from the

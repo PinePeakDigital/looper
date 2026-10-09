@@ -827,6 +827,32 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		}
 	})
 
+	// The cost of GateStatus being an Unmarshaler, pinned so it is a known limit and not a
+	// surprise. encoding/json returns an Unmarshaler's error immediately instead of saving it
+	// and carrying on, so within ONE row a bad gate status now MASKS every other bad field —
+	// including `unresolved_asks`, which decides the verdict. Across rows nothing is masked:
+	// setErr accumulates, which is what "every bad row, not just the first" above asserts.
+	//
+	// Accepted rather than fixed: the alternative is moving `executed` out of the typed
+	// boundary so the status's presence can be read without an Unmarshaler, and the cost here
+	// is one extra round trip on a row that is bad in two places at once.
+	t.Run("a bad gate status masks the rest of its own row", func(t *testing.T) {
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"status":0}}}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		if !strings.Contains(got, "status") {
+			t.Errorf("the message must name the status, which is the error json returns; got %v", got)
+		}
+		if strings.Contains(got, "unresolved_asks") {
+			t.Errorf("unresolved_asks is no longer masked — the decode order changed, and the "+
+				"relation subtest below can go back to breaking the gate through `status`; got %v", got)
+		}
+	})
+
 	t.Run("no gate is blamed for a failure elsewhere in the row", func(t *testing.T) {
 		// nameBadGates wrapped unconditionally when written, so this row rendered as
 		// `executed gate(s) "g": <an error about unresolved_asks>`. The "X: Y" form asserts
@@ -834,9 +860,18 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		// must edit sits elsewhere in the same sentence. Both fields really are bad here,
 		// which is why this is a false RELATION rather than over-firing, and why removing
 		// the guard broke no other test.
+		//
+		// The gate is broken through `reason`, not `status`, and that is load-bearing. Since
+		// GateStatus became an Unmarshaler, a bad `status` returns from UnmarshalJSON, and
+		// encoding/json returns an Unmarshaler's error IMMEDIATELY rather than saving it and
+		// decoding on — so it wins over the earlier `unresolved_asks` failure, the row's
+		// error becomes `executed.status`, and naming the gate is then CORRECT. With
+		// `status: 0` here the fixture stopped exercising the relation and the catalog entry
+		// guarding it SURVIVED, measured. `reason` is a plain string, so its failure is
+		// saved and document order decides: unresolved_asks first.
 		runs, err := Load(store(t,
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"status":0}}}`), 0)
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"reason":0}}}`), 0)
 		if err != nil {
 			t.Fatalf("Load must not fail: %v", err)
 		}
