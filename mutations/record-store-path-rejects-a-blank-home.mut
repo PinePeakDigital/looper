@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestStorePathShapes'
+expect: a_blank_home_is_used,_not_rejected
+why:    os.Getenv cannot tell an UNSET variable from a blank one, and expanduser's two branches turn on exactly that: `'HOME' not in os.environ` falls back to the passwd entry, while a HOME that is present and blank is used verbatim and yields an absolute /.claude/... . Collapsing the two sends the blank case down the passwd path, so the Go gate resolves the operator's real home where the Python resolves /. A gate reading a different store than the oracle answers `unknown` for every run, with no error anywhere — the recorded outcome never reaches the blocker because Finish is nil.
+--- old
+	if v, set := os.LookupEnv("HOME"); set {
+--- new
+	if v := os.Getenv("HOME"); v != "" {

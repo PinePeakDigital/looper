@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsTheRecordRatherThanBeingTold'
+expect: a converged run must owe no disclosure
+why:    `disclose: null` and `disclose: ""` are not the same answer to "what must the PR say". Step 14 reads this field, and an empty string is a disclosure that discloses nothing — indistinguishable, to anything checking for one, from a line that was rendered and lost.
+--- old
+	if disclose != "" {
+		res.Disclose = &disclose
+	}
+--- new
+	res.Disclose = &disclose

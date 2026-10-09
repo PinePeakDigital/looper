@@ -1,0 +1,9 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckFlagOutputNeverTouchesStdout'
+expect: help_is_served,_not_failed
+why:    `-h` is a request that was SERVED. flag reports it as ErrHelp, and an undifferentiated `return err` turned it into exit 1 — indistinguishable from a mistyped flag, where the Python exits 0 for -h and 2 for a parse error. A caller that gates on the exit code before parsing stdout would treat a help request as a tool failure.
+--- old
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+--- new

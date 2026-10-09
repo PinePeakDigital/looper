@@ -9,3 +9,11 @@
 # parity gate did not skip. Ignored for the same reason as above: the mutation-score step
 # runs afterwards and its clean-tree guard counts untracked paths.
 record.log
+# The same, for the push package's oracle step — and it was MISSED when that step was added,
+# which meant the mutation-score step could never run at all: `?? push.log` made
+# requireCleanTree abort with "refusing to run: 1 uncommitted change(s)", a message about
+# uncommitted work rather than about a log file. Every raise of the catalog floor since was
+# gating on a step that aborted. Nothing caught it because this branch has not reached CI yet,
+# so the lesson is the pairing: a step that writes a log into the workspace needs a line here
+# in the same commit.
+push.log

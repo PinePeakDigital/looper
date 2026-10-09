@@ -1,0 +1,11 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRefusesAnUnreadableRun'
+expect: Disclosure returned
+why:    a run whose record did not decode has no reviewable summary, and an EMPTY disclosure is not a safe default for one: the subcommand turns "" into a JSON null, which Step 14 reads as `converged, nothing owed`. So the one shape that must never render silently is exactly the shape a dropped error check renders.
+--- old
+	conv, err := r.Convergence()
+	if err != nil {
+		return "", err
+	}
+--- new
+	conv, _ := r.Convergence()

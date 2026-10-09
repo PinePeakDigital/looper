@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestStorePathShapes'
+expect: a_bare_tilde_with_a_blank_home_falls_back_to_root
+why:    expanduser ends with `(userhome + path[i:]) or '/'`. The only input that reaches the fallback is a bare `~` under a blank HOME, where the concatenation is empty and the Python answers `/`. Without it the Go side answers "", which os.Open reads as the current directory. Reachable only through REVIEW_LOOP_RUNS=~ with HOME= — found by looking for a mutation the first version of this table could not catch, not by enumerating inputs.
+--- old
+	if expanded == "" {
+		return "/"
+	}
+--- new

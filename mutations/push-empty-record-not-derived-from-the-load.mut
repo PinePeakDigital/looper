@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore'
+expect: an empty record bought a push with a matching report
+why:    NoRecord must be DERIVED from the load, never left for a caller to assert — the same rule as Convergence and Outcome, and for the same reason: the one safety question the gate exists to answer cannot be answered by whoever wants the push. Hardcoding it false is what a caller that forgot to set it would produce, and the zero value of a bool is exactly that, so this pins the wiring rather than the check. ANCHORED on the whole expression: the first version anchored on `noRecord := r == nil`, which became a SUBSTRING of the widened predicate one commit later, so the replacement landed mid-expression and produced `false || (...)` — still correct behaviour, so the entry scored broken rather than catching anything. The learnings rule about substring anchors, earned again. The check itself is held by push-empty-record-permits-the-push; this is the half that would survive it.
+--- old
+	noRecord := r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
+--- new
+	noRecord := false

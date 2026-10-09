@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: the Python's push blocker reads its outcome
+why:    `outcome` is the first run-level field a derivation here reads, and the deferred entry on the previous slice predicted this exact reopening: load() merges it off ANY non-cycle row, so `{"phase":"plan","outcome":"test-failure"}` reaches the Python's push blocker while the typed decode files the row by phase and drops it. Removing the entry forges a permitted push on a run that recorded a broken tree.
+--- old
+	"outcome":         "finish",
+--- new

@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckRefusesAnUnreadableRecord'
+expect: consulted gh for a run whose record did not decode
+why:    the ORDER is load-bearing, not tidy. Fingerprint reads Cycles, which is SHORT by one row for every cycle row that failed to decode, so a report gate run before the derivations is checking numbers no honest report could ever match — and it is checking them against a record the run has already been told is unreadable. The derivations refuse such a run; nothing upstream of them does.
+--- old
+	conv, err := r.Convergence()
+--- new
+	if !ReportLanded(p.RunID, r, p.Repo) {
+		_ = p.RunID
+	}
+	conv, err := r.Convergence()

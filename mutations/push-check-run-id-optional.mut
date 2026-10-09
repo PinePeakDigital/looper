@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck'
+expect: a missing -run-id gave exit
+why:    required, not optional. In the Python both record-derived blockers were computed only when --run-id was present, so OMITTING it turned off the owed-report check and the broken-outcome check at once — while a BOGUS id was correctly caught as an unknown run. The cheapest wrong spelling was therefore the one that passed, and the run pushed on nothing.
+--- old
+	if *runID == "" {
+--- new
+	if false {

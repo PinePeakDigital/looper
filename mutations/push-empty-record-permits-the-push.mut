@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore|TestTheEmptyRecordDivergence'
+expect: an empty record bought a push with a matching report
+why:    the cheapest route to a false grant, and the one the Python still has. When the run id resolves to no readable row, record.Load returns an empty map with NO error: convergence derives `unknown` (a disclosure, not a block), Finish is nil so no recorded outcome can block, and the required report fingerprint collapses to `0 cycle(s) · 0 agent(s)` — which is exactly what pr-report.py renders for a run with no cycle rows, 22 of the 41 runs in the live store. So a GENUINE report, rendered by the real tool for a real zero-cycle run, satisfies the gate off a record that said nothing, with no forgery at all. Measured before the block: changing only $HOME turned a recorded `test-failure` refusal into a granted push. Deleting this check is therefore not a loosening of a nicety; it restores a gate that a wrong -store makes say yes.
+--- old
+	if s.NoRecord {
+		return false, "no readable record for this run — convergence, the outcome and the " +
+			"report fingerprint would all come off an empty record; check -store and -run-id"
+	}
+--- new

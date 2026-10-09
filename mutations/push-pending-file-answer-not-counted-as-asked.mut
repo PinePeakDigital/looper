@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeReportsBothAnswers'
+expect: git answered
+why:    reaching the final return means git resolved the git-common-dir AND the pending file read succeeded — the question was asked and answered. Returning false for `attributable` there makes a report that genuinely contradicts the record indistinguishable from never having been able to look, so the operator is told to install gh when the real finding is that the landed report's cycle/agent counts do not match the run. The second value was asserted on 2 of 6 paths before this entry; the flip left the package green.
+--- old
+	return containsAll(string(body), needles), true
+--- new
+	return containsAll(string(body), needles), false

@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedWithoutAGitDir'
+expect: satisfied the gate
+why:    `git rev-parse` writes its failure to stderr, so sh returns an EMPTY stdout and filepath.Join("", "info/review-loop-pending-report.X.md") is a RELATIVE path. Without this guard the gate reads that path out of the WORKING DIRECTORY, so a stray pending file beside wherever the tool is invoked satisfies it. Measured by planting exactly that file and chdir-ing to it. The first attempt at this entry left `rc` unused and did not compile, which scores broken and tests nothing — hence the condition is disabled rather than cut.
+--- old
+	if rc != 0 || gitdir == "" {
+--- new
+	if false && (rc != 0 || gitdir == "") {

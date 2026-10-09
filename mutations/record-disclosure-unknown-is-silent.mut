@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: a_run_with_no_cycles_discloses_that_nothing_is_known
+why:    omitting the cycle rows is the CHEAPEST state to produce — a run that writes no cycle at all — so it has to buy the loudest line rather than silence. Returning "" here reads as `converged, nothing owed` at the push gate, which is the forgery the whole convergence derivation exists to stop, reached through the disclosure instead.
+--- old
+	case Unknown:--- new
+	case Unknown:
+		return "", nil

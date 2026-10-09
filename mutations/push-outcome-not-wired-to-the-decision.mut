@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsTheRecordRatherThanBeingTold'
+expect: did not reach the decision
+why:    Decide's handling of a broken outcome and main's WIRING of it are two different things, and the Python's own history is the reason this is a separate entry: replacing `outcome=run.get("outcome"), unreported=unreported` with None, None passed every suite. That is the same "the channel was never wired" shape that removing --clean-exit left behind, so the table-driven Decide test cannot be what covers it.
+--- old
+	var outcome string
+	if r.Finish != nil {
+		outcome = r.Finish.Outcome
+	}
+--- new
+	var outcome string

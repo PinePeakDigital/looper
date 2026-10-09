@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: a_zero_cycle_count_falls_through_to_the_run_total
+why:    the Python is `last.get("asked") or run.get("unresolved_asks") or 0`, so a cycle count of ZERO falls through to the run-level total — and every cycle row the skill writes carries `asked: 0`. Keying the fallthrough on absence instead of on zero therefore turns it off for the normal case while leaving it on for a shape no writer emits: the guard looks present and fires on nothing.
+--- old
+	if asked == 0 && r.Finish != nil--- new
+	if last.Asked == nil && r.Finish != nil

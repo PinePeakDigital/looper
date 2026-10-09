@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore'
+expect: present in the map but says nothing bought a push
+why:    the block must ask whether anything was READABLE, not whether a map key existed. A run can be present and still carry no plan, no cycles and no finish — rows with its id under a phase the typed decode does not own, for instance — and that record derives exactly what an absent one does: `unknown`, no blocking outcome, and the `0 cycle(s) · 0 agent(s)` fingerprint a genuine zero-cycle report matches. Keying on `r == nil` was the narrower predicate actually shipped for one commit, against the wider one that had been approved, and the gap is invisible through every test that reaches the state by deleting the run entirely. Measured against the live store: all 41 real runs carry a plan row, so the wider predicate cannot fire on a legitimately zero-cycle run, which is 22 of them.
+--- old
+	noRecord := r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
+--- new
+	noRecord := r == nil

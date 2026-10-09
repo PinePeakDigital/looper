@@ -1,0 +1,8 @@
+target: .github/workflows/ci.yml
+verify: bash -c 'grep -qE "^ *for spec in .*StorePath:11" .github/workflows/ci.yml || { echo "the StorePath parity oracle has no floor"; exit 1; }'
+expect: the StorePath parity oracle has no floor
+why:    TestStorePathMatchesThePython exists to make storePathCases' comment true, and deleting it — or emptying storePathCases — left `go test ./...` green AND this workflow green, because the per-test floor loop named only three oracles. (Measured during review. The agent count that was here has been dropped: a process claim nothing in the tree records does not belong in the tree, which is a rule this same run wrote down and then broke twice.) Dropping StorePath from the loop returns the repo to exactly the state cycle 2 was written to fix, with nothing red. The floor of 11 also pins the table's WIDTH, which the catalog cannot: only 4 of the 11 case names are pinned by any entry's `expect:` string (two of the five store-path entries share one), so the table can lose 7 cases with the catalog silent. Verified by a grep rather than a Go test because the guard IS the workflow line; nothing in the Go suite can observe it. ANCHORED to the `for spec in` line: an unanchored `grep -q "StorePath:11"` was satisfied by the literal appearing anywhere, including the comment block above the loop that already discusses StorePath and the floor of 10 — measured, a mutated loop plus one such comment line exits 0, which would have made this entry a permanent vacuous catch.
+--- old
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11; do
+--- new
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25; do

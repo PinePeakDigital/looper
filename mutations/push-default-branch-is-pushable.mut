@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: never auto-push to it
+why:    the one rule this script exists to stop being re-derived in prose each run. An auto-push to the default branch is unreviewed code on the branch everything else forks from, and no disclosure makes it recoverable.
+--- old
+	if s.Branch == s.DefaultBranch {
+		return false, fmt.Sprintf("branch is the default branch (%s) — never auto-push to it", s.Branch)
+	}
+--- new

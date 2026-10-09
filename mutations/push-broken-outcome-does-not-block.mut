@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: a_recorded_test-failure_blocks_a_converged_run
+why:    removing --clean-exit deleted the only channel by which a Step 9 test failure reached this decision, and the replacement was never added: a run that recorded test-failure WITH a failed gate was permitted, with the reason "converged, evidence gate ok". This is that replacement. "We stopped looking" is a disclosure; "the tree is broken" is a block, and it has to outrank a converged review because the review's completeness is not the problem.
+--- old
+	for _, bad := range BrokenOutcomes {
+		if s.Outcome == bad {
+			return false, fmt.Sprintf("run recorded %s — broken, not merely unfinished", bad)
+		}
+	}
+--- new

@@ -109,8 +109,14 @@ const noRun = "NO-SUCH-RUN"
 //
 // runpy rather than an import: review-stats.py's name has a hyphen and is therefore not
 // importable, and its own `import runlog` needs the skill directory on sys.path — run_path
-// does not put the script's directory there. runlog.py needs neither, but both oracles go
-// through here so a third cannot invent a third mechanism.
+// does not put the script's directory there. runlog.py needs neither, but both oracles that
+// take a STORE and a BODY go through here, so neither can invent its own mechanism.
+//
+// TestStorePathMatchesThePython does not, and cannot: it needs a FRESH environment rather
+// than os.Environ() plus overrides, because an inherited HOME cannot be removed by appending
+// and an absent HOME is the input the two implementations diverged on. It also wants STORE's
+// value rather than a subcommand's output, so there is no body and no sentinel to detect.
+// Routing it through here would mean an env parameter and a no-store mode for one caller.
 //
 // Output, not CombinedOutput: stderr merged into stdout is parsed as part of the answer, so
 // one DeprecationWarning at import turned 72 subtests red across the two tests that had it
@@ -509,12 +515,13 @@ func TestTypedDecodeRefusesTheShapesThePythonCoerced(t *testing.T) {
 					t.Errorf("the error must name %q, so the operator knows what to fix; got %v", want, run.Err)
 				}
 			}
-			// Both derivations must refuse rather than answer.
-			if _, err := run.Convergence(); err == nil {
-				t.Error("Convergence returned a verdict for a run it could not decode")
-			}
-			if _, err := run.DroppedGates(); err == nil {
-				t.Error("DroppedGates returned a map for a run it could not decode")
+			// EVERY derivation must refuse rather than answer, found by shape rather than
+			// named here: this used to be a hand-written pair, which left a third
+			// derivation unguarded the moment one was added.
+			for dName, call := range refusingDerivations(run) {
+				if call() == nil {
+					t.Errorf("%s returned an answer for a run it could not decode", dName)
+				}
 			}
 		})
 	}
@@ -944,6 +951,62 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 			if string(gotJSON) != string(wantJSON) {
 				t.Errorf("dropped gates disagree: Go %s, Python %s\nfixture:\n%s",
 					gotJSON, wantJSON, strings.Join(rows, "\n"))
+			}
+		})
+	}
+}
+
+// StorePath against the oracle, for every shape of $HOME and $REVIEW_LOOP_RUNS in
+// storePathCases. runlog computes STORE at import time from the environment, so importing it
+// under each combination and printing STORE IS the oracle's answer for that combination.
+//
+// This exists because `storePathCases`' own comment claimed these were "measured against the
+// oracle in internal/push/parity_test.go" and they were not — they had been measured by hand,
+// once, and written down as literals. The
+// expectations in record_test.go stay (this skips when the Python is unreachable, and a gate
+// that can skip is not a gate on its own); what this adds is the half the comment promised.
+//
+// Nothing here touches the real store: only STORE's VALUE is read, never the file.
+func TestStorePathMatchesThePython(t *testing.T) {
+	script := runlogPath(t)
+	for _, c := range storePathCases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := exec.Command("python3", "-c",
+				"import os,sys,runpy;"+
+					"sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])));"+
+					"print(runpy.run_path(sys.argv[1])['STORE'])", script)
+			// A FRESH environment rather than os.Environ() plus overrides, because an
+			// inherited HOME cannot be removed by appending — and the absent-HOME case is
+			// the one where the two implementations diverged. PATH is carried so python3's
+			// own subprocesses work; nothing else is needed.
+			env := []string{"PATH=" + os.Getenv("PATH"), "REVIEW_LOOP_RUNS=" + c.env}
+			if !c.unsetHome {
+				env = append(env, "HOME="+c.home)
+			}
+			cmd.Env = env
+			var errOut strings.Builder
+			cmd.Stderr = &errOut
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
+			}
+			// TrimSuffix, not TrimSpace: print() adds exactly one newline, and trimming more
+			// strips legitimate whitespace from the ORACLE side only. StorePath returns the
+			// env value verbatim, so REVIEW_LOOP_RUNS=" " matched byte-for-byte before the
+			// trim and mismatched after it — a false alarm blaming the code for the harness.
+			want := strings.TrimSuffix(string(out), "\n")
+
+			// The Go side under the same environment. t.Setenv cannot unset, and unset is a
+			// distinct input here, so that case uses unsetHOME, which restores via t.Cleanup.
+			t.Setenv("REVIEW_LOOP_RUNS", c.env)
+			if c.unsetHome {
+				unsetHOME(t)
+			} else {
+				t.Setenv("HOME", c.home)
+			}
+			if got := StorePath(); got != want {
+				t.Errorf("StorePath = %q, python = %q (HOME=%q unset=%v REVIEW_LOOP_RUNS=%q)",
+					got, want, c.home, c.unsetHome, c.env)
 			}
 		})
 	}

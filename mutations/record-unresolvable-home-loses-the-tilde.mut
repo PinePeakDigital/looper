@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestAnUnresolvableHomeLeavesTheTildeInPlace'
+expect: want "~/.claude
+why:    the fallback for a machine with no passwd entry for its own uid carries a CLAIM about what the caller does next: returning "~" leaves the tilde in place, so StorePath yields a path that visibly contains an unexpanded "~" and the gate fails on a file it cannot find. Returning "" instead makes expanded = "" + "/.claude/..." — an ABSOLUTE path at the filesystem root, which on a sandboxed or containerised host can genuinely exist and be read, so the gate derives its answer from the wrong store silently. This whole branch was unreachable until the userCurrent seam existed; `return ""` left the entire suite green.
+--- old
+	return "~"
+--- new
+	return ""

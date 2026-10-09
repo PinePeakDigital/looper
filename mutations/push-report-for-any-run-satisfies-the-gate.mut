@@ -1,0 +1,7 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedFromAPRComment'
+expect: satisfied run2's gate
+why:    the marker NAMES the run, and without it any run's landed report satisfies every other run's gate. Checked on the PR-COMMENT path, because that is where the case is reachable: one PR carries every run's comments, and a branch reviewed twice has two reports with identical fingerprints sitting in the same thread. The pending-file path cannot exercise this at all — its filename is keyed by run id — and the first version of this entry survived for exactly that reason.
+--- old
+	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)--- new
+	needles := Fingerprint(r)

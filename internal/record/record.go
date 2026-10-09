@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -85,11 +86,22 @@ type Cycle struct {
 }
 
 // Finish is the terminal row. Agents stays raw because `--agents` is a bare json.loads with
-// no shape validation and the store holds 26 lists and 1 object for it, so typing it would
-// reject real rows. Nothing in THIS package derives from it — runlog's own derive_tier does,
+// no shape validation and the store holds 27 lists and 1 object for it (measured 2026-10-09
+// over 43 finish rows, 28 of which carry the key; the store is append-only, so the list count
+// only drifts upward), so typing it would reject real rows. Nothing in THIS package derives from it — runlog's own derive_tier does,
 // reading `status` and `id` out of it to force `tier_executed: "partial"`, so the schema is
 // documented in runlog's --agents help rather than being genuinely the operator's.
 type Finish struct {
+	// Outcome is the orchestrator's self-report of how the run ended, and the push gate
+	// blocks on three of its values. A plain string, not a pointer: absent, null and ""
+	// are all "not one of the broken outcomes", which is what the Python's
+	// `None not in BROKEN_OUTCOMES` says, and no reader wants them apart.
+	//
+	// The only ASSERTED field any derivation here reads. Convergence exists precisely
+	// because this one cannot be trusted — one real run recorded `clean` while its own
+	// author reported it had not converged — so it may only ever BLOCK a push, never
+	// grant one. Nothing may read it as evidence that a review finished.
+	Outcome        string                `json:"outcome"`
 	UnresolvedAsks *int                  `json:"unresolved_asks"`
 	Executed       map[string]GateResult `json:"executed"`
 	Agents         json.RawMessage       `json:"agents"`
@@ -185,9 +197,11 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// when the identical store costs the identical amount at limit=0 — a single oversized
 	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
 	//
-	// Not fixed, and the honest reason is not "every caller passes 0": nothing outside this
-	// package's tests calls Load at all, and two tests do pass a limit. It is that 1.1x on a
-	// 143 KiB store buys nothing. The claim worth keeping is the narrow one — `limit` bounds
+	// Not fixed, and the honest reason is not "every caller passes 0": two tests do pass a
+	// limit, and `internal/push.Check` calls Load from the shipped binary. It is that 1.1x on
+	// a 143 KiB store buys nothing. (An earlier version of this sentence said "nothing outside
+	// this package's tests calls Load at all" — false once internal/push existed, which is the
+	// repo's dominant defect class sitting in the comment that argues against fixing this.) The claim worth keeping is the narrow one — `limit` bounds
 	// what is RETURNED, not what is read. Revisit when a caller passes a limit over a store
 	// big enough for the difference to matter.
 	var lines []string
@@ -334,7 +348,7 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			}
 			r.Plan = &pl
 		case "finish":
-			if err := foldedKeys([]byte(line), "unresolved_asks", "executed", "agents"); err != nil {
+			if err := foldedKeys([]byte(line), "outcome", "unresolved_asks", "executed", "agents"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
@@ -461,22 +475,25 @@ func quoteCapped(s string) string {
 // row whose phase does not own it still reaches the Python's verdict while the typed decode
 // files the row by phase and never sees it.
 //
-// The map must grow with the derivations, and it is currently SHORT of what the Python reads.
-// Measured against the oracle, these are also read off the merged run dict and are not here:
-// `outcome` (push-check.py:112 blocks the push on test-failure/blocked/abandoned, read as
-// `run.get("outcome")`; review-stats' is_abandoned also reads it), `session_id`, `head`,
-// `repo`, `finished_at` and `abandoned_missing`. Omitting them is safe TODAY and only today,
-// for one reason: no derivation in this package reads any of them, so a misplaced one cannot
-// change an answer HERE. It can change the Python's — so the earlier claim that a misplaced
-// `outcome` "changes no answer on either side" was false. When the push gate ports,
-// `outcome` becomes the first of these a Go derivation reads, and it has to join this map in
-// the same commit or the forgery this guard exists to stop reopens through it.
+// The map grows with the derivations, and `outcome` is here because this commit is the one
+// that first reads it: Decide blocks a push on three of its values, so a misplaced
+// `{"phase":"plan","outcome":"test-failure"}` would otherwise reach the Python's blocker and
+// be dropped here — the same forgery, through the first field the deferred entry predicted
+// it would reopen through.
+//
+// Still SHORT of what the Python reads off the merged run: `session_id`, `head`, `repo`,
+// `finished_at` and `abandoned_missing` (review-stats reads the last in its abandon-reason
+// reporting, NOT in `is_abandoned`, which reads only `outcome` and `session_id`). Omitting
+// them is safe only because no derivation in this package reads any of them, so a misplaced
+// one cannot change an answer HERE — it can still change the Python's. Each becomes a
+// forgery vector the moment something here reads it, and must join this map in that commit.
 //
 // Cycle-owned counts are absent for the opposite reason, which is permanent: load() does not
 // merge cycle rows at all, so `applied` on a finish row is ignored by both implementations.
 var runLevelFields = map[string]string{
 	"agent_cap":       "plan",
 	"gates":           "plan",
+	"outcome":         "finish",
 	"unresolved_asks": "finish",
 	"executed":        "finish",
 	"cycles":          synthesized,
@@ -738,12 +755,7 @@ func (r *Run) Convergence() (string, error) {
 		return Converged, nil
 	}
 
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
-		}
-	}
+	spent := r.AgentsSpent()
 	// `!= 0`, not `> 0`: the Python guard is a bare `if cap`, so a negative cap is truthy
 	// there and any spend clears it. cmd_plan refuses a non-positive --agent-cap, so no
 	// NEW row can carry one, but the store is append-only and never rewritten, so a
@@ -755,6 +767,134 @@ func (r *Run) Convergence() (string, error) {
 	// Stopped with work outstanding and budget left: an operator interrupt, a test
 	// failure, or a run that simply stopped.
 	return Halted, nil
+}
+
+// Disclosure is the line a PR must carry when the review did not converge: what stopped the
+// loop, what was still outstanding when it did, and that more findings were likely. Empty
+// when the run converged and owes nothing.
+//
+// It carries the whole remaining consequence of an unfinished review. Not converging stopped
+// BLOCKING the push — a cap that strands commits just hands the decision back to a human
+// every time — so a capped or halted run pushes and owes this line instead. That is why it
+// is derived from the cycle rows and not written by the orchestrator: a summary the
+// orchestrator composes is a summary it can soften, and softening it is free.
+func (r *Run) Disclosure() (string, error) {
+	conv, err := r.Convergence()
+	if err != nil {
+		return "", err
+	}
+	switch conv {
+	case Converged:
+		return "", nil
+	case Unknown:
+		// No cycle rows. Not "probably fine": nothing in the record can say whether the
+		// loop still had findings when it stopped, and since omitting the rows is the
+		// cheapest way to reach this state, it has to read as unreviewed rather than as
+		// an absence of bad news.
+		return "Review completeness UNKNOWN: this run recorded no cycles, so nothing can say " +
+			"whether the loop still had findings when it stopped. Treat as unreviewed.", nil
+	}
+
+	spent := r.AgentsSpent()
+	last := r.Cycles[len(r.Cycles)-1] // non-empty: Convergence answers Unknown otherwise
+
+	var head string
+	switch conv {
+	case Capped:
+		if r.Plan == nil || r.Plan.AgentCap == nil {
+			// Unreachable, and PROVED so rather than asserted: Convergence returns Capped
+			// only from `r.Plan != nil && r.Plan.AgentCap != nil`, and
+			// TestConvergenceAnswersOnlyTheFourWords checks that invariant over a generated
+			// matrix of plan/cycle/finish shapes. An earlier version of this comment claimed
+			// unreachability with nothing behind it, which is the one thing this repo treats
+			// as worse than a missing guard.
+			//
+			// Stated as an error rather than dereferenced on faith, because the failure it
+			// guards against is the two functions disagreeing about what `capped` means, and
+			// a disclosure reading "CAPPED at 9 of <nil> agents" would ship that silently.
+			return "", fmt.Errorf("run %q: derived %s with no recorded agent_cap", r.ID, conv)
+		}
+		head = fmt.Sprintf("Review CAPPED at %d of %d agents", spent, *r.Plan.AgentCap)
+	case Halted:
+		head = fmt.Sprintf("Review HALTED after %d cycle(s), %d agents", len(r.Cycles), spent)
+	default:
+		// The Python indexes a two-key dict here, so a fifth convergence value is a
+		// KeyError there and must not be a headless sentence here. Unreachable today by the
+		// same proof as the guard above: TestConvergenceAnswersOnlyTheFourWords asserts
+		// Convergence answers only the four declared constants, so this arm exists for the
+		// commit that adds a fifth — which is also when Check's error check on Disclosure
+		// stops being dead.
+		return "", fmt.Errorf("run %q: no disclosure defined for convergence %q", r.ID, conv)
+	}
+
+	// The Python's `last.get("asked") or run.get("unresolved_asks") or 0`: a zero or absent
+	// per-cycle count falls through to the run-level total, so asks recorded only at finish
+	// still reach the line. `== 0` and not `< 1`, because a negative is truthy in Python and
+	// keeps its place — and it renders, which is right: a negative count is corrupt data the
+	// reader should see, not a zero the line should hide.
+	asked := 0
+	if last.Asked != nil {
+		asked = *last.Asked
+	}
+	if asked == 0 && r.Finish != nil && r.Finish.UnresolvedAsks != nil {
+		asked = *r.Finish.UnresolvedAsks
+	}
+
+	// An absent `applied` renders "?" where the Python renders "None" for an explicit null —
+	// a *int is nil for both, which is the one place the two-state pointer is visible. This
+	// is the divergence the type comment said would be decided here: cosmetic, enumerated in
+	// internal/push/parity_test.go's TestTheOneDisclosureDivergence — NOT this package's
+	// parity_test.go, which holds no Disclosure test at all — and grounded on no row in the
+	// real store holding a null `applied`.
+	// Both spellings tell the reader the same thing, and restoring three-state decoding for
+	// prose would complicate the field every verdict turns on.
+	applied := "?"
+	if last.Applied != nil {
+		applied = strconv.Itoa(*last.Applied)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s: the last cycle applied %s fix(es)", head, applied)
+	if asked != 0 {
+		fmt.Fprintf(&b, " and left %d finding(s) awaiting a decision", asked)
+	}
+	if last.AnalysisChanged != nil && *last.AnalysisChanged {
+		b.WriteString(" and the deterministic pass still had unresolved findings")
+	}
+	b.WriteString(". The loop had not stopped finding things — another cycle would likely find more.")
+	return b.String(), nil
+}
+
+// AgentsSpent is the agents this run spent: the sum over its cycles, with an absent count
+// reading as zero to match the Python's `or 0`.
+//
+// Exported and shared by every reader for the reason runlog.py gives for `cycles_of`: it
+// "exists as a function rather than inline so that convergence(), disclosure() and pr-report
+// cannot read the list three different ways". The divergence it names — a rendered report
+// saying "CAPPED at 11 of 8 agents" above a table showing 8 — was REPRODUCED IN A FIXTURE and
+// never seen on a real PR, which that docstring says in the sentence immediately after, adding
+// that "blurring 'reproduced' into 'observed' is how an invented measurement got committed
+// here twice". An earlier version of this comment quoted the first half and dropped the
+// second, and the commit message said "after exactly this incident".
+//
+// The hazard does not need the incident: this port kept the cycle LIST shared and then
+// re-derived the SUM three times, so three copies of one nil-handling rule existed and any
+// could be edited without the others. That is the whole argument.
+//
+// NOT named Spend: mutations/record-unlisted-derivation-goes-unguarded.mut injects a method
+// by that name, and a mutation that does not compile scores broken and tests nothing.
+//
+// One return value, not two, so it is deliberately NOT one of the `func() (T, error)`
+// derivations `refusingDerivations` enumerates — it answers a question about the cycle rows
+// rather than a verdict about the run, and it has no decode of its own to refuse.
+func (r *Run) AgentsSpent() int {
+	var n int
+	for _, c := range r.Cycles {
+		if c.Agents != nil {
+			n += *c.Agents
+		}
+	}
+	return n
 }
 
 // GateOK are the statuses that mean a planned gate was handled. `n/a` is success, not a
@@ -810,4 +950,67 @@ func (r *Run) DroppedGates() (map[string]string, error) {
 		out[name] = status
 	}
 	return out, nil
+}
+
+// StorePath is where the record lives: $REVIEW_LOOP_RUNS, or ~/.claude/review-loop/runs.jsonl.
+// Matches runlog.STORE including the expanduser, which the Python applies to the env value
+// too — a store configured as `~/alt/runs.jsonl` must name the same file in both. `~user` is
+// not expanded; expanduser does, and nothing configures one.
+//
+// The two must resolve the SAME FILE for every input, because a gate reading a different
+// store than the oracle answers `unknown` for every run — a disclosure where there should be
+// a verdict, on a record that was there all along, with no error anywhere to say so. That is
+// why `$HOME` is read here rather than through os.UserHomeDir alone, which cannot tell unset
+// from blank and errors on both. Measured against the oracle:
+//
+//	HOME=/x    python=/x/.claude/...        go=/x/.claude/...
+//	HOME=""    python=/.claude/...          go=/.claude/...        (expanduser uses the blank value)
+//	HOME unset python=/Users/x/.claude/...  go=/Users/x/.claude/... (expanduser falls back to pwd)
+//
+// Before this, the unset and blank cases both returned the literal `~/.claude/...`, which has
+// no leading slash and so resolved against the working directory — a file that never exists.
+func StorePath() string {
+	p := os.Getenv("REVIEW_LOOP_RUNS")
+	if p == "" {
+		p = "~/.claude/review-loop/runs.jsonl"
+	}
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	// Concatenation, not filepath.Join, and this is load-bearing. expanduser is
+	// `userhome.rstrip('/') + path[i:]`, falling back to "/" when that is empty. Join
+	// CLEANS its arguments, so Join("", ".claude/x") drops the empty element and yields the
+	// RELATIVE `.claude/x` where the Python yields `/.claude/x` — measured, and the reason
+	// this function is not one line shorter.
+	expanded := strings.TrimRight(homeDirOrTilde(), "/") + p[1:]
+	if expanded == "" {
+		return "/"
+	}
+	return expanded
+}
+
+// userCurrent is os/user.Current, as a variable so a test can make it fail. The branch below
+// it is otherwise unreachable — a machine with no passwd entry for its own uid — and it
+// carries a correctness CLAIM about what the caller then does with "~", which `return ""`
+// left the entire suite green. A one-word seam is cheaper than an untestable claim.
+var userCurrent = user.Current
+
+// homeDirOrTilde is expanduser's notion of `~`, which is not os.UserHomeDir's. Named for the
+// fallback rather than for the happy path: on a failed passwd lookup it returns the literal
+// "~", which is not a directory, and a name saying "home directory" would have hidden the one
+// return value a reader needs to notice. expanduser branches on
+// whether HOME is in the environment AT ALL: present-but-blank yields "", and absent falls back
+// to the passwd entry. os.UserHomeDir collapses both into one error, so it cannot express either
+// answer — and a caller that treats its error as "leave the tilde alone" diverges from the
+// oracle in both directions at once.
+func homeDirOrTilde() string {
+	if v, set := os.LookupEnv("HOME"); set {
+		return v // including "", which is what expanduser does with a blank HOME
+	}
+	if u, err := userCurrent(); err == nil {
+		return u.HomeDir // pwd.getpwuid(os.getuid()).pw_dir
+	}
+	// expanduser returns the path unexpanded when the passwd lookup raises KeyError. Returning
+	// "~" here reproduces that: the concatenation above rebuilds the original string.
+	return "~"
 }

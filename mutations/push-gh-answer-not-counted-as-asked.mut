@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesBeingUnableToAsk'
+expect: nothing could not be asked
+why:    gh answering IS being able to ask, even when the report is not among the comments. Dropping this makes a repo with a reachable PR but no git dir report "could not be determined" when gh in fact answered — and this branch had no assertion behind it until a Check-level case shimmed gh to SUCCEED. Not because "every other test shims gh to fail" — an earlier version of this line said that and it is false, TestReportLandedFromAPRComment shims a succeeding gh at three call sites — but because those tests call ReportLanded, which DISCARDS the second return value (`landed, _ := reportProbe(...)`), and Check reads it only when `landed` is false. So the value was structurally unobservable on every path where gh matched.
+--- old
+		attributable = true
+		if containsAll(out, needles) {
+--- new
+		if containsAll(out, needles) {

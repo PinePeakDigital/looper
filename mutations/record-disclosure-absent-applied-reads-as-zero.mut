@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: an_absent_applied_count_renders_as_unknown,_not_zero
+why:    an absent `applied` renders "?". Rendering 0 says the cycle found nothing left to apply, which is the OPPOSITE of what absence means and is the exact claim the convergence derivation refuses to read out of it (`None == 0` is False in Python, which is why a missing applied derives halted rather than converged). The disclosure would then contradict the verdict printed beside it. Also the one place the Python's `?` default is visible, so the parity gate covers it too.
+--- old
+	applied := "?"--- new
+	applied := "0"

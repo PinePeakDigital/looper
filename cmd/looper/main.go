@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,10 +10,20 @@ import (
 
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/mutate"
+	"github.com/pinepeakdigital/looper/internal/push"
+	"github.com/pinepeakdigital/looper/internal/record"
 )
 
 const usage = `usage: looper mutate [-catalog dir] [-root dir]
-       looper docs <dir>`
+       looper docs <dir>
+       looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
+                         [-unresolved-skip] [-branch b] [-default-branch b]
+                         [-repo dir] [-store path]
+
+push-check writes the decision as JSON to stdout and nothing else. stderr carries a
+note when the report check could not be run at all, or when no row for the run was
+readable in the store — two cases where the decision's own stated reason is the wrong
+instruction. See README.md.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -30,9 +41,11 @@ func run(args []string, out, errOut io.Writer) int {
 	var err error
 	switch args[0] {
 	case "mutate":
-		err = runMutate(args[1:], out)
+		err = runMutate(args[1:], out, errOut)
 	case "docs":
 		err = runDocs(args[1:], out)
+	case "push-check":
+		err = runPushCheck(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
@@ -44,9 +57,13 @@ func run(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-func runMutate(args []string, out io.Writer) error {
+func runMutate(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("mutate", flag.ContinueOnError)
-	fs.SetOutput(out)
+	// Flag usage and parse errors go to STDERR, not to the stream this command's results go
+	// to. Harmless here, where stdout is a human report; load-bearing for push-check, whose
+	// stdout is a machine-readable contract. Kept consistent so the next subcommand inherits
+	// the right default rather than the one that happened to be harmless.
+	fs.SetOutput(errOut)
 	catalog := fs.String("catalog", "mutations", "directory of .mut files")
 	root := fs.String("root", ".", "repo root the mutations apply to")
 	if err := fs.Parse(args); err != nil {
@@ -120,4 +137,69 @@ func runDocs(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "every flag the docs under %s name exists\n", dir)
 	return nil
+}
+
+// runPushCheck answers Step 14's auto-push question. It prints JSON and exits 0 whether or
+// not the push is permitted: the ANSWER is the output, and a non-zero exit would make a
+// refusal indistinguishable from the tool failing to produce one.
+func runPushCheck(args []string, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("push-check", flag.ContinueOnError)
+	// STDERR, not out. This command documents stdout as JSON and nothing else, and
+	// flag.ContinueOnError writes both `-h` text and parse-error text to fs.Output(): with
+	// that pointed at stdout, `looper push-check -h` and a mistyped flag each emitted the
+	// usage banner where Step 14 reads a decision. Measured before the fix — both landed on
+	// stdout and both exited 1.
+	fs.SetOutput(errOut)
+	// Required, not optional. In the Python both record-derived blockers were computed only
+	// when it was present, so omitting it turned off the owed-report check AND the
+	// broken-outcome check while a BOGUS id was correctly caught — the cheapest wrong
+	// spelling was the one that passed.
+	runID := fs.String("run-id", "", "the run to read convergence, outcome and the owed report from (required)")
+	gateState := fs.String("gate-state", "skipped", "passed, skipped or blocked")
+	unresolvedSkip := fs.Bool("unresolved-skip", false, "a 50-79 finding was skipped without a recorded dismissal")
+	branch := fs.String("branch", "", "the current branch")
+	defaultBranch := fs.String("default-branch", "", "the repo's default branch")
+	repo := fs.String("repo", ".", "the repo to check git and gh facts in")
+	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
+	if err := fs.Parse(args); err != nil {
+		// `-h` is a request that was SERVED, not a failure. flag reports it as ErrHelp and an
+		// undifferentiated `return err` turned it into exit 1, indistinguishable from a
+		// mistyped flag — where the Python exits 0 for -h and 2 for a parse error. Exit 0
+		// here and let the caller tell them apart by the empty stdout.
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *runID == "" {
+		return errors.New("push-check: -run-id is required — without it the record's outcome and " +
+			"the report check are both invisible, and the run pushes on nothing")
+	}
+	switch *gateState {
+	case "passed", "skipped", "blocked":
+	default:
+		return fmt.Errorf("push-check: -gate-state %q is not passed, skipped or blocked", *gateState)
+	}
+	if *store == "" {
+		*store = record.StorePath()
+	}
+	res, err := push.Check(push.CheckParams{
+		Store:          *store,
+		RunID:          *runID,
+		GateState:      *gateState,
+		UnresolvedSkip: *unresolvedSkip,
+		Branch:         *branch,
+		DefaultBranch:  *defaultBranch,
+		Repo:           *repo,
+		Diag:           errOut,
+	})
+	if err != nil {
+		return err
+	}
+	b, err := res.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(b)
+	return err
 }

@@ -1,6 +1,6 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestTypedDecodeRefusesTheShapesThePythonCoerced'
-expect: Convergence returned a verdict for a run it could not decode
+expect: Convergence returned an answer for a run it could not decode
 why:    the whole point of the typed boundary is that a field which could not be read never becomes a verdict. Dropping this check restores exactly the defect the coercion helpers had: `unresolved_asks: "7"` is unreadable, the run derives `converged` from the rest, and a clean push ships with seven findings outstanding. The old port needed a documented policy for every unreadable value — asksOutstanding answered YES whenever it could not tell, because this one guard is where a falsy reading waves a run through. That policy is gone, and this check is what replaced it, so it is the single line holding up the design.
 --- old
 	if r.Err != nil {

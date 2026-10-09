@@ -1,0 +1,17 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestEveryDerivationRefusesAPoisonedRun'
+expect: refused a healthy run
+why:    the GREEN side of the same channel, which the RED side alone cannot see: a derivation that errors UNCONDITIONALLY passes "every derivation refuses a poisoned run" with nothing to say about it. At the push gate that is not a quiet failure — Check returns the error, the subcommand exits non-zero, and Step 14 reads a tool that cannot decide as a tool that is broken, on every run. Over-firing is a failure mode, not a safe default.
+--- old
+func (r *Run) Convergence() (string, error) {
+	if r.Err != nil {
+		return Unknown, r.Err
+	}
+--- new
+func (r *Run) Convergence() (string, error) {
+	if true {
+		return Unknown, errors.New("cannot derive convergence")
+	}
+	if r.Err != nil {
+		return Unknown, r.Err
+	}

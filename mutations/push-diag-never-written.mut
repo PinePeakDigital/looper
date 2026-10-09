@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesBeingUnableToAsk'
+expect: could not be run
+why:    when NEITHER probe could run, the refusal still says "run pr-report.py --post first" — correct as a decision, because the gate fails closed, and the wrong instruction for a missing `gh`/`git` or a killed subprocess. The reason string cannot carry the difference: parity_test.go compares it byte-for-byte against push-check.py. So the one line that can say it goes to stderr, where neither implementation writes anything and nothing parses. The condition is DISABLED rather than deleted so `attributable` stays referenced: a bare `if false {}` would leave it unused, and a mutation that does not compile scores broken and tests nothing. Same idiom, same reason, as push-check-store-default-removed and push-reportlanded-reads-a-relative-path.
+--- old
+		if !attributable && p.Diag != nil {
+--- new
+		if !attributable && false && p.Diag != nil {

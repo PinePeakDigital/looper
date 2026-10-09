@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: a_negative_ask_count_is_disclosed,_not_swallowed
+why:    `asked != 0`, not `> 0`. The Python's guard is a bare `if asked`, where a negative is truthy and renders. A negative count is corrupt data the reader should see; hiding it produces a disclosure that silently omits the one field that was wrong, and diverges from the oracle in the direction that looks tidier.
+--- old
+	if asked != 0 {--- new
+	if asked > 0 {

@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: a_changed_analysis_pass_is_disclosed
+why:    the deterministic pass changing files is unfinished work too, and it is the half with no number of its own: `applied` and `asked` both read 0 on a cycle whose only outstanding work is this. Dropping the clause renders a disclosure that lists nothing outstanding while saying another cycle would find more, which reads as boilerplate rather than as a finding.
+--- old
+	if last.AnalysisChanged != nil && *last.AnalysisChanged {
+		b.WriteString(" and the deterministic pass still had unresolved findings")
+	}
+--- new

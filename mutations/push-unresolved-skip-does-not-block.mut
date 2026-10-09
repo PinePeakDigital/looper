@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: skipped without 'remember as dismissal'
+why:    a 50-79 finding skipped with no recorded dismissal is an UNRESOLVED finding, not a disclosed one. It blocks because there is no artifact anywhere that says a human decided it — the dismissal record is the thing that turns a skip into a decision.
+--- old
+	if s.UnresolvedSkip {
+		return false, "a 50-79 finding was skipped without 'remember as dismissal' — unresolved"
+	}
+--- new

@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestUpstreamExistsBothWays'
+expect: must have an upstream
+why:    every fixture in this package is a bare `git init` with no remote, so hardcoding this to false left the suite green and the TRUE path was only ever reached from a hand-built State in TestDecide. That means the `-u` wording — the difference between Step 14 running `git push -u origin` and `git push` — was never derived from a real repo. The test now configures a tracking ref against the repo itself, which needs no network.
+--- old
+	rc, _ := sh(repo, "git", "rev-parse", "--abbrev-ref", "@{upstream}")
+	return rc == 0
+--- new
+	return false

@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceAnswersOnlyTheFourWords'
+expect: not one of the four constants
+why:    Disclosure's `default:` arm and Check's error check on Disclosure are both dead ONLY while Convergence answers the four declared constants and nothing else. Both were previously asserted unreachable by comment with nothing behind them — the one thing this repo treats as worse than a missing guard — and this is the assertion that makes the claim real. A fifth value makes the default arm live, where it refuses the whole run rather than rendering a headless sentence; the Python's two-key dict raises KeyError there.
+--- old
+	// Stopped with work outstanding and budget left: an operator interrupt, a test
+	// failure, or a run that simply stopped.
+	return Halted, nil
+--- new
+	return "stalled", nil

@@ -2,9 +2,12 @@ package record
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -513,6 +516,41 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
+	t.Run("a misplaced or folded outcome cannot unblock a push", func(t *testing.T) {
+		// `outcome` is the first run-level field anything in this REPO reads, and it is read
+		// to BLOCK: push.Decide refuses a push on test-failure, blocked or abandoned. No
+		// derivation in THIS package reads it — Convergence, Disclosure and DroppedGates
+		// never touch Finish.Outcome — so the probe below is Convergence standing in for
+		// "the row did not decode", which is what every derivation's Err guard then refuses.
+		// An earlier version of this comment said "a derivation here reads", which the
+		// runLevelFields comment in record.go gets right and this did not.
+		//
+		// Every mechanism this file closes points at the field at once. load() merges it off
+		// any non-cycle row, so the Python's blocker sees all five of these; the typed decode
+		// either files the row by phase and drops it, or folds the variant spelling onto the
+		// field and reads the wrong one.
+		//
+		// The last two go opposite ways and are both refused, because the rule is "Go and
+		// the Python read different values", not "Go reads the permissive one".
+		for _, bad := range []string{
+			`{"run_id":"r","phase":"plan","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"nudge","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"finnish","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"finish","outcome":"test-failure","Outcome":"clean"}`,
+			`{"run_id":"r","phase":"finish","OUTCOME":"test-failure"}`,
+		} {
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				bad), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if _, cErr := runs["r"].Convergence(); cErr == nil {
+				t.Errorf("row %s decoded without an error; the Python's push blocker reads its outcome and this would not", bad)
+			}
+		}
+	})
+
 	t.Run("a folded key inside a gate cannot buy a clean sweep", func(t *testing.T) {
 		// The gate maps are the worse half: here a folded key makes this report NOTHING
 		// dropped where the Python reports the gate. Measured — `status:"failed"` beside
@@ -959,4 +997,520 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 			t.Errorf("the cap must report how many rows actually failed, not how many it listed; got %v", got)
 		}
 	})
+}
+
+func disclosureOf(t *testing.T, rows ...string) string {
+	t.Helper()
+	runs, err := Load(store(t, rows...), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runs["r"]
+	if r == nil {
+		r = &Run{ID: "r"}
+	}
+	got, err := r.Disclosure()
+	if err != nil {
+		t.Fatalf("Disclosure: unexpected decode error: %v", err)
+	}
+	return got
+}
+
+// The tail every non-converged disclosure ends with. A constant here and a literal in
+// record.go on purpose: asserting the sentence against a reference to the code that builds
+// it would pass whatever that code said.
+const moreLikely = ". The loop had not stopped finding things — another cycle would likely find more."
+
+func TestDisclosureRules(t *testing.T) {
+	const cap8 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`
+	for _, c := range []struct {
+		name string
+		want string
+		rows []string
+	}{
+		// A converged run owes nothing, and the empty string is the whole signal: the
+		// subcommand turns it into a JSON null, and Step 14 pushes with no disclosure.
+		{"a converged run owes no disclosure", "", []string{plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`}},
+
+		// Omitting the cycle rows is the cheapest state to produce, so it must buy the
+		// LOUDEST line rather than silence. The push still happens; what it owes is this.
+		{"a run with no cycles discloses that nothing is known",
+			"Review completeness UNKNOWN: this run recorded no cycles, so nothing can say " +
+				"whether the loop still had findings when it stopped. Treat as unreviewed.",
+			[]string{plan40}},
+		{"a run absent from the store discloses the same",
+			"Review completeness UNKNOWN: this run recorded no cycles, so nothing can say " +
+				"whether the loop still had findings when it stopped. Treat as unreviewed.",
+			nil},
+
+		// The cap head names the RECORDED cap, not the spend. Printing the spend twice
+		// renders "CAPPED at 9 of 9 agents", which reads as a budget met exactly rather
+		// than one overshot by a cycle — and the overshoot is the number that says the
+		// fan-out width, not the cap, is what bound the run.
+		{"the capped head names the spend and the recorded cap",
+			"Review CAPPED at 9 of 8 agents: the last cycle applied 3 fix(es)" + moreLikely,
+			[]string{cap8, `{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":9}`}},
+
+		// The halted head counts CYCLES, and the count is of the whole run, not of the
+		// last cycle's `n` — which nothing reads, and which a Step 13 restart resets to 1.
+		{"the halted head counts every cycle and every agent",
+			"Review HALTED after 3 cycle(s), 10 agents: the last cycle applied 2 fix(es)" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":2,"applied":2,"agents":2}`}},
+
+		// The asks clause, from the cycle row.
+		{"asks on the last cycle are disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4}`}},
+
+		// And the fallback: asks recorded only at FINISH still reach the line. This is the
+		// same channel the convergence check reads — a cycle that routed findings to the
+		// user and recorded them nowhere but the finish row has not run out of findings.
+		{"asks recorded only at finish are disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 7 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// Zero FALLS THROUGH to the run-level total, which is the Python's `or`. Reading
+		// the cycle's 0 as the answer hid seven outstanding findings behind a recorded
+		// zero — and a cycle row carrying `asked: 0` is what every cycle writes.
+		{"a zero cycle count falls through to the run total",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 7 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":0,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// The cycle's count wins when it is non-zero, so a stale run-level total cannot
+		// overwrite the live one.
+		{"a non-zero cycle count is not overridden by the run total",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// A negative count RENDERS rather than being hidden as falsy. Corrupt data the
+		// reader can see beats a line that silently drops it.
+		{"a negative ask count is disclosed, not swallowed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left -1 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":-1,"agents":4}`}},
+
+		// The deterministic pass is unfinished work too, and says so in its own clause.
+		{"a changed analysis pass is disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and the deterministic pass still had unresolved findings" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4,"analysis_changed":true}`}},
+		{"both clauses render in order",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" +
+				" and the deterministic pass still had unresolved findings" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4,"analysis_changed":true}`}},
+		{"a false analysis flag renders no clause",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4,"analysis_changed":false}`}},
+
+		// An absent `applied` renders "?" and must not render 0: a zero there says the
+		// cycle found nothing left to apply, which is the opposite of what absence means
+		// and is the exact claim convergence refuses to read out of it.
+		{"an absent applied count renders as unknown, not zero",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied ? fix(es)" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"agents":4}`}},
+		// A cycle with no `agents` spends nothing, matching the Python's `or 0`.
+		{"a cycle with no agents field contributes no spend",
+			"Review HALTED after 2 cycle(s), 4 agents: the last cycle applied 1 fix(es)" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":2,"applied":1}`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := disclosureOf(t, c.rows...); got != c.want {
+				t.Errorf("Disclosure:\n got %q\nwant %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The three answers must agree about which run they describe, because a report rendered
+// from one and gated on another is the shape that put a `converged` summary on a halted run.
+func TestDisclosureAgreesWithConvergence(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		conv string
+		rows []string
+	}{
+		{"converged", Converged, []string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`}},
+		{"unknown", Unknown, []string{plan40}},
+		{"capped", Capped, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":9}`}},
+		{"halted", Halted, []string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":2}`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			runs, err := Load(store(t, c.rows...), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := runs["r"]
+			if r == nil {
+				r = &Run{ID: "r"}
+			}
+			if got := mustConv(t, r); got != c.conv {
+				t.Fatalf("Convergence = %q, want %q", got, c.conv)
+			}
+			disc, err := r.Disclosure()
+			if err != nil {
+				t.Fatalf("Disclosure: %v", err)
+			}
+			// Exactly one of the two states, keyed on convergence and nothing else:
+			// converged owes silence, everything else owes a line.
+			if (c.conv == Converged) != (disc == "") {
+				t.Errorf("convergence %q with disclosure %q — converged must owe nothing and "+
+					"every other value must owe a line", c.conv, disc)
+			}
+		})
+	}
+}
+
+// A decode error must reach the caller instead of a disclosure, the same way it does for
+// the other two derivations. A run whose record is unreadable is not a run whose review can
+// be summarised, and an empty disclosure here would read as `converged` to Step 14.
+func TestDisclosureRefusesAnUnreadableRun(t *testing.T) {
+	runs, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":"3","agents":4}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := runs["r"].Disclosure()
+	if err == nil {
+		t.Fatalf("Disclosure returned %q for a run with an unreadable cycle row", got)
+	}
+	if got != "" {
+		t.Errorf("Disclosure returned both %q and an error; the text would be rendered", got)
+	}
+}
+
+// derivations is every method on *Run that answers a question about the run: signature
+// `func() (T, error)`, where the error means "this run could not be read, so there is no
+// answer". The list is LITERAL and the set is checked against reflection below, in both
+// directions — a test that ranges only over what reflection finds would delete its own case
+// the moment a derivation was dropped, and one that ranges only over the literal list would
+// miss a derivation added without a line here.
+//
+// This replaces a hand-enumerated pair that sat in two and a half places (the paired check
+// in the refusal loop, plus one mutation entry per derivation). At two derivations that was
+// adequate and reflection would have been scaffolding ahead of its need; the deferral said
+// to write it in the commit that added the third, and Disclosure is the third.
+var derivations = []string{"Convergence", "Disclosure", "DroppedGates"}
+
+// refusingDerivations finds them by shape rather than by name, so a derivation added without
+// a line in `derivations` is reported rather than silently unguarded.
+func refusingDerivations(r *Run) map[string]func() error {
+	out := map[string]func() error{}
+	rt := reflect.TypeOf(r)
+	errType := reflect.TypeOf((*error)(nil)).Elem()
+	for i := 0; i < rt.NumMethod(); i++ {
+		m := rt.Method(i)
+		ft := m.Func.Type()
+		// NumIn 1 is the receiver and no arguments; NumOut 2 with an error second.
+		if ft.NumIn() != 1 || ft.NumOut() != 2 || ft.Out(1) != errType {
+			continue
+		}
+		fn := m.Func
+		out[m.Name] = func() error {
+			res := fn.Call([]reflect.Value{reflect.ValueOf(r)})
+			if res[1].IsNil() {
+				return nil
+			}
+			return res[1].Interface().(error)
+		}
+	}
+	return out
+}
+
+func TestEveryDerivationRefusesAPoisonedRun(t *testing.T) {
+	poisoned, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":"3","agents":4}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := poisoned["r"]
+	if bad.Err == nil {
+		t.Fatal("the fixture decoded cleanly; it is meant to be the unreadable one")
+	}
+
+	found := refusingDerivations(bad)
+	// Set equality, both directions.
+	for _, name := range derivations {
+		if _, ok := found[name]; !ok {
+			t.Errorf("derivations names %q, which is no longer a func() (T, error) method on *Run", name)
+		}
+	}
+	for name := range found {
+		if !contains(derivations, name) {
+			t.Errorf("*Run has a derivation %q with no line in `derivations` — it is unguarded "+
+				"by this test and probably by the catalog too", name)
+		}
+	}
+
+	// RED side: every one must refuse rather than answer.
+	for name, call := range found {
+		if call() == nil {
+			t.Errorf("%s returned an answer for a run it could not decode", name)
+		}
+	}
+
+	// GREEN side, on the same channel: a healthy run must get an answer out of every one of
+	// them. Without this, a derivation that ALWAYS errored would pass the loop above, and
+	// so would deleting the decode and returning a bare error.
+	healthy, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":4}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range refusingDerivations(healthy["r"]) {
+		if gotErr := call(); gotErr != nil {
+			t.Errorf("%s refused a healthy run: %v", name, gotErr)
+		}
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// storePathCases are every shape of a TILDE-EXPANDED `$HOME` and `$REVIEW_LOOP_RUNS` the two
+// implementations could answer differently about. All TEN are compared against the oracle by
+// TestStorePathMatchesThePython in this package's parity_test.go, which imports runlog under
+// each combination and reads its STORE; the expectations here state the answer directly as
+// well, because that parity test skips when the Python is unreachable and this must not.
+//
+// The `~user` arm is deliberately OUT of scope, and this table is therefore not exhaustive
+// over every tilde form. expanduser has one (`i = path.find(sep, 1)`; `i != 1` →
+// `pwd.getpwnam`) and StorePath short-circuits anything that is not exactly `~` or `~/`-
+// prefixed, so they diverge: measured, `REVIEW_LOOP_RUNS=~root/x` reads `~root/x` here —
+// relative, resolved against the working directory, never exists — and `/var/root/x` there.
+// The bare `~root` and trailing-slash `~root/` forms diverge the same way. Swept 952
+// HOME x REVIEW_LOOP_RUNS pairs: 102 diverge and every one of them is a `~` followed by an
+// EXISTING user name, which is getpwnam's success arm; a nonexistent user agrees, because
+// expanduser returns the path unchanged on KeyError, which is what this function always does.
+//
+// "Nothing configures a `~user` path" is a JUDGEMENT, not a measurement, and the most plausible
+// human spelling is the one it is easiest to overlook: `~narthur/.claude/review-loop/runs.jsonl`
+// names the default store exactly, and diverges — Go reads it relative, the Python resolves it.
+// A shell expands `~narthur` before the program sees it, so the shape needs an env set without
+// one: a quoted export, a JSON `env` block, a plist, a container spec. Weighed and left: the
+// consequence is a gate that derives `unknown` for every run off a path that cannot exist, and
+// the cheap half of the fix (expanding only `~` and `~/`) is what is already here.
+// StorePath's own comment records the exception; nothing configures a `~user` path, and
+// implementing getpwnam lookup would be real code for a shape nobody writes. An earlier
+// version of this comment claimed the ten were "every shape ... the two implementations could
+// answer differently about", which this measurement contradicts.
+//
+// An earlier version also said "all nine" and named internal/push/parity_test.go, where no
+// such test existed — the hand measurement had been done once, in a shell, and written up as
+// though it were wired into CI. The parity test above was added to make the claim true rather
+// than to soften it.
+//
+// The reason this matters more than it looks: a gate reading a different store than the oracle
+// answers `unknown` for EVERY run, with no error anywhere. `Finish` is nil, so a recorded
+// `test-failure` never reaches the blocker — and for a run with NO cycle rows, which is 22 of
+// the live store's 41, nothing at all is left standing: the empty record fingerprints as
+// `0 cycle(s) · 0 agent(s)`, which is exactly what pr-report.py renders for such a run, so a
+// genuine posted report satisfies the gate and the push is GRANTED. Measured end to end.
+// unsetHOME removes $HOME for the duration of t and restores it afterwards. Three copies of
+// this existed, two of them added in the same cycle, and the thing being hand-rolled is the
+// distinction the tests exist to pin: a copy that restores UNCONDITIONALLY sets HOME="", and
+// blank-HOME is a different input from absent-HOME in homeDirOrTilde — expanduser branches on
+// presence, not value. Both failure modes land in a later test, because the environment is
+// process-global.
+//
+// t.Cleanup rather than defer, and the restore error is checked rather than discarded:
+// cleanups run after t.Setenv's own, in reverse order of registration, and a silently failed
+// restore leaves every later test in the package running without HOME.
+func unsetHOME(t *testing.T) {
+	t.Helper()
+	prev, had := os.LookupEnv("HOME")
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatalf("unset HOME: %v", err)
+	}
+	t.Cleanup(func() {
+		if !had {
+			return
+		}
+		if err := os.Setenv("HOME", prev); err != nil {
+			t.Errorf("restore HOME to %q: %v", prev, err)
+		}
+	})
+}
+
+var storePathCases = []struct {
+	name, home, env, want string
+	unsetHome             bool
+}{
+	{name: "a plain home", home: "/x", want: "/x/.claude/review-loop/runs.jsonl"},
+	// expanduser does `userhome.rstrip('/')`, so a trailing slash must not double.
+	{name: "a trailing slash on home", home: "/x/", want: "/x/.claude/review-loop/runs.jsonl"},
+	// HOME set but BLANK. expanduser branches on `'HOME' not in os.environ`, so a blank value
+	// is used as-is and yields an absolute /.claude/... — os.UserHomeDir cannot express this,
+	// it errors identically for blank and unset.
+	{name: "a blank home is used, not rejected", home: "", want: "/.claude/review-loop/runs.jsonl"},
+	{name: "root as home", home: "/", want: "/.claude/review-loop/runs.jsonl"},
+	// HOME ABSENT. expanduser falls back to the passwd entry; os/user.Current does the same.
+	// Before this was fixed both this case and the blank one returned the literal
+	// "~/.claude/review-loop/runs.jsonl", which has no leading slash and so resolved against
+	// the working directory.
+	{name: "an absent home falls back to the passwd entry", unsetHome: true, want: "$PWDHOME/.claude/review-loop/runs.jsonl"},
+	// The env value is expanded too, not just the default.
+	{name: "a bare tilde in the env value", home: "/x", env: "~", want: "/x"},
+	// expanduser ends with `(userhome + path[i:]) or '/'`, so a bare tilde under a blank HOME
+	// falls back to "/" rather than to the empty string. The only input that reaches that
+	// fallback, and it was missing from this table until a validation pass went looking for a
+	// mutation this table could not catch.
+	{name: "a bare tilde with a blank home falls back to root", home: "", env: "~", want: "/"},
+	{name: "a tilde path in the env value", home: "/x", env: "~/alt/runs.jsonl", want: "/x/alt/runs.jsonl"},
+	{name: "an absolute env value is untouched", home: "/x", env: "/abs/runs.jsonl", want: "/abs/runs.jsonl"},
+	{name: "a relative env value is untouched", home: "/x", env: "rel/runs.jsonl", want: "rel/runs.jsonl"},
+	// Whitespace, which is the shape the parity harness's TrimSuffix fix is FOR. Reverting
+	// that fix to TrimSpace left the whole suite green, because no case carried whitespace —
+	// a guard added to make a comment's claim true, with nothing exercising it. StorePath
+	// returns the env value verbatim, so the Go answer is the space; TrimSpace on the oracle
+	// side alone turned that into a mismatch the code had not caused.
+	{name: "a whitespace env value is untouched", home: "/x", env: " ", want: " "},
+}
+
+func TestStorePathShapes(t *testing.T) {
+	real, err := user.Current()
+	if err != nil {
+		t.Skip("no passwd entry to resolve an absent HOME against")
+	}
+	for _, c := range storePathCases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("REVIEW_LOOP_RUNS", c.env)
+			// t.Setenv cannot UNSET, and unset is a distinct input here — it is the whole
+			// difference between expanduser's two branches — so this case unsets by hand and
+			// restores in a defer rather than being skipped for being awkward.
+			if c.unsetHome {
+				unsetHOME(t)
+			} else {
+				t.Setenv("HOME", c.home)
+			}
+			want := strings.ReplaceAll(c.want, "$PWDHOME", real.HomeDir)
+			if got := StorePath(); got != want {
+				t.Errorf("StorePath = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// What makes Disclosure's `default:` arm and its capped nil-cap guard unreachable, stated as an
+// assertion rather than as a comment. Both were 0% covered and claimed unreachable by prose
+// only — the one thing this repo treats as worse than a missing guard, and the file's other
+// unreachable branch (misplacedRunField) already records how it was verified.
+//
+// Two invariants over a generated matrix of plan, cycle and finish shapes:
+//   - Convergence answers one of the four declared constants and nothing else, which is what
+//     makes the `default:` arm dead.
+//   - Capped implies a recorded agent_cap, which is what makes the nil-cap guard dead.
+//
+// Both are properties of Convergence, so a mutation to Convergence's cap check trips this as
+// well as its own entry — which is the point: these two guards in Disclosure are dead only for
+// as long as Convergence keeps its end of the contract.
+func TestConvergenceAnswersOnlyTheFourWords(t *testing.T) {
+	plans := []string{
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":0}`,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":1}`,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":-1}`,
+	}
+	cycleSets := [][]string{
+		nil,
+		{`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`},
+		{`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":9}`},
+		{`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":1,"agents":2}`},
+		{`{"run_id":"r","phase":"cycle","n":1,"agents":4}`},
+		{`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2,"analysis_changed":true}`},
+		{`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":4}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"asked":0}`},
+	}
+	finishes := []string{
+		"",
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"executed":{}}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7,"executed":{}}`,
+	}
+	known := map[string]bool{Unknown: true, Converged: true, Capped: true, Halted: true}
+	seen := map[string]int{}
+	for _, pl := range plans {
+		for _, cy := range cycleSets {
+			for _, fi := range finishes {
+				rows := append([]string{pl}, cy...)
+				if fi != "" {
+					rows = append(rows, fi)
+				}
+				runs, err := Load(store(t, rows...), 0)
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				r := runs["r"]
+				got := mustConv(t, r)
+				if !known[got] {
+					t.Fatalf("Convergence answered %q, which is not one of the four constants — "+
+						"Disclosure's default arm is now reachable and its error is what ships", got)
+				}
+				seen[got]++
+				if got == Capped && (r.Plan == nil || r.Plan.AgentCap == nil) {
+					t.Fatalf("Convergence answered capped with no recorded agent_cap (rows %v) — "+
+						"Disclosure's nil-cap guard is now reachable", rows)
+				}
+				// And the pair must agree, which is the consequence both guards exist for.
+				if _, dErr := r.Disclosure(); dErr != nil {
+					t.Fatalf("Disclosure refused a healthy run (%q, rows %v): %v", got, rows, dErr)
+				}
+			}
+		}
+	}
+	// The matrix has to actually reach all four, or the invariants above are satisfied
+	// vacuously by a matrix that only ever produces one answer.
+	for _, w := range []string{Unknown, Converged, Capped, Halted} {
+		if seen[w] == 0 {
+			t.Errorf("the matrix never produced %q, so this test does not cover it", w)
+		}
+	}
+}
+
+// The passwd-failure branch of homeDirOrTilde, which is otherwise unreachable: a machine with
+// no passwd entry for its own uid. It was 0% covered and `return ""` in its place left the
+// whole suite green, while its comment claimed the caller's concatenation "rebuilds the
+// original string" — a checkable claim with nothing behind it.
+//
+// expanduser's own behaviour here is to return the path UNEXPANDED when the pwd lookup raises
+// KeyError, and that is what the "~" return reproduces.
+func TestAnUnresolvableHomeLeavesTheTildeInPlace(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_RUNS", "")
+	unsetHOME(t)
+	saved := userCurrent
+	userCurrent = func() (*user.User, error) { return nil, errors.New("no passwd entry") }
+	defer func() { userCurrent = saved }()
+
+	// Unexpanded, exactly as written — not "" and not a path rooted anywhere.
+	if got, want := StorePath(), "~/.claude/review-loop/runs.jsonl"; got != want {
+		t.Errorf("StorePath = %q, want %q — the tilde must survive an unresolvable home, "+
+			"because that is what expanduser does with a KeyError from pwd", got, want)
+	}
+	// And for a bare tilde, where the concatenation is empty before the root fallback.
+	t.Setenv("REVIEW_LOOP_RUNS", "~")
+	if got := StorePath(); got != "~" {
+		t.Errorf("StorePath = %q for a bare tilde with no resolvable home, want %q", got, "~")
+	}
 }

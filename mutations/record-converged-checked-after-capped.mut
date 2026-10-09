@@ -1,28 +1,15 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: a_converged_last_cycle_wins_over_a_cap_it_also_reached
-why:    the converged test is placed before the capped test deliberately: a last cycle that applied nothing has finished the work even if the spend also reached the cap, and reporting `capped` there would understate a run that actually converged. Every fixture but one has only one of the two predicates true, so swapping the branches passed the entire suite AND the Python parity gate — the ordering was free to invert until the both-true case existed. Re-anchored for the typed port, and reshaped: the first attempt moved the capped test above `var spent`, which does not compile, so it scored `broken` rather than `caught` — a mutation that does not build tests nothing.
+why:    Converged is tested BEFORE Capped, and that is the only shape where both predicates are true at once, so it is the only case that fails if the two are swapped. The previous version of this entry moved the `spent :=` assignment instead of the capped CHECK, which stopped being a reordering the moment the sum became a pure call to AgentsSpent — it survived the whole suite. Re-anchored onto the check itself.
 --- old
 	if last.Applied != nil && *last.Applied == 0 &&
 		(last.Asked == nil || *last.Asked == 0) &&
 		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
 		return Converged, nil
 	}
-
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
-		}
-	}
 --- new
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
-		}
-	}
-	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && r.AgentsSpent() >= *r.Plan.AgentCap {
 		return Capped, nil
 	}
 	if last.Applied != nil && *last.Applied == 0 &&

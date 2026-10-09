@@ -1,0 +1,12 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestShFailsClosedWhenItCannotRun'
+expect: want (1, "")
+why:    sh's whole contract is that a command it CANNOT RUN reads as the blocking answer. Flipping this to 0 made a missing `gh`/`git`, a non-executable file, or a fired timeout read as SUCCESS in the one function whose answer gates a push — and it survived the entire suite when the port was first written, with the catalog scoring 152/152. Found by reproducing the mutation, not by reading: the tests all shimmed commands that exist.
+--- old
+		return 1, ""
+	}
+	return 0, strings.TrimSpace(string(out))
+--- new
+		return 0, ""
+	}
+	return 0, strings.TrimSpace(string(out))

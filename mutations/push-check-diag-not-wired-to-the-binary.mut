@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckWritesTheDiagnosisToStderr'
+expect: want the diagnosis
+why:    the diagnosis exists in internal/push and is tested there, but the one line handing it a stream lives here. Dropping it leaves the library fully covered and the BINARY — the only thing Step 14 ever runs — silent about the one refusal whose stated reason is wrong for the actual cause. Measured: deleting this field left `go test ./...` entirely green, including all eight subtests of TestCheckDiagnosesBeingUnableToAsk and TestCheckDiagnosesARunMissingFromTheStore, the two library-level tests written for the feature, none of which goes through the CLI. nil is the documented "no diagnosis" value, so this compiles and changes only what the operator sees.
+--- old
+		Diag:           errOut,
+--- new
+		Diag:           nil,
