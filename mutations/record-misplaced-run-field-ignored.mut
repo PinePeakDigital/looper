@@ -1,0 +1,14 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by filing a run-level field under the wrong phase
+why:    the worst hole this branch had. runlog.load merges every non-cycle row into the run dict FIELD-WISE and never looks at `phase`, so ANY run-level field on ANY non-cycle row reaches the Python's verdict. Six rows forge a clean push on a run with seven asks outstanding — three misspell the phase, three spell real phases, and one spells two (both parsers take the last duplicate key). The first version of this guard keyed on the phase WORD and closed only the first three.
+--- old
+		if phase != "cycle" {
+			// Cycle rows are the exception: load() appends them and merges nothing, so a
+			// run-level field on one is ignored by both implementations.
+			if err := misplacedRunField(line, phase); err != nil {
+				r.setErr(lineNo, "misplaced-field", err)
+				continue
+			}
+		}
+--- new

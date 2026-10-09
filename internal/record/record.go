@@ -235,33 +235,44 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			r = &Run{ID: env.RunID}
 			runs[env.RunID] = r
 		}
-		// A phase this build cannot read is an ERROR, not a row to skip, and having that
-		// backwards was a hole in the one direction this layer exists to close.
+		// A row whose FIELDS this build would not place is an ERROR. Keying that on the
+		// phase WORD, which is what the first version of this guard did, closed three
+		// spellings of one forgery and left three open.
 		//
-		// load() merges every non-cycle row into the run dict FIELD-WISE and never checks
-		// what `phase` says, so a finish row whose phase is misspelled, wrong-typed or
-		// absent still delivers `unresolved_asks` to the Python's verdict. Measured, on a
-		// store whose finish row carries 7 asks outstanding:
+		// The mechanism is field placement, not vocabulary. load() merges every non-cycle
+		// row into the run dict FIELD-WISE and never looks at `phase`, so any run-level
+		// field on any non-cycle row reaches the Python's verdict. Measured, on a store
+		// whose first cycle applied nothing:
 		//
-		//	phase "finish"    python=halted   go=halted
-		//	phase "finnish"   python=halted   go=CONVERGED
-		//	phase 7           python=halted   go=CONVERGED
-		//	phase absent      python=halted   go=CONVERGED
+		//	{"phase":"finnish","unresolved_asks":7}              python=halted  go=CONVERGED
+		//	{"phase":7,"unresolved_asks":7}                      python=halted  go=CONVERGED
+		//	{"unresolved_asks":7}                                python=halted  go=CONVERGED
+		//	{"phase":"nudge","unresolved_asks":7}                python=halted  go=CONVERGED
+		//	{"phase":"plan","unresolved_asks":7}                 python=halted  go=CONVERGED
+		//	{"phase":"finish","unresolved_asks":7,"phase":"nudge"} python=halted go=CONVERGED
 		//
-		// Three ways to forge a clean verdict on a run with outstanding work by misspelling
-		// one word. A review did report this and it was dismissed as parity on the strength
-		// of the CYCLE-row case, where both sides really do read converged because such a
-		// row's only contribution is to `cycles`. The finish row was never checked, and it
-		// is the one carrying the field the push gate reads.
+		// Six ways to forge a clean push on a run with seven asks outstanding. The first
+		// three are misspellings; the last three spell real phases, and the duplicate-key
+		// one spells two. A word-based guard cannot see them, which is why this one asks
+		// instead: does the row carry a field a derivation reads, that this row's phase
+		// does not model? Both sides then deny the push.
 		//
-		// Erroring rather than reproducing the merge: both answers deny the push (Python
-		// halted, here unknown-with-an-error), and reproducing it would mean restoring the
-		// map[string]any this port deleted, to interpret a row no writer emits.
+		// It is also forward-compatible, which the word-based guard was not: a NEW phase
+		// runlog.py adds later carries no run-level field, so an older build ignores it
+		// exactly as the Python's merge does, instead of refusing every run containing one.
 		var phase string
 		if err := json.Unmarshal(env.Phase, &phase); err != nil {
-			r.setErr(lineNo, "unreadable-phase", fmt.Errorf(
-				"phase is absent or not a string, so the row's fields cannot be placed: %w", err))
-			continue
+			// Absent or not a string. phase stays "", which matches no owner below, so a
+			// row like this errors if and only if it carries a field that matters.
+			phase = ""
+		}
+		if phase != "cycle" {
+			// Cycle rows are the exception: load() appends them and merges nothing, so a
+			// run-level field on one is ignored by both implementations.
+			if err := misplacedRunField(line, phase); err != nil {
+				r.setErr(lineNo, "misplaced-field", err)
+				continue
+			}
 		}
 		switch phase {
 		case "cycle":
@@ -291,19 +302,59 @@ func Load(path string, limit int) (map[string]*Run, error) {
 				continue
 			}
 			r.Finish = &fi
-		case "nudge":
-			// Carries nothing this package derives from (`nudged_at` only), and the run was
-			// already created above — which is what runlog.load's setdefault does: a run
-			// known only by a nudge exists and has no cycles. 17 rows in the real store.
 		default:
-			// Not nudge, not a modelled phase. The Python merges this row's fields into the
-			// run regardless of the word, so skipping it silently is how the forgery above
-			// happens. The phase name is the operator's whole lead.
-			r.setErr(lineNo, "unknown-phase", fmt.Errorf(
-				"phase %q is not one this build models", phase))
+			// `nudge` today, and whatever runlog.py adds next. The run was already created
+			// above, which is what load()'s setdefault does — a run known only by a nudge
+			// exists and has no cycles — and the guard above has already established that
+			// the row carries nothing a derivation would have read off the merged run.
 		}
 	}
 	return runs, nil
+}
+
+// runLevelFields are the fields a derivation reads off the MERGED run dict, mapped to the
+// phase that owns each. load() merges every non-cycle row field-wise, so one of these on a
+// row whose phase does not own it still reaches the Python's verdict while the typed decode
+// files the row by phase and never sees it.
+//
+// `outcome` is deliberately absent: nothing here derives from it, so a misplaced one changes
+// no answer on either side. Cycle-owned counts are absent for the same reason in reverse —
+// load() does not merge cycle rows at all, so `applied` on a finish row is ignored by both.
+var runLevelFields = map[string]string{
+	"agent_cap":       "plan",
+	"gates":           "plan",
+	"unresolved_asks": "finish",
+	"executed":        "finish",
+}
+
+// misplacedRunField reports a field this row carries that a derivation reads and this row's
+// phase does not own. Decodes the top level only, and only the keys — the values stay raw.
+func misplacedRunField(line, phase string) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &top) != nil {
+		return nil // not an object; the envelope decode already let this row through
+	}
+	var bad []string
+	for name, owner := range runLevelFields {
+		if _, ok := top[name]; ok && owner != phase {
+			bad = append(bad, name)
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad) // map order is random; an error message must not be
+	// %q on the phase, and truncated: it is writer-supplied like run_id and the gate names,
+	// and an earlier version of this site had no bound at all — a 1 MiB phase produced a
+	// 4 MiB message, and 20 such rows produced 80 MiB.
+	shown := phase
+	if len(shown) > maxGateNameLen {
+		shown = shown[:maxGateNameLen] + "..."
+	}
+	return fmt.Errorf(
+		"a %q row carries %s, which this build reads off the run and only a %s row may set; "+
+			"the Python merges it regardless of phase, so ignoring it here would answer from a row it read",
+		shown, strings.Join(bad, ", "), runLevelFields[bad[0]])
 }
 
 // nameBadGates says WHICH gate failed, because encoding/json never names a map key. A

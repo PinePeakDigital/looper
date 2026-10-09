@@ -110,7 +110,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 100 ] || { echo "only $n mutations, expected at least 100 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 102 ] || { echo "only $n mutations, expected at least 102 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

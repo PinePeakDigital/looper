@@ -422,24 +422,30 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
-	t.Run("a misspelled phase cannot forge a clean verdict", func(t *testing.T) {
-		// The worst hole this branch had, and it was reported once and dismissed as parity.
-		// load() merges every non-cycle row field-wise and never checks the word, so a
-		// finish row carrying 7 asks outstanding reaches the Python's verdict whether its
-		// phase says "finish", "finnish", 7, or nothing at all — halted every time. The Go
-		// switch had no arm for the last three, dropped the row, and read the earlier
-		// zero-fix cycle as CONVERGED: a clean push, no disclosure, bought by one typo.
+	t.Run("no row can forge a clean verdict by being filed under the wrong phase", func(t *testing.T) {
+		// The worst hole this branch had, and it took three passes to get right. load()
+		// merges every non-cycle row into the run dict FIELD-WISE and never looks at
+		// `phase`, so ANY run-level field on ANY non-cycle row reaches the Python's
+		// verdict. On a store whose only cycle applied nothing, each row below makes the
+		// Python say halted and used to make this say converged — a clean push, no
+		// disclosure, with seven asks outstanding.
 		//
-		// The dismissal was measured on a CYCLE row, where both sides do read converged
-		// because such a row only contributes to `cycles`. Checking the cheaper case and
-		// generalising is how a guard ends up asserting a cause nobody verified.
+		// The first guard keyed on the phase WORD and closed only the first three. The last
+		// three spell real phases, and one spells two: both parsers take the last duplicate
+		// key, so Go filed the row under "nudge" and dropped it while Python merged the
+		// body regardless. Keying on field PLACEMENT instead closes all six, because that
+		// is the actual mechanism.
 		for _, bad := range []string{
-			`{"run_id":"r","phase":"finnish","outcome":"clean","unresolved_asks":7}`,
-			`{"run_id":"r","phase":7,"outcome":"clean","unresolved_asks":7}`,
-			`{"run_id":"r","outcome":"clean","unresolved_asks":7}`,
+			`{"run_id":"r","phase":"finnish","unresolved_asks":7}`,
+			`{"run_id":"r","phase":7,"unresolved_asks":7}`,
+			`{"run_id":"r","unresolved_asks":7}`,
+			`{"run_id":"r","phase":"nudge","unresolved_asks":7}`,
+			`{"run_id":"r","phase":"plan","unresolved_asks":7}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":7,"phase":"nudge"}`,
+			`{"run_id":"r","phase":"finish","gates":{"g":{"planned":"run"}}}`,
+			`{"run_id":"r","phase":"nudge","executed":{"g":{"status":"done"}}}`,
 		} {
-			runs, err := Load(store(t,
-				`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
 				bad), 0)
 			if err != nil {
@@ -447,10 +453,52 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			}
 			got, cErr := runs["r"].Convergence()
 			if cErr == nil {
-				t.Errorf("row %s decoded without an error; a row whose phase cannot be placed may carry outstanding work", bad)
+				t.Errorf("row %s decoded without an error; the Python merges its fields into the verdict regardless of phase", bad)
 			}
 			if got == Converged {
-				t.Errorf("row %s produced %q — a clean verdict forged by an unplaceable phase, with 7 asks outstanding", bad, got)
+				t.Errorf("row %s produced %q — a clean verdict forged by filing a run-level field under the wrong phase", bad, got)
+			}
+		}
+	})
+
+	t.Run("a phase word this build does not model is ignored, not refused", func(t *testing.T) {
+		// The word-based guard refused these, which would mean every Go build older than
+		// runlog.py's next new phase refuses every run carrying one. The Python ignores
+		// such a row for verdict purposes (it merges fields nothing reads), so ignoring it
+		// is both parity and the forward-compatible choice. What makes that safe is the
+		// field check above: a future phase that DOES carry a run-level field still errors.
+		for _, ok := range []string{
+			`{"run_id":"r","phase":"nudge","nudged_at":"2026-01-01T00:00:00"}`,
+			`{"run_id":"r","phase":"rebase","rebased_at":"2026-01-01T00:00:00"}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"asked":0,"agents":1,"unresolved_asks":7}`,
+		} {
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				ok), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if _, cErr := runs["r"].Convergence(); cErr != nil {
+				t.Errorf("row %s was refused: %v — a row carrying nothing a derivation reads must be ignored, as the Python's merge effectively does", ok, cErr)
+			}
+		}
+	})
+
+	t.Run("the phase switch matches exactly, with no folding", func(t *testing.T) {
+		// Python compares `rec.get("phase") == "cycle"` exactly and MERGES anything else, so
+		// a "Cycle" row never joins `cycles`. Case-folding or trimming the phase here would
+		// append it, and a zero-fix "Cycle" row appended after a cycle that applied five
+		// fixes reads converged — another forgery, and one the field check cannot see
+		// because `applied` is a cycle-owned field that load() never merges.
+		for _, variant := range []string{"Cycle", "CYCLE", " cycle", "cycle "} {
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":5,"asked":0,"agents":2}`,
+				`{"run_id":"r","phase":"`+variant+`","n":2,"applied":0,"asked":0,"agents":2}`), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if got := mustConv(t, runs["r"]); got == Converged {
+				t.Errorf("phase %q was treated as a cycle row and appended; the Python merges it instead, so the last cycle still applied 5 and the answer is %q", variant, Halted)
 			}
 		}
 	})
@@ -516,9 +564,11 @@ func keysOf(runs map[string]*Run) []string {
 // word dropped, the accumulation reverted to keep-first, and nameBadGates could name every
 // gate on the row instead of the bad one, all with the suite green. Each part gets an
 // assertion here.
-func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
-	const plan40 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
+// plan40 is a minimal valid plan row with a cap no fixture reaches, so a store built on it
+// exercises the cycle and finish rules without the cap rule interfering.
+const plan40 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
 
+func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 	t.Run("the file line number, so the row can be found", func(t *testing.T) {
 		// `lineNo := 0` survived everything. The number has to be the line you can
 		// `sed -n Np` out of the real file, which is why it is computed before the tail
@@ -729,6 +779,23 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 			if n := strings.Count(msg, "\n"); n != 0 {
 				t.Errorf("phase %#v added %d newline(s), forging an entry: %q", ph, n, msg)
 			}
+		}
+		// And bounded, which the gate-name caps did not cover: a 1 MiB phase produced a
+		// 4 MiB message, and twenty such rows produced 80 MiB. Third instance of the same
+		// omission in this function's neighbourhood.
+		b, err := json.Marshal(map[string]any{
+			"run_id": "r", "phase": strings.Repeat("p", 1<<20), "unresolved_asks": 7})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+			string(b)), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		if n := len(runs["r"].Err.Error()); n > 2048 {
+			t.Errorf("a 1 MiB phase produced a %d-byte message; it must be capped, not copied", n)
 		}
 	})
 

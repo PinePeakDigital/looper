@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: was treated as a cycle row and appended
+why:    Python compares `rec.get("phase") == "cycle"` exactly and MERGES anything else, so a "Cycle" row never joins `cycles`. Case-folding the phase appends it, and a zero-fix "Cycle" row appended after a cycle that applied five fixes reads converged — a forgery the misplaced-field check cannot see, because `applied` is cycle-owned and load() never merges it. Found by an independent mutation sweep; it survived the suite before this case existed.
+--- old
+		if phase != "cycle" {
+--- new
+		phase = strings.ToLower(phase)
+		if phase != "cycle" {
