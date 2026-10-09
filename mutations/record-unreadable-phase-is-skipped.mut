@@ -1,0 +1,16 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by an unplaceable phase
+why:    the sibling of the unknown-phase entry, for the WRONG-TYPED case. `phase` is decoded as json.RawMessage and then as a string precisely so a non-string phase reaches the switch; decoding it as a string in the envelope makes the whole envelope fail, and the row then vanishes down the torn-line path with no error — forging the same clean verdict. The two halves need separate entries because they fail in different places: this one before the switch, the other in its default arm.
+--- old
+		var phase string
+		if err := json.Unmarshal(env.Phase, &phase); err != nil {
+			r.setErr(lineNo, "unreadable-phase", fmt.Errorf(
+				"phase is absent or not a string, so the row's fields cannot be placed: %w", err))
+			continue
+		}
+--- new
+		var phase string
+		if json.Unmarshal(env.Phase, &phase) != nil {
+			continue
+		}

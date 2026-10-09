@@ -45,7 +45,11 @@ import (
 // distinction `converged` turns on. Not three states: a *int is nil for absent and for
 // null alike, and no reader here wants them apart. `disclosure()` is the first function
 // that would — Python renders absent as `?` and null as `None` — and that divergence is
-// decided there, on the measurement that no row in the store holds a null count.
+// decided there, on the measurement that no row in the store holds a null value in any
+// count a derivation READS: `applied`, `asked`, `agents`, `unresolved_asks`, `n` and
+// `agent_cap` have zero nulls between them. Not "no null count" flatly — `subagent_tokens`
+// is null in 47 of 58 cycle rows, which the lines above already say, and nothing here
+// derives from it.
 type GateSpec struct {
 	Planned string `json:"planned"`
 }
@@ -208,19 +212,19 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		// Two-stage: the envelope first, so a row for one run can never fail another's
 		// decode, then the phase body into its own type.
 		var env struct {
-			RunID string `json:"run_id"`
-			Phase string `json:"phase"`
+			RunID string          `json:"run_id"`
+			Phase json.RawMessage `json:"phase"`
 		}
 		if err := json.Unmarshal([]byte(line), &env); err != nil {
 			// A torn line never invalidates the rest of the store. This also swallows
-			// well-formed JSON whose envelope is unusable — `"phase": 7`, `"run_id": 7`, a
-			// top-level array, a bare string — and that sounds louder than it is: the
-			// Python drops those rows too. Measured on a store whose last cycle row carries
-			// outstanding work, a wrong-typed OR misspelled `phase` reads `converged` on
-			// BOTH sides, because `rec.get("phase") == "cycle"` is false and the row never
-			// reaches `cycles`. So the silence is parity, not a gap. And a row with an
-			// unreadable `run_id` belongs to no run, which is why there is nowhere to hang
-			// an error for it even if we wanted one.
+			// well-formed JSON that has no usable `run_id` — `"run_id": 7`, a top-level
+			// array, a bare string — and for those there is genuinely nowhere to hang an
+			// error, since the row belongs to no run. (The Python does not drop them: it
+			// keys a run by the int 7, and it DIES outright on an array or a string,
+			// `AttributeError` on `rec.get`. So this is more tolerant than the oracle, not
+			// less, and tolerance of an unattributable row cannot forge a verdict because
+			// the row contributes to nothing.) A wrong-typed `phase` is a different case
+			// and no longer comes through here — see the switch below.
 			continue
 		}
 		if env.RunID == "" {
@@ -231,18 +235,46 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			r = &Run{ID: env.RunID}
 			runs[env.RunID] = r
 		}
-		switch env.Phase {
+		// A phase this build cannot read is an ERROR, not a row to skip, and having that
+		// backwards was a hole in the one direction this layer exists to close.
+		//
+		// load() merges every non-cycle row into the run dict FIELD-WISE and never checks
+		// what `phase` says, so a finish row whose phase is misspelled, wrong-typed or
+		// absent still delivers `unresolved_asks` to the Python's verdict. Measured, on a
+		// store whose finish row carries 7 asks outstanding:
+		//
+		//	phase "finish"    python=halted   go=halted
+		//	phase "finnish"   python=halted   go=CONVERGED
+		//	phase 7           python=halted   go=CONVERGED
+		//	phase absent      python=halted   go=CONVERGED
+		//
+		// Three ways to forge a clean verdict on a run with outstanding work by misspelling
+		// one word. A review did report this and it was dismissed as parity on the strength
+		// of the CYCLE-row case, where both sides really do read converged because such a
+		// row's only contribution is to `cycles`. The finish row was never checked, and it
+		// is the one carrying the field the push gate reads.
+		//
+		// Erroring rather than reproducing the merge: both answers deny the push (Python
+		// halted, here unknown-with-an-error), and reproducing it would mean restoring the
+		// map[string]any this port deleted, to interpret a row no writer emits.
+		var phase string
+		if err := json.Unmarshal(env.Phase, &phase); err != nil {
+			r.setErr(lineNo, "unreadable-phase", fmt.Errorf(
+				"phase is absent or not a string, so the row's fields cannot be placed: %w", err))
+			continue
+		}
+		switch phase {
 		case "cycle":
 			var c Cycle
 			if err := json.Unmarshal([]byte(line), &c); err != nil {
-				r.setErr(lineNo, env.Phase, err)
+				r.setErr(lineNo, phase, err)
 				continue
 			}
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
 			var pl Plan
 			if err := json.Unmarshal([]byte(line), &pl); err != nil {
-				r.setErr(lineNo, env.Phase, nameBadGates(line, "gates", err, func(v json.RawMessage) error {
+				r.setErr(lineNo, phase, nameBadGates(line, "gates", err, func(v json.RawMessage) error {
 					var spec GateSpec
 					return json.Unmarshal(v, &spec)
 				}))
@@ -252,17 +284,24 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		case "finish":
 			var fi Finish
 			if err := json.Unmarshal([]byte(line), &fi); err != nil {
-				r.setErr(lineNo, env.Phase, nameBadGates(line, "executed", err, func(v json.RawMessage) error {
+				r.setErr(lineNo, phase, nameBadGates(line, "executed", err, func(v json.RawMessage) error {
 					var res GateResult
 					return json.Unmarshal(v, &res)
 				}))
 				continue
 			}
 			r.Finish = &fi
+		case "nudge":
+			// Carries nothing this package derives from (`nudged_at` only), and the run was
+			// already created above — which is what runlog.load's setdefault does: a run
+			// known only by a nudge exists and has no cycles. 17 rows in the real store.
+		default:
+			// Not nudge, not a modelled phase. The Python merges this row's fields into the
+			// run regardless of the word, so skipping it silently is how the forgery above
+			// happens. The phase name is the operator's whole lead.
+			r.setErr(lineNo, "unknown-phase", fmt.Errorf(
+				"phase %q is not one this build models", phase))
 		}
-		// Any other phase — `nudge` today — carries nothing this package derives from, so
-		// it is skipped rather than modelled. It still created the Run above, which is
-		// what runlog.load does: a run known only by a nudge exists and has no cycles.
 	}
 	return runs, nil
 }

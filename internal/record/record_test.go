@@ -422,6 +422,39 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
+	t.Run("a misspelled phase cannot forge a clean verdict", func(t *testing.T) {
+		// The worst hole this branch had, and it was reported once and dismissed as parity.
+		// load() merges every non-cycle row field-wise and never checks the word, so a
+		// finish row carrying 7 asks outstanding reaches the Python's verdict whether its
+		// phase says "finish", "finnish", 7, or nothing at all — halted every time. The Go
+		// switch had no arm for the last three, dropped the row, and read the earlier
+		// zero-fix cycle as CONVERGED: a clean push, no disclosure, bought by one typo.
+		//
+		// The dismissal was measured on a CYCLE row, where both sides do read converged
+		// because such a row only contributes to `cycles`. Checking the cheaper case and
+		// generalising is how a guard ends up asserting a cause nobody verified.
+		for _, bad := range []string{
+			`{"run_id":"r","phase":"finnish","outcome":"clean","unresolved_asks":7}`,
+			`{"run_id":"r","phase":7,"outcome":"clean","unresolved_asks":7}`,
+			`{"run_id":"r","outcome":"clean","unresolved_asks":7}`,
+		} {
+			runs, err := Load(store(t,
+				`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				bad), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			got, cErr := runs["r"].Convergence()
+			if cErr == nil {
+				t.Errorf("row %s decoded without an error; a row whose phase cannot be placed may carry outstanding work", bad)
+			}
+			if got == Converged {
+				t.Errorf("row %s produced %q — a clean verdict forged by an unplaceable phase, with 7 asks outstanding", bad, got)
+			}
+		}
+	})
+
 	t.Run("a run known only by a nudge exists and has no cycles", func(t *testing.T) {
 		// The code comment asserts this parity and no fixture carried a nudge row, though
 		// the real store has 17 of them. Inserting a `default: continue` before the run is

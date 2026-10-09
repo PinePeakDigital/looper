@@ -1,7 +1,7 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestUnreadableRowsDoNotInvalidateTheStore'
 expect: a torn line discarded the whole store
-why:    the store is append-only and written by concurrent sessions, so a half-written last line is expected — treating it as fatal throws away every run that was recorded correctly. Re-anchored for the typed port: the tolerant continue is on the ENVELOPE decode now, which is the first thing every row goes through. Re-anchored again onto the tail of that comment, which now also records that the same continue swallows a valid-JSON row with an unusable envelope — parity with the Python, which drops those too.
+why:    the store is append-only and written by concurrent sessions, so a half-written last line is expected — treating it as fatal throws away every run that was recorded correctly. Re-anchored for the typed port: the tolerant continue is on the ENVELOPE decode now, which is the first thing every row goes through. Re-anchored again onto the tail of that comment. The claim that the same continue is parity with the Python for a valid-JSON row with an unusable envelope was FALSE and has been removed: the Python keys a run by an int run_id, and DIES outright on a top-level array or string. This continue is now reached only when there is no usable run_id at all, which is a row belonging to no run.
 --- old
 			// an error for it even if we wanted one.
 			continue

@@ -151,11 +151,15 @@ func pyOracle(t *testing.T, script, store, body string) string {
 // real tightening, not just a prose error, and the supporting measurement cited for it was a
 // non-sequitur: "every numeric field is a number in every row" says nothing about gate specs,
 // executed entries or statuses. What IS true today is that all 302 statuses in the store are
-// strings, so nothing is broken yet — and that the remaining ten shapes are genuinely
-// unreachable, because --applied/--asked/--asks are argparse type=int, a bare-string gate
-// spec or executed entry is refused by cmd_finish's own guard, and a list-valued `gates`
-// crashes it. The direction is safe either way: Python reports the gate dropped with a
-// stringified status, Go refuses the run, and neither buys a clean sweep.
+// strings, so nothing is broken yet — and that the remaining ten shapes are unreachable,
+// each by its own mechanism rather than by one blanket rule: --applied/--asked/--asks are
+// argparse type=int; --analysis-changed is store_true and cmd_cycle writes bool(), so a
+// number cannot land there; a bare-string executed entry is refused by cmd_finish's guard
+// and a bare-string gate spec by cmd_plan's. The direction is safe for the four reachable
+// ones: Python reports the gate dropped (with the raw 5 or True, not a stringified one) and
+// Go refuses the run, so neither buys a clean sweep. That is NOT true of all fourteen —
+// for a whole-map `gates: {"g":"run"}` the Python returns {} and a clean sweep is exactly
+// what it buys, which is why TestACorruptGateRecordCannotReportACleanSweep exists.
 //
 // `an unreadable asks count` is also not a shape the Python "derived an answer anyway" from:
 // `("7" or 0) > 0` raises TypeError and the Python dies. Refusing beats reproducing a crash.

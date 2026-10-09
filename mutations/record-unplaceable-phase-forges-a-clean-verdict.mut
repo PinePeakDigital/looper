@@ -1,0 +1,13 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by an unplaceable phase
+why:    the worst hole this branch had. runlog.load merges every non-cycle row into the run dict FIELD-WISE and never checks what `phase` says, so a finish row carrying `unresolved_asks: 7` reaches the Python's verdict whether its phase reads "finish", "finnish", 7, or is absent — halted every time. Skipping the row instead read the earlier zero-fix cycle as CONVERGED: a clean push with no disclosure, bought by one typo. Measured all four ways against the oracle. This mutation restores the skip.
+--- old
+		default:
+			// Not nudge, not a modelled phase. The Python merges this row's fields into the
+			// run regardless of the word, so skipping it silently is how the forgery above
+			// happens. The phase name is the operator's whole lead.
+			r.setErr(lineNo, "unknown-phase", fmt.Errorf(
+				"phase %q is not one this build models", phase))
+--- new
+		default:
