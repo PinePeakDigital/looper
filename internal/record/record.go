@@ -414,7 +414,7 @@ func foldedKeys(raw []byte, names ...string) error {
 	if len(bad) == 0 {
 		return nil
 	}
-	sort.Strings(bad) // field order must not vary with Go map iteration order
+	sort.Strings(bad) // folded keys are reported in a stable order, not Go map order
 	return fmt.Errorf(
 		"key(s) %s differ from a field this build reads only by case; encoding/json folds them "+
 			"onto it and the Python's exact lookup does not read them at all",
