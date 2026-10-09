@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinepeakdigital/looper/internal/record"
 )
@@ -249,8 +250,9 @@ func TestReportLanded(t *testing.T) {
 		t.Error("with no report anywhere the gate must read NOT landed; it fails closed")
 	}
 
-	// A marker-only file must NOT satisfy the gate. At 38 bytes that was cheaper to forge
-	// than the `disclosed --where "trust me"` row this replaced.
+	// A marker-only file must NOT satisfy the gate. At 37 bytes for a real run id — 25 static
+	// plus 12 hex — that was cheaper to forge than the `disclosed --where "trust me"` row this
+	// replaced.
 	landReport(t, gitdir, "run1", []string{"the report"})
 	if ReportLanded("run1", r, dir) {
 		t.Error("a marker alone satisfied the gate")
@@ -300,7 +302,8 @@ func TestReportLandedFromAPRComment(t *testing.T) {
 
 func check(t *testing.T, store, runID, repoDir string) Result {
 	t.Helper()
-	res, err := Check(store, runID, "passed", false, "feat/x", "main", repoDir)
+	res, err := Check(CheckParams{Store: store, RunID: runID, GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: repoDir})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -422,7 +425,8 @@ func TestCheckRefusesAnUnreadableRecord(t *testing.T) {
 	// inside Convergence, and without this assertion reordering the two is invisible.
 	ran := filepath.Join(t.TempDir(), "gh-ran")
 	shimGh(t, "touch "+ran+"; exit 1")
-	res, err := Check(st, "run1", "passed", false, "feat/x", "main", dir)
+	res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err == nil {
 		t.Fatalf("Check returned %+v for a run with an unreadable cycle row", res)
 	}
@@ -439,7 +443,8 @@ func TestCheckRefusesAnUnreadableRecord(t *testing.T) {
 func TestCheckRefusesATraversingRunID(t *testing.T) {
 	dir, _ := repo(t)
 	for _, bad := range []string{"../../etc/passwd", "a/b", "", strings.Repeat("x", 65)} {
-		if _, err := Check(writeStore(t, cappedRun("run1")...), bad, "passed", false, "feat/x", "main", dir); err == nil {
+		if _, err := Check(CheckParams{Store: writeStore(t, cappedRun("run1")...), RunID: bad,
+			GateState: "passed", Branch: "feat/x", DefaultBranch: "main", Repo: dir}); err == nil {
 			t.Errorf("run id %q was accepted", bad)
 		}
 	}
@@ -475,4 +480,271 @@ func TestEncodeEmitsNullForAConvergedRun(t *testing.T) {
 	if !strings.Contains(string(b), line) {
 		t.Errorf("the line did not survive encoding verbatim: %s", b)
 	}
+}
+
+// sh must fail CLOSED when it cannot run the command at all, and nothing asserted that:
+// flipping `return 1, ""` to `return 0, ""` left this whole package green, which would make a
+// missing `gh`/`git` or a fired timeout read as success in the one function whose answer gates
+// a push. Found by reproducing the mutation, not by reading.
+//
+// Three distinct causes, because they arrive through three different branches of sh: a binary
+// that does not resolve at all (exec.Error, not ExitError), one that resolves but is not
+// executable, and a process the context kills (an ExitError whose ExitCode() is -1).
+func TestShFailsClosedWhenItCannotRun(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("a binary that does not resolve", func(t *testing.T) {
+		if rc, out := sh(dir, "looper-no-such-binary-anywhere"); rc != 1 || out != "" {
+			t.Errorf("sh = (%d, %q), want (1, \"\") — an unresolvable binary must read as the blocking answer", rc, out)
+		}
+	})
+
+	t.Run("a file that is not executable", func(t *testing.T) {
+		notExec := filepath.Join(dir, "notexec")
+		if err := os.WriteFile(notExec, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if rc, _ := sh(dir, notExec); rc != 1 {
+			t.Errorf("sh = %d for a non-executable file, want 1", rc)
+		}
+	})
+
+	t.Run("a process the timeout kills", func(t *testing.T) {
+		// Through shTimeout rather than the 20-second constant, so the test does not take 20
+		// seconds. The branch under test is the same one.
+		rc, out := shTimeout(dir, time.Millisecond, "sleep", "5")
+		if rc != 1 {
+			t.Errorf("sh = %d for a killed process, want 1 — Go reports -1 for a signalled "+
+				"process and the Python's sh returns 1 for TimeoutExpired", rc)
+		}
+		if out != "" {
+			t.Errorf("sh returned %q from a killed process", out)
+		}
+	})
+
+	// And the GREEN side on the same channel: a command that runs and succeeds must not be
+	// swept up by any of the above. Without this, `return 1` unconditionally would pass.
+	t.Run("a command that works still reports zero", func(t *testing.T) {
+		rc, out := sh(dir, "git", "rev-parse", "--is-inside-work-tree")
+		if rc == 0 {
+			t.Errorf("sh succeeded in a non-repo: (%d, %q)", rc, out)
+		}
+		gitRepo, _ := repo(t)
+		rc, out = sh(gitRepo, "git", "rev-parse", "--is-inside-work-tree")
+		if rc != 0 || out != "true" {
+			t.Errorf("sh = (%d, %q) in a real repo, want (0, \"true\")", rc, out)
+		}
+	})
+}
+
+// upstreamExists's TRUE path was never reached through git: every fixture is a bare `git init`
+// with no remote, so hardcoding the function to `return false` left the package green and the
+// "feature branch with upstream" wording was only ever produced from a hand-built State.
+func TestUpstreamExistsBothWays(t *testing.T) {
+	dir, _ := repo(t)
+	if upstreamExists(dir) {
+		t.Error("a fresh repo with no remote must have no upstream")
+	}
+
+	// A tracking ref pointed at this same repo, which is enough for `rev-parse @{upstream}`
+	// and needs no network. Commit first: @{upstream} resolves against a branch that exists.
+	run := func(args ...string) {
+		t.Helper()
+		// core.hooksPath emptied: a global pre-commit hook has no business running inside a
+		// test fixture, and the one on this machine needs the network.
+		cmd := exec.Command("git", append([]string{"-c", "core.hooksPath="}, args...)...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("commit", "-q", "--allow-empty", "-m", "base")
+	branch := "feat/x"
+	run("checkout", "-q", "-b", branch)
+	run("remote", "add", "origin", dir)
+	run("update-ref", "refs/remotes/origin/"+branch, "HEAD")
+	run("config", "branch."+branch+".remote", "origin")
+	run("config", "branch."+branch+".merge", "refs/heads/"+branch)
+
+	if !upstreamExists(dir) {
+		t.Fatal("a branch with a configured tracking ref must have an upstream")
+	}
+
+	// And the wording it drives, end to end rather than from a hand-built State — which is
+	// the half that was missing. "push with -u" must NOT appear once an upstream exists.
+	shimGh(t, "exit 1")
+	st := writeStore(t, cappedRun("run1")...)
+	runs, err := record.Load(st, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitdir := filepath.Join(dir, ".git")
+	landReport(t, gitdir, "run1", Fingerprint(runs["run1"]))
+	res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+		Branch: branch, DefaultBranch: "main", Repo: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Push {
+		t.Fatalf("expected a permitted push: %+v", res)
+	}
+	if !strings.Contains(res.Reason, "feature branch with upstream") {
+		t.Errorf("reason = %q, want it to say the branch has an upstream", res.Reason)
+	}
+	if strings.Contains(res.Reason, "-u") {
+		t.Errorf("reason = %q still asks for -u on a branch that has an upstream", res.Reason)
+	}
+}
+
+// ReportLanded's git-dir lookup failing must read as NOT landed. Every other test uses a real
+// repo, so this branch was never taken.
+//
+// The `gitdir == ""` half is what makes the guard load-bearing rather than defensive, and that
+// needs the second case to show: `git rev-parse` writes its error to stderr, so sh returns an
+// EMPTY stdout, and filepath.Join("", "info/review-loop-pending-report.X.md") is a RELATIVE
+// path. Without the guard the gate would read that path out of the working directory — so a
+// stray pending file beside wherever the tool happens to be invoked would satisfy it. Measured
+// by planting exactly that file and chdir-ing to it.
+func TestReportLandedWithoutAGitDir(t *testing.T) {
+	shimGh(t, "exit 1")
+	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
+	notARepo := t.TempDir()
+	if ReportLanded("run1", r, notARepo) {
+		t.Error("a directory that is not a git repo must read as not landed")
+	}
+
+	// The relative-read case. The planted file is a REAL, satisfying report, so the only
+	// thing standing between it and a false "landed" is the guard.
+	cwd := t.TempDir()
+	body := fmt.Sprintf(reportMarker, "run1") + "\n\n" + strings.Join(Fingerprint(r), "\n") + "\n"
+	rel := fmt.Sprintf(pendingFmt, "run1")
+	if err := os.MkdirAll(filepath.Join(cwd, filepath.Dir(rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, rel), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+	if ReportLanded("run1", r, notARepo) {
+		t.Error("a pending file in the working directory satisfied the gate — the git-dir " +
+			"lookup's empty result was joined into a relative path and read")
+	}
+}
+
+// The path guard belongs to ReportLanded, not to whoever remembers to call Check first — and
+// this package's own tests call ReportLanded directly, so until it was moved the guard was a
+// property of one caller. Asserted on the function that builds the path.
+func TestReportLandedRefusesATraversingRunID(t *testing.T) {
+	shimGh(t, "exit 1")
+	dir, gitdir := repo(t)
+	r := &record.Run{ID: "x", Cycles: []record.Cycle{cyc(9)}}
+
+	// A real, satisfying report planted where a traversing id would reach it. The id below
+	// resolves to <parent-of-repo>/escaped.md, so if the guard is gone the gate is satisfied
+	// by a file outside the repo entirely.
+	// Enough `..` to clear info/, the filename segment it is spliced into, and .git itself.
+	// The count is CHECKED below rather than reasoned about: the first version used three and
+	// landed back inside .git, because the id is spliced mid-filename so the leading `..`
+	// pairs with that segment rather than with a directory.
+	esc := strings.Repeat("../", 6) + "escaped"
+	// The marker is keyed on the id BEING TESTED, not on r.ID. The first version of this
+	// fixture wrote the marker for "x" while probing with `esc`, so the needle could never
+	// match and the test would have passed with the guard deleted — vacuous for the one
+	// thing it exists to check.
+	body := fmt.Sprintf(reportMarker, esc) + "\n\n" + strings.Join(Fingerprint(r), "\n") + "\n"
+	target := filepath.Join(gitdir, fmt.Sprintf(pendingFmt, esc))
+	if rel, err := filepath.Rel(gitdir, target); err != nil || !strings.HasPrefix(rel, "..") {
+		t.Fatalf("the fixture does not escape the git dir: %q resolves inside %q (rel %q)", target, gitdir, rel)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, bad := range []string{esc, "a/b", "", strings.Repeat("x", 65)} {
+		if ReportLanded(bad, r, dir) {
+			t.Errorf("ReportLanded accepted run id %q", bad)
+		}
+	}
+}
+
+// The diagnostic channel. A genuinely unposted report, a missing `gh`/`git`, and a fired
+// timeout all refuse the push identically and correctly — the gate fails closed — but the
+// refusal says "run pr-report.py --post first", which is the wrong instruction for two of the
+// three. The reason string cannot say more, because parity_test.go compares it byte-for-byte
+// against the Python, so the distinction goes to Diag.
+func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
+	shimGh(t, "exit 1")
+	st := writeStore(t, cappedRun("run1")...)
+
+	t.Run("neither probe could run", func(t *testing.T) {
+		// Not a git repo, so `git rev-parse` fails too — the only case where nothing could be
+		// asked at all.
+		var diag strings.Builder
+		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir(), Diag: &diag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push {
+			t.Fatalf("expected a refusal: %+v", res)
+		}
+		// The refusal itself is unchanged, which is what keeps parity.
+		if !strings.Contains(res.Reason, "pr-report.py --post") {
+			t.Errorf("reason = %q, want the unchanged owed-report refusal", res.Reason)
+		}
+		if !strings.Contains(diag.String(), "could not be determined") {
+			t.Errorf("Diag = %q, want it to say the report check could not be run", diag.String())
+		}
+	})
+
+	t.Run("git could be asked and said no", func(t *testing.T) {
+		// A real repo with no pending file: the report genuinely is not there, which is the
+		// case the refusal's instruction IS right for. Nothing may be written to Diag, or the
+		// note becomes noise on every ordinary refusal and stops meaning anything.
+		dir, _ := repo(t)
+		var diag strings.Builder
+		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push {
+			t.Fatalf("expected a refusal: %+v", res)
+		}
+		if diag.String() != "" {
+			t.Errorf("Diag = %q for an ordinary missing report; it must stay silent", diag.String())
+		}
+	})
+
+	t.Run("gh could be asked and said no", func(t *testing.T) {
+		// gh ANSWERS — a PR exists and its comments were fetched — but the report is not
+		// among them, and git is unavailable. couldAsk must be true on the strength of gh
+		// alone, so no note is owed. Without this case the gh branch's couldAsk assignment
+		// was dead to the suite: every other test here shims gh to fail.
+		shimGh(t, "printf 'some unrelated comment\\n'")
+		var diag strings.Builder
+		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir(), Diag: &diag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push {
+			t.Fatalf("expected a refusal: %+v", res)
+		}
+		if diag.String() != "" {
+			t.Errorf("Diag = %q, but gh answered — nothing could not be asked", diag.String())
+		}
+	})
+
+	t.Run("a nil Diag is not a crash", func(t *testing.T) {
+		if _, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir()}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

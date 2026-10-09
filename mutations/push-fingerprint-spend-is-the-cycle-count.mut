@@ -3,5 +3,6 @@ verify: go test ./internal/push/ -count=1 -run 'TestFingerprint'
 expect: Fingerprint =
 why:    the agent figure is the SUM of the cycle rows' `agents`, not the number of cycles. Both are small integers that look plausible beside each other, so a report rendered from the wrong one reads fine — and the forgery resistance the fingerprint buys comes entirely from the numbers being derivable only from the record.
 --- old
-", len(r.Cycles), spent)}--- new
-", len(r.Cycles), len(r.Cycles))}
+		fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), r.AgentsSpent())}
+--- new
+		fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), len(r.Cycles))}

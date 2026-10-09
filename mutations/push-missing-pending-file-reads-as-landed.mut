@@ -5,10 +5,10 @@ why:    no gh and no git must both read as NOT landed. pr-report guarantees the 
 --- old
 	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
 	if err != nil {
-		return false
+		return false, true
 	}
 --- new
 	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
 	if err != nil {
-		return true
+		return true, true
 	}

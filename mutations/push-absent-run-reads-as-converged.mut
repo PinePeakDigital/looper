@@ -3,8 +3,9 @@ verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsTheRecordRatherTha
 expect: an absent run derived
 why:    convergence is READ FROM THE RECORD, never asserted — it used to arrive as `--clean-exit`, a bare flag, so the one question the gate exists to answer was answered by the orchestrator asserting it. A run id absent from the store is UNKNOWN: there is no record to read, which is not the same as converged, and absence is the cheapest thing to produce.
 --- old
-	res := Result{Push: push, Reason: reason, Convergence: conv}--- new
-	if runs[runID] == nil {
+	res := Result{Push: push, Reason: reason, Convergence: conv}
+--- new
+	if runs[p.RunID] == nil {
 		conv = record.Converged
 	}
 	res := Result{Push: push, Reason: reason, Convergence: conv}

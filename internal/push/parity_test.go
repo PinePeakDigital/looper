@@ -230,7 +230,9 @@ func TestParityWithPushCheck(t *testing.T) {
 			}
 			py := pyPushCheck(t, script, store, args...)
 
-			got, err := Check(store, id, gateState, c.unresolvedSkip, branch, defaultBranch, dir)
+			got, err := Check(CheckParams{Store: store, RunID: id, GateState: gateState,
+				UnresolvedSkip: c.unresolvedSkip, Branch: branch, DefaultBranch: defaultBranch,
+				Repo: dir})
 			if err != nil {
 				t.Fatalf("Check: %v", err)
 			}
@@ -264,7 +266,8 @@ func TestTheOneDisclosureDivergence(t *testing.T) {
 
 	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
 		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
-	got, err := Check(store, id, "passed", false, "feat/x", "main", dir)
+	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}

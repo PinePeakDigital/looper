@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,22 +108,23 @@ func Decide(s State) (bool, string) {
 
 // Fingerprint is the set of strings a real rendered report must contain for THIS run.
 //
-// The marker alone was not enough: `printf '<!-- review-loop:run=X -->' > <pending>` is 38
-// bytes and satisfied the gate, making it CHEAPER to forge than the `disclosed --where
-// "trust me"` row it replaced. Requiring the run line too means the numbers have to agree
+// The marker alone was not enough: `printf '<!-- review-loop:run=<id> -->' > <pending>` is 37
+// bytes for a real run id — 25 static plus the 12 hex characters runlog.py generates — and it
+// satisfied the gate, making it CHEAPER to forge than the `disclosed --where "trust me"` row
+// it replaced. (push-check.py's docstring says 38, which is the marker plus the newline
+// pr-report.py writes after it; the printf shown here writes no newline.) Requiring the run line too means the numbers have to agree
 // with the cycle rows, which cannot be produced without rendering from the record — the
 // point being that this is a property of the artifact, not a claim about it.
 //
 // The separator is U+00B7 MIDDLE DOT, as pr-report.py writes it. An ASCII `·`-alike here
 // would make every real report read as missing.
 func Fingerprint(r *record.Run) []string {
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents
-		}
-	}
-	return []string{"## review-loop", fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), spent)}
+	// record.AgentsSpent, not a local sum. The figure has to equal the one pr-report.py
+	// rendered — `sum(c.get("agents") or 0 for c in cycles)` — and equal what Disclosure
+	// says, or a report disagrees with the verdict printed beside it. That is a real
+	// incident in runlog.py's history, recorded on `cycles_of`.
+	return []string{"## review-loop",
+		fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), r.AgentsSpent())}
 }
 
 // ReportLanded reports whether this run's rendered report has reached somewhere a reader
@@ -133,21 +135,52 @@ func Fingerprint(r *record.Run) []string {
 // this run's pending file — including when the post fails. So "neither" means pr-report did
 // not run, which is the one thing this gate exists to catch.
 func ReportLanded(runID string, r *record.Run, repo string) bool {
+	landed, _ := reportProbe(runID, r, repo)
+	return landed
+}
+
+// reportProbe is ReportLanded plus the one thing the bool cannot carry: whether either probe
+// could RUN. A genuinely unposted report, a missing or non-executable `gh`/`git`, and a fired
+// timeout all mean "not landed" — correctly, the gate fails closed — but they call for
+// different actions, and the refusal text cannot distinguish them, because parity_test.go
+// compares it byte-for-byte against push-check.py. So the distinction goes to stderr instead,
+// where neither implementation writes anything and nothing parses.
+//
+// couldAsk is true when EITHER probe produced a usable answer: gh returned the PR's comments,
+// or git returned a git dir so the pending file could at least be looked for. Both failing is
+// the only case an operator cannot act on from the refusal alone.
+func reportProbe(runID string, r *record.Run, repo string) (landed, couldAsk bool) {
+	// The guard travels with the path interpolation, not with one caller. It was in Check
+	// only, which made it a property of whoever remembered to call Check first — and the
+	// tests in this package already call ReportLanded directly, bypassing it. Measured:
+	// filepath.Join(gitdir, fmt.Sprintf(pendingFmt, "../../../../../../tmp/evil")) resolves
+	// to /Users/<user>/tmp/evil.md, outside the repo. Same lesson as misplacedRunField in
+	// internal/record: guard the mechanism, not the spelling of its one current caller.
+	//
+	// Fails closed rather than erroring, because every other way this function cannot find
+	// the report already does.
+	if !ValidRunID(runID) {
+		// A refused id is not an inability to ask — the question was well-formed enough to
+		// answer, and the answer is no.
+		return false, true
+	}
 	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
 	if rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body"); rc == 0 {
+		couldAsk = true
 		if containsAll(out, needles) {
-			return true
+			return true, true
 		}
 	}
 	rc, gitdir := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if rc != 0 || gitdir == "" {
-		return false
+		return false, couldAsk
 	}
+	// No couldAsk assignment here: git answered, so both paths below return true outright.
 	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
 	if err != nil {
-		return false
+		return false, true
 	}
-	return containsAll(string(body), needles)
+	return containsAll(string(body), needles), true
 }
 
 func containsAll(hay string, needles []string) bool {
@@ -178,7 +211,17 @@ func upstreamExists(repo string) bool {
 // call — nothing reachable passes a variable. And args[0] panicked on an empty slice, which
 // the variadic signature made it possible to write.
 func sh(repo, prog string, args ...string) (int, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	return shTimeout(repo, shBudget, prog, args...)
+}
+
+// shBudget is the Python's `timeout=20`. Named and threaded through shTimeout so the
+// timeout-kill branch can be exercised in milliseconds: with the constant inline, the one
+// branch that decides whether a hung `gh` fails open or closed could only be tested by a
+// twenty-second test, which is why it had no test at all.
+const shBudget = 20 * time.Second
+
+func shTimeout(repo string, budget time.Duration, prog string, args ...string) (int, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, prog, args...)
 	cmd.Dir = repo
@@ -186,7 +229,21 @@ func sh(repo, prog string, args ...string) (int, string) {
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return ee.ExitCode(), strings.TrimSpace(string(out))
+			if code := ee.ExitCode(); code >= 0 {
+				return code, strings.TrimSpace(string(out))
+			}
+			// SIGNALLED, which is what the context's own kill looks like. Go reports -1 for
+			// a signal-terminated process; the Python's sh returns 1 for TimeoutExpired like
+			// any other SubprocessError, and -1 is not a value any caller here could read
+			// as "cannot tell". Measured: `sleep 5` under a one-millisecond context gives
+			// err "signal: killed", errors.As true, ExitCode() -1.
+			//
+			// Checked here rather than on ctx.Err(), which would be narrower AND redundant:
+			// a context kill satisfies both, and a signal from outside the context satisfies
+			// only this. An earlier version tested ctx.Err() first and the two together
+			// masked each other — removing either left the suite green, which is how a
+			// guard with no test behind it looks.
+			return 1, strings.TrimSpace(string(out))
 		}
 		return 1, ""
 	}
@@ -209,21 +266,51 @@ type Result struct {
 // refusing the shape costs a line and keeps the evidence path inside the repo.
 var runIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// ValidRunID reports whether a run id may be interpolated into a path. Exported so
+// ReportLanded and Check share ONE definition of the bound rather than each carrying a copy
+// that can drift — the shape of defect this repo has already paid for twice.
+func ValidRunID(id string) bool { return runIDRe.MatchString(id) }
+
+// CheckParams is what Check needs. A struct for the same reason State is one, and the comment
+// on State applies verbatim: the previous signature was seven positionals with Branch and
+// DefaultBranch adjacent and both plain strings, so transposing them silently inverted the
+// default-branch guard — in the function that receives them straight from flag parsing, where
+// nothing in the type system would have caught it.
+type CheckParams struct {
+	// Store is the run record's path; see record.StorePath for the default.
+	Store string
+	RunID string
+	// GateState is "passed", "skipped" or "blocked".
+	GateState      string
+	UnresolvedSkip bool
+	Branch         string
+	DefaultBranch  string
+	// Repo is where the git and gh facts are read from.
+	Repo string
+	// Diag receives one line when the report check could not be run at all, as opposed to
+	// having run and found nothing. Optional: nil writes nothing. It must NOT be the stream
+	// the Result is encoded to — stdout is a machine-readable contract.
+	Diag io.Writer
+}
+
 // Check is the whole decision: read the run, derive what the record says, look for the
-// report, and weigh it. gateState is "passed", "skipped" or "blocked".
-func Check(store, runID, gateState string, unresolvedSkip bool, branch, defaultBranch, repo string) (Result, error) {
-	if !runIDRe.MatchString(runID) {
-		return Result{}, fmt.Errorf("run id %q is not a plain identifier", runID)
+// report, and weigh it.
+func Check(p CheckParams) (Result, error) {
+	// Checked here as well as in ReportLanded, and deliberately not only there: this is the
+	// boundary where a bad id can still be reported as an ERROR naming it, where
+	// ReportLanded can only fail closed and say nothing.
+	if !ValidRunID(p.RunID) {
+		return Result{}, fmt.Errorf("run id %q is not a plain identifier", p.RunID)
 	}
-	runs, err := record.Load(store, 0)
+	runs, err := record.Load(p.Store, 0)
 	if err != nil {
 		return Result{}, err
 	}
 	// A run id absent from the store is UNKNOWN, never converged. Absence is the cheapest
 	// thing to produce, so it must buy the same disclosure a recorded unfinished run owes.
-	r := runs[runID]
+	r := runs[p.RunID]
 	if r == nil {
-		r = &record.Run{ID: runID}
+		r = &record.Run{ID: p.RunID}
 	}
 	// The derivations are read FIRST, and each refuses a run whose record did not decode.
 	// That ordering is load-bearing rather than tidy: Fingerprint reads Cycles, which is
@@ -240,6 +327,13 @@ func Check(store, runID, gateState string, unresolvedSkip bool, branch, defaultB
 	if err != nil {
 		return Result{}, err
 	}
+	// Dead today, deliberately kept. Disclosure can only error from its own Convergence call
+	// — already handled above, and the two cannot diverge — or from its two arms that
+	// TestConvergenceAnswersOnlyTheFourWords proves unreachable. It stops being dead in the
+	// commit that adds a fifth convergence value, which is exactly when a missing check here
+	// would render a headless disclosure instead of refusing. Noted rather than deleted
+	// because the proof of deadness lives in another package's test, so a reader here has no
+	// way to see it.
 	disclose, err := r.Disclosure()
 	if err != nil {
 		return Result{}, err
@@ -249,17 +343,26 @@ func Check(store, runID, gateState string, unresolvedSkip bool, branch, defaultB
 		outcome = r.Finish.Outcome
 	}
 	var unreported string
-	if !ReportLanded(runID, r, repo) {
+	if landed, couldAsk := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
 			"run pr-report.py --post first"
+		if !couldAsk && p.Diag != nil {
+			// The refusal below is correct either way — fail closed — but "go post the
+			// report" is the wrong instruction when the real problem is that neither probe
+			// ran. Said here rather than in the reason, which parity pins byte-for-byte.
+			fmt.Fprintf(p.Diag, "push-check: neither `gh pr view` nor `git rev-parse` could be "+
+				"run in %s (missing binary, not executable, or killed at the %s budget), so "+
+				"whether the report landed could not be determined; the refusal below fails "+
+				"closed and may not be about the report at all\n", p.Repo, shBudget)
+		}
 	}
 	push, reason := Decide(State{
 		Convergence:    conv,
-		GateState:      gateState,
-		UnresolvedSkip: unresolvedSkip,
-		Branch:         branch,
-		DefaultBranch:  defaultBranch,
-		UpstreamExists: upstreamExists(repo),
+		GateState:      p.GateState,
+		UnresolvedSkip: p.UnresolvedSkip,
+		Branch:         p.Branch,
+		DefaultBranch:  p.DefaultBranch,
+		UpstreamExists: upstreamExists(p.Repo),
 		Outcome:        outcome,
 		Unreported:     unreported,
 	})

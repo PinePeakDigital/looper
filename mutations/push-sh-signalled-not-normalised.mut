@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestShFailsClosedWhenItCannotRun'
+expect: want 1
+why:    Go reports -1 for a signal-terminated process, which is what the context's own timeout kill looks like; the Python's sh returns 1 for TimeoutExpired like any other SubprocessError. -1 is not a value any caller here could read as "cannot tell". Measured: `sleep 5` under a one-millisecond context gives err "signal: killed", errors.As true, ExitCode() -1. Tested through shTimeout so the branch costs milliseconds rather than the 20-second budget — which is why it had no test before: the only way to reach it was to wait.
+--- old
+			if code := ee.ExitCode(); code >= 0 {
+--- new
+			if code := ee.ExitCode(); true {

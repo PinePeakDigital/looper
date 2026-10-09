@@ -17,7 +17,8 @@ import (
 const usage = `usage: looper mutate [-catalog dir] [-root dir]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
-                         [-unresolved-skip] [-branch b] [-default-branch b] [-repo dir]`
+                         [-unresolved-skip] [-branch b] [-default-branch b]
+                         [-repo dir] [-store path]`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -35,11 +36,11 @@ func run(args []string, out, errOut io.Writer) int {
 	var err error
 	switch args[0] {
 	case "mutate":
-		err = runMutate(args[1:], out)
+		err = runMutate(args[1:], out, errOut)
 	case "docs":
 		err = runDocs(args[1:], out)
 	case "push-check":
-		err = runPushCheck(args[1:], out)
+		err = runPushCheck(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
@@ -51,9 +52,13 @@ func run(args []string, out, errOut io.Writer) int {
 	return 0
 }
 
-func runMutate(args []string, out io.Writer) error {
+func runMutate(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("mutate", flag.ContinueOnError)
-	fs.SetOutput(out)
+	// Flag usage and parse errors go to STDERR, not to the stream this command's results go
+	// to. Harmless here, where stdout is a human report; load-bearing for push-check, whose
+	// stdout is a machine-readable contract. Kept consistent so the next subcommand inherits
+	// the right default rather than the one that happened to be harmless.
+	fs.SetOutput(errOut)
 	catalog := fs.String("catalog", "mutations", "directory of .mut files")
 	root := fs.String("root", ".", "repo root the mutations apply to")
 	if err := fs.Parse(args); err != nil {
@@ -132,9 +137,14 @@ func runDocs(args []string, out io.Writer) error {
 // runPushCheck answers Step 14's auto-push question. It prints JSON and exits 0 whether or
 // not the push is permitted: the ANSWER is the output, and a non-zero exit would make a
 // refusal indistinguishable from the tool failing to produce one.
-func runPushCheck(args []string, out io.Writer) error {
+func runPushCheck(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("push-check", flag.ContinueOnError)
-	fs.SetOutput(out)
+	// STDERR, not out. This command documents stdout as JSON and nothing else, and
+	// flag.ContinueOnError writes both `-h` text and parse-error text to fs.Output(): with
+	// that pointed at stdout, `looper push-check -h` and a mistyped flag each emitted the
+	// usage banner where Step 14 reads a decision. Measured before the fix — both landed on
+	// stdout and both exited 1.
+	fs.SetOutput(errOut)
 	// Required, not optional. In the Python both record-derived blockers were computed only
 	// when it was present, so omitting it turned off the owed-report check AND the
 	// broken-outcome check while a BOGUS id was correctly caught — the cheapest wrong
@@ -147,6 +157,13 @@ func runPushCheck(args []string, out io.Writer) error {
 	repo := fs.String("repo", ".", "the repo to check git and gh facts in")
 	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
 	if err := fs.Parse(args); err != nil {
+		// `-h` is a request that was SERVED, not a failure. flag reports it as ErrHelp and an
+		// undifferentiated `return err` turned it into exit 1, indistinguishable from a
+		// mistyped flag — where the Python exits 0 for -h and 2 for a parse error. Exit 0
+		// here and let the caller tell them apart by the empty stdout.
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if *runID == "" {
@@ -161,7 +178,16 @@ func runPushCheck(args []string, out io.Writer) error {
 	if *store == "" {
 		*store = record.StorePath()
 	}
-	res, err := push.Check(*store, *runID, *gateState, *unresolvedSkip, *branch, *defaultBranch, *repo)
+	res, err := push.Check(push.CheckParams{
+		Store:          *store,
+		RunID:          *runID,
+		GateState:      *gateState,
+		UnresolvedSkip: *unresolvedSkip,
+		Branch:         *branch,
+		DefaultBranch:  *defaultBranch,
+		Repo:           *repo,
+		Diag:           errOut,
+	})
 	if err != nil {
 		return err
 	}

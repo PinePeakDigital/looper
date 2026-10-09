@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,8 +86,9 @@ type Cycle struct {
 }
 
 // Finish is the terminal row. Agents stays raw because `--agents` is a bare json.loads with
-// no shape validation and the store holds 26 lists and 1 object for it, so typing it would
-// reject real rows. Nothing in THIS package derives from it — runlog's own derive_tier does,
+// no shape validation and the store holds 27 lists and 1 object for it (measured 2026-10-09
+// over 43 finish rows, 28 of which carry the key; the store is append-only, so the list count
+// only drifts upward), so typing it would reject real rows. Nothing in THIS package derives from it — runlog's own derive_tier does,
 // reading `status` and `id` out of it to force `tier_executed: "partial"`, so the schema is
 // documented in runlog's --agents help rather than being genuinely the operator's.
 type Finish struct {
@@ -479,7 +480,8 @@ func quoteCapped(s string) string {
 // it would reopen through.
 //
 // Still SHORT of what the Python reads off the merged run: `session_id`, `head`, `repo`,
-// `finished_at` and `abandoned_missing` (review-stats' is_abandoned reads the last). Omitting
+// `finished_at` and `abandoned_missing` (review-stats reads the last in its abandon-reason
+// reporting, NOT in `is_abandoned`, which reads only `outcome` and `session_id`). Omitting
 // them is safe only because no derivation in this package reads any of them, so a misplaced
 // one cannot change an answer HERE — it can still change the Python's. Each becomes a
 // forgery vector the moment something here reads it, and must join this map in that commit.
@@ -751,12 +753,7 @@ func (r *Run) Convergence() (string, error) {
 		return Converged, nil
 	}
 
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
-		}
-	}
+	spent := r.AgentsSpent()
 	// `!= 0`, not `> 0`: the Python guard is a bare `if cap`, so a negative cap is truthy
 	// there and any spend clears it. cmd_plan refuses a non-positive --agent-cap, so no
 	// NEW row can carry one, but the store is append-only and never rewritten, so a
@@ -796,22 +793,23 @@ func (r *Run) Disclosure() (string, error) {
 			"whether the loop still had findings when it stopped. Treat as unreviewed.", nil
 	}
 
-	var spent int
-	for _, c := range r.Cycles {
-		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero, matching the Python's `or 0`
-		}
-	}
+	spent := r.AgentsSpent()
 	last := r.Cycles[len(r.Cycles)-1] // non-empty: Convergence answers Unknown otherwise
 
 	var head string
 	switch conv {
 	case Capped:
 		if r.Plan == nil || r.Plan.AgentCap == nil {
-			// Unreachable: Convergence derives Capped only from a recorded cap. Stated as
-			// an error rather than dereferenced on faith, because the failure it guards
-			// against is the two functions disagreeing about what `capped` means, and a
-			// disclosure reading "CAPPED at 9 of <nil> agents" would ship that silently.
+			// Unreachable, and PROVED so rather than asserted: Convergence returns Capped
+			// only from `r.Plan != nil && r.Plan.AgentCap != nil`, and
+			// TestConvergenceAnswersOnlyTheFourWords checks that invariant over a generated
+			// matrix of plan/cycle/finish shapes. An earlier version of this comment claimed
+			// unreachability with nothing behind it, which is the one thing this repo treats
+			// as worse than a missing guard.
+			//
+			// Stated as an error rather than dereferenced on faith, because the failure it
+			// guards against is the two functions disagreeing about what `capped` means, and
+			// a disclosure reading "CAPPED at 9 of <nil> agents" would ship that silently.
 			return "", fmt.Errorf("run %q: derived %s with no recorded agent_cap", r.ID, conv)
 		}
 		head = fmt.Sprintf("Review CAPPED at %d of %d agents", spent, *r.Plan.AgentCap)
@@ -819,7 +817,11 @@ func (r *Run) Disclosure() (string, error) {
 		head = fmt.Sprintf("Review HALTED after %d cycle(s), %d agents", len(r.Cycles), spent)
 	default:
 		// The Python indexes a two-key dict here, so a fifth convergence value is a
-		// KeyError there and must not be a headless sentence here.
+		// KeyError there and must not be a headless sentence here. Unreachable today by the
+		// same proof as the guard above: TestConvergenceAnswersOnlyTheFourWords asserts
+		// Convergence answers only the four declared constants, so this arm exists for the
+		// commit that adds a fifth — which is also when Check's error check on Disclosure
+		// stops being dead.
 		return "", fmt.Errorf("run %q: no disclosure defined for convergence %q", r.ID, conv)
 	}
 
@@ -839,7 +841,9 @@ func (r *Run) Disclosure() (string, error) {
 	// An absent `applied` renders "?" where the Python renders "None" for an explicit null —
 	// a *int is nil for both, which is the one place the two-state pointer is visible. This
 	// is the divergence the type comment said would be decided here: cosmetic, enumerated in
-	// parity_test.go, and grounded on no row in the real store holding a null `applied`.
+	// internal/push/parity_test.go's TestTheOneDisclosureDivergence — NOT this package's
+	// parity_test.go, which holds no Disclosure test at all — and grounded on no row in the
+	// real store holding a null `applied`.
 	// Both spellings tell the reader the same thing, and restoring three-state decoding for
 	// prose would complicate the field every verdict turns on.
 	applied := "?"
@@ -857,6 +861,33 @@ func (r *Run) Disclosure() (string, error) {
 	}
 	b.WriteString(". The loop had not stopped finding things — another cycle would likely find more.")
 	return b.String(), nil
+}
+
+// AgentsSpent is the agents this run spent: the sum over its cycles, with an absent count
+// reading as zero to match the Python's `or 0`.
+//
+// Exported and shared by every reader for the reason runlog.py gives for `cycles_of`: it
+// "exists as a function rather than inline so that convergence(), disclosure() and pr-report
+// cannot read the list three different ways — which is exactly what had happened:
+// disclosure() read the raw list and the other two read this one, so a rendered report said
+// 'CAPPED at 11 of 8 agents' above a table showing 8." This port kept the cycle LIST shared
+// and then re-derived the SUM three times, which is the same hazard one level down: three
+// copies of the nil-handling rule, any one of which can be edited without the others.
+//
+// NOT named Spend: mutations/record-unlisted-derivation-goes-unguarded.mut injects a method
+// by that name, and a mutation that does not compile scores broken and tests nothing.
+//
+// One return value, not two, so it is deliberately NOT one of the `func() (T, error)`
+// derivations `refusingDerivations` enumerates — it answers a question about the cycle rows
+// rather than a verdict about the run, and it has no decode of its own to refuse.
+func (r *Run) AgentsSpent() int {
+	var n int
+	for _, c := range r.Cycles {
+		if c.Agents != nil {
+			n += *c.Agents
+		}
+	}
+	return n
 }
 
 // GateOK are the statuses that mean a planned gate was handled. `n/a` is success, not a
@@ -918,15 +949,52 @@ func (r *Run) DroppedGates() (map[string]string, error) {
 // Matches runlog.STORE including the expanduser, which the Python applies to the env value
 // too — a store configured as `~/alt/runs.jsonl` must name the same file in both. `~user` is
 // not expanded; expanduser does, and nothing configures one.
+//
+// The two must resolve the SAME FILE for every input, because a gate reading a different
+// store than the oracle answers `unknown` for every run — a disclosure where there should be
+// a verdict, on a record that was there all along, with no error anywhere to say so. That is
+// why `$HOME` is read here rather than through os.UserHomeDir alone, which cannot tell unset
+// from blank and errors on both. Measured against the oracle:
+//
+//	HOME=/x    python=/x/.claude/...        go=/x/.claude/...
+//	HOME=""    python=/.claude/...          go=/.claude/...        (expanduser uses the blank value)
+//	HOME unset python=/Users/x/.claude/...  go=/Users/x/.claude/... (expanduser falls back to pwd)
+//
+// Before this, the unset and blank cases both returned the literal `~/.claude/...`, which has
+// no leading slash and so resolved against the working directory — a file that never exists.
 func StorePath() string {
 	p := os.Getenv("REVIEW_LOOP_RUNS")
 	if p == "" {
 		p = "~/.claude/review-loop/runs.jsonl"
 	}
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, strings.TrimPrefix(p[1:], "/"))
-		}
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
 	}
-	return p
+	// Concatenation, not filepath.Join, and this is load-bearing. expanduser is
+	// `userhome.rstrip('/') + path[i:]`, falling back to "/" when that is empty. Join
+	// CLEANS its arguments, so Join("", ".claude/x") drops the empty element and yields the
+	// RELATIVE `.claude/x` where the Python yields `/.claude/x` — measured, and the reason
+	// this function is not one line shorter.
+	expanded := strings.TrimRight(homeDir(), "/") + p[1:]
+	if expanded == "" {
+		return "/"
+	}
+	return expanded
+}
+
+// homeDir is expanduser's notion of `~`, which is not os.UserHomeDir's. expanduser branches on
+// whether HOME is in the environment AT ALL: present-but-blank yields "", and absent falls back
+// to the passwd entry. os.UserHomeDir collapses both into one error, so it cannot express either
+// answer — and a caller that treats its error as "leave the tilde alone" diverges from the
+// oracle in both directions at once.
+func homeDir() string {
+	if v, set := os.LookupEnv("HOME"); set {
+		return v // including "", which is what expanduser does with a blank HOME
+	}
+	if u, err := user.Current(); err == nil {
+		return u.HomeDir // pwd.getpwuid(os.getuid()).pw_dir
+	}
+	// expanduser returns the path unexpanded when the passwd lookup raises KeyError. Returning
+	// "~" here reproduces that: the concatenation above rebuilds the original string.
+	return "~"
 }

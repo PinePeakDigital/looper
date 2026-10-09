@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceAnswersOnlyTheFourWords'
+expect: capped with no recorded agent_cap
+why:    the other half of what makes Disclosure's guards dead: Capped must imply a recorded agent_cap, because Disclosure dereferences it to render "CAPPED at N of M agents". Distinct from record-cap-zero-is-a-cap, which keeps the nil check and mutates the zero test; this drops the nil check, so a run with NO recorded cap derives capped and the disclosure either errors or would have printed <nil>.
+--- old
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
+--- new
+	if spent >= 0 {

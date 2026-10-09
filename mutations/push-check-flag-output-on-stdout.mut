@@ -1,0 +1,10 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckFlagOutputNeverTouchesStdout'
+expect: stdout must carry the decision and nothing else
+why:    push-check's stdout is a machine-readable contract — Step 14 parses it as JSON. flag.ContinueOnError writes both `-h` text and parse-error text to the flag set's output, so pointing that at stdout put the usage banner where a decision belongs. Measured before the fix: both `-h` and a mistyped flag emitted the banner on stdout. The Python keeps stdout clean on a parse error and uses it only for `-h`.
+--- old
+	// stdout and both exited 1.
+	fs.SetOutput(errOut)
+--- new
+	// stdout and both exited 1.
+	fs.SetOutput(out)

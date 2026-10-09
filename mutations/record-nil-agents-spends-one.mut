@@ -1,14 +1,14 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: a_cycle_with_no_agents_field_spends_nothing
-why:    an absent `agents` must contribute 0 to the spend sum, matching the Python's `or 0`. A mutant contributing 1 instead survived every case in a differential run during review (its 18,041-store count is the review's and is not reproducible from this repo), because catching it needs a cap small enough for one agent to cross it and no fixture had one. Not writer-reachable (`--agents` is required=True) and absent from all 59 real cycle rows, so this pins a parity claim that would otherwise stand with nothing behind it.
+why:    a cycle row with NO `agents` key spends nothing, which is the Python's `or 0`. 17 of the real store's cycle rows omit it, so reading absence as one inflates the spend on most runs and can push a run over its cap. Now anchored on AgentsSpent, the ONE place the rule lives: before the extraction it was written out three times (Convergence, Disclosure, push.Fingerprint) and this entry pinned only one of them, so the other two could have been edited without the catalog noticing — which is the duplication the extraction removed.
 --- old
 		if c.Agents != nil {
-			spent += *c.Agents // absent reads as zero here, matching the Python's `or 0`
+			n += *c.Agents
 		}
 --- new
 		if c.Agents == nil {
-			spent += 1
+			n++
 		} else {
-			spent += *c.Agents
+			n += *c.Agents
 		}

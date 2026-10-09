@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedRefusesATraversingRunID'
+expect: accepted run id
+why:    the guard belongs to the function that INTERPOLATES the id into a path, not to whoever remembers to call Check first. It lived in Check only, and this package's own tests call ReportLanded directly — so it was a property of one caller. Measured: a run id of six `../` segments resolves the pending-report path outside .git entirely, and a real satisfying report planted there satisfied the gate. Same lesson as misplacedRunField in internal/record: guard the mechanism, not the spelling of its one current caller.
+--- old
+	if !ValidRunID(runID) {
+		// A refused id is not an inability to ask — the question was well-formed enough to
+		// answer, and the answer is no.
+		return false, true
+	}
+--- new

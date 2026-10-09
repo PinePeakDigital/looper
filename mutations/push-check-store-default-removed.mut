@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckDefaultsTheStoreFromTheEnvironment'
+expect: was not read
+why:    the one wiring between the subcommand and record.StorePath. Every other test passes `-store` explicitly, so deleting these two lines changed nothing anywhere — and in production it means the gate reads whatever the zero value names rather than the record, so every run derives `unknown` and discloses instead of deciding. Disabled rather than deleted so the `record` import stays used and the mutation compiles.
+--- old
+	if *store == "" {
+--- new
+	if false {

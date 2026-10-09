@@ -151,10 +151,10 @@ to be flags:
 
 The report check is the third, and it reads the artifact rather than a claim about
 it. A push is refused until this run's rendered report is found either in a PR
-comment or in `.git/info/review-loop-pending-report.<run-id>.md`, carrying both the
-run's marker and its `N cycle(s) · M agent(s)` line — numbers that cannot be
-produced without rendering from the record. Requiring the marker alone was cheaper
-to forge (38 bytes of `printf`) than the self-report it replaced. It is required on
+comment or in `.git/info/review-loop-pending-report.<run-id>.md`, carrying all three
+of the run's marker, the `## review-loop` heading, and its `N cycle(s) · M agent(s)`
+line — numbers that cannot be produced without rendering from the record. Requiring the marker alone was cheaper
+to forge (37 bytes of `printf` for a real run id) than the self-report it replaced. It is required on
 every terminal exit, converged included: the incident behind the design was a clean
 exit on a fresh branch whose summary never reached the PR.
 

@@ -3,7 +3,7 @@ verify: go test ./internal/push/ -count=1 -run 'TestCheckRefusesATraversingRunID
 expect: was accepted
 why:    the run id is interpolated into a path segment of the pending-report filename, so a traversing one sends the report gate looking for its evidence outside the git dir. The Python has the same hole and the ids it writes are hex, so nothing has ever exercised it; refusing the shape costs one line and keeps the evidence path inside the repo.
 --- old
-	if !runIDRe.MatchString(runID) {
-		return Result{}, fmt.Errorf("run id %q is not a plain identifier", runID)
+	if !ValidRunID(p.RunID) {
+		return Result{}, fmt.Errorf("run id %q is not a plain identifier", p.RunID)
 	}
 --- new

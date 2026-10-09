@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesBeingUnableToAsk'
+expect: must stay silent
+why:    the GREEN side: a report that genuinely is not there is the case the refusal's instruction is RIGHT for, and noting "could not be determined" on every ordinary refusal makes the note noise and teaches an operator to scroll past it — the same failure as an alarm that fires on gates nobody can fix. Over-firing is a failure mode, not a safe default.
+--- old
+		if !couldAsk && p.Diag != nil {
+--- new
+		if (couldAsk || true) && p.Diag != nil {
