@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,10 +10,14 @@ import (
 
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/mutate"
+	"github.com/pinepeakdigital/looper/internal/push"
+	"github.com/pinepeakdigital/looper/internal/record"
 )
 
 const usage = `usage: looper mutate [-catalog dir] [-root dir]
-       looper docs <dir>`
+       looper docs <dir>
+       looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
+                         [-unresolved-skip] [-branch b] [-default-branch b] [-repo dir]`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -33,6 +38,8 @@ func run(args []string, out, errOut io.Writer) int {
 		err = runMutate(args[1:], out)
 	case "docs":
 		err = runDocs(args[1:], out)
+	case "push-check":
+		err = runPushCheck(args[1:], out)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
@@ -120,4 +127,48 @@ func runDocs(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "every flag the docs under %s name exists\n", dir)
 	return nil
+}
+
+// runPushCheck answers Step 14's auto-push question. It prints JSON and exits 0 whether or
+// not the push is permitted: the ANSWER is the output, and a non-zero exit would make a
+// refusal indistinguishable from the tool failing to produce one.
+func runPushCheck(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("push-check", flag.ContinueOnError)
+	fs.SetOutput(out)
+	// Required, not optional. In the Python both record-derived blockers were computed only
+	// when it was present, so omitting it turned off the owed-report check AND the
+	// broken-outcome check while a BOGUS id was correctly caught — the cheapest wrong
+	// spelling was the one that passed.
+	runID := fs.String("run-id", "", "the run to read convergence, outcome and the owed report from (required)")
+	gateState := fs.String("gate-state", "skipped", "passed, skipped or blocked")
+	unresolvedSkip := fs.Bool("unresolved-skip", false, "a 50-79 finding was skipped without a recorded dismissal")
+	branch := fs.String("branch", "", "the current branch")
+	defaultBranch := fs.String("default-branch", "", "the repo's default branch")
+	repo := fs.String("repo", ".", "the repo to check git and gh facts in")
+	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" {
+		return errors.New("push-check: -run-id is required — without it the record's outcome and " +
+			"the report check are both invisible, and the run pushes on nothing")
+	}
+	switch *gateState {
+	case "passed", "skipped", "blocked":
+	default:
+		return fmt.Errorf("push-check: -gate-state %q is not passed, skipped or blocked", *gateState)
+	}
+	if *store == "" {
+		*store = record.StorePath()
+	}
+	res, err := push.Check(*store, *runID, *gateState, *unresolvedSkip, *branch, *defaultBranch, *repo)
+	if err != nil {
+		return err
+	}
+	b, err := res.Encode()
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(b)
+	return err
 }

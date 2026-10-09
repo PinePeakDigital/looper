@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosure'
+expect: converged must owe nothing
+why:    a converged run owes NOTHING, and the empty string is the whole signal: the subcommand turns it into a JSON null and Step 14 pushes with no disclosure. Falling through to the head switch makes a converged run render "no disclosure defined for convergence" as an error, which blocks the push on the one state that is finished.
+--- old
+	case Converged:
+		return "", nil
+--- new
+	case Converged:
+		return "Review converged.", nil

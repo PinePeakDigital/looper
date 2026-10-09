@@ -114,6 +114,54 @@ Mutation testing edits your working tree. The runner therefore:
 
 The catalog's first entries are the runner's own rules, so the tool measures itself.
 
+## `looper push-check`
+
+Answers Step 14's one question — may this branch be auto-pushed — and prints the
+answer as JSON on stdout with exit 0, whether or not the push is permitted. A
+refusal is a successful answer; exiting non-zero would make it indistinguishable
+from the tool failing to produce one.
+
+```text
+looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
+                  [-unresolved-skip] [-branch b] [-default-branch b]
+                  [-repo dir] [-store path]
+```
+
+```json
+{"push":true,"reason":"capped (review not finished), evidence gate ok, feature branch with upstream",
+ "convergence":"capped","disclose":"Review CAPPED at 9 of 8 agents: ..."}
+```
+
+The decision is split in two, and the split is the whole design. **"We stopped
+looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
+`disclose` line, because a cap that strands commits just moves the decision back to
+a human every time. **"It is broken" is a block**: a recorded `test-failure`,
+`blocked` or `abandoned` outcome, a blocked evidence gate, a finding skipped with no
+recorded dismissal, or the default branch.
+
+Two things are read from the record rather than accepted as arguments, and both used
+to be flags:
+
+- **convergence**, which used to arrive as `--clean-exit`. The one safety question
+  the gate exists to answer was answered by the orchestrator asserting it, and one
+  real run recorded `clean` for a run its own author reported as unfinished.
+- **the outcome**, whose channel was deleted with `--clean-exit` and never replaced:
+  a run that recorded `test-failure` with a failed gate was permitted, with the
+  reason "converged, evidence gate ok".
+
+The report check is the third, and it reads the artifact rather than a claim about
+it. A push is refused until this run's rendered report is found either in a PR
+comment or in `.git/info/review-loop-pending-report.<run-id>.md`, carrying both the
+run's marker and its `N cycle(s) · M agent(s)` line — numbers that cannot be
+produced without rendering from the record. Requiring the marker alone was cheaper
+to forge (38 bytes of `printf`) than the self-report it replaced. It is required on
+every terminal exit, converged included: the incident behind the design was a clean
+exit on a fresh branch whose summary never reached the PR.
+
+A port of `push-check.py`, with a parity gate that runs the Python against the same
+store, repo and flags and requires the same JSON — `disclose` wording included,
+since a reworded disclosure is a behaviour change no verdict comparison catches.
+
 ## `looper docs`
 
 ```text

@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: branch unknown
+why:    fail CLOSED on a name git could not resolve: an empty branch or default-branch name makes the equality test below compare two things that are not branches, so the default-branch guard silently passes for every input. The guard looks intact and protects nothing.
+--- old
+	if s.Branch == "" || s.DefaultBranch == "" {
+		// Fail closed: an unknown name would skip the default-branch guard below.
+		return false, "current or default branch unknown — refusing to push"
+	}
+--- new

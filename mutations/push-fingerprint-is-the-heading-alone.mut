@@ -1,0 +1,7 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestFingerprint'
+expect: Fingerprint =
+why:    the marker and the heading alone were not enough: `printf '<!-- review-loop:run=X -->' > <pending>` is 38 bytes and satisfied the gate, making it CHEAPER to forge than the `disclosed --where "trust me"` row it replaced. Requiring the run line too means the numbers have to agree with the cycle rows, which cannot be produced without rendering from the record — the point being that this is a property of the artifact, not a claim about it.
+--- old
+	return []string{"## review-loop", fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), spent)}--- new
+	return []string{"## review-loop"}

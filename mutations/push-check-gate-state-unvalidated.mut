@@ -1,0 +1,11 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck'
+expect: a misspelled -gate-state gave exit
+why:    the Python gets this from argparse `choices`, so a misspelling is refused there. Here it is an explicit switch, and without it `-gate-state pased` reads as NOT blocked: the one value that blocks is the one a typo silently turns off, and the reason printed would be "evidence gate ok".
+--- old
+	switch *gateState {
+	case "passed", "skipped", "blocked":
+	default:
+		return fmt.Errorf("push-check: -gate-state %q is not passed, skipped or blocked", *gateState)
+	}
+--- new

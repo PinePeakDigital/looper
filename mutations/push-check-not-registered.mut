@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck'
+expect: a missing -run-id gave exit
+why:    the subcommand has to be reachable. A ported implementation with every test green and no entry in the dispatch switch is the same "the channel was never wired" shape as the Python's two unwired blockers, one level up: `looper push-check` would print `unknown command` and exit 2, which Step 14 cannot tell from a refusal.
+--- old
+	case "push-check":
+		err = runPushCheck(args[1:], out)
+--- new

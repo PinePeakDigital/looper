@@ -509,12 +509,13 @@ func TestTypedDecodeRefusesTheShapesThePythonCoerced(t *testing.T) {
 					t.Errorf("the error must name %q, so the operator knows what to fix; got %v", want, run.Err)
 				}
 			}
-			// Both derivations must refuse rather than answer.
-			if _, err := run.Convergence(); err == nil {
-				t.Error("Convergence returned a verdict for a run it could not decode")
-			}
-			if _, err := run.DroppedGates(); err == nil {
-				t.Error("DroppedGates returned a map for a run it could not decode")
+			// EVERY derivation must refuse rather than answer, found by shape rather than
+			// named here: this used to be a hand-written pair, which left a third
+			// derivation unguarded the moment one was added.
+			for dName, call := range refusingDerivations(run) {
+				if call() == nil {
+					t.Errorf("%s returned an answer for a run it could not decode", dName)
+				}
 			}
 		})
 	}

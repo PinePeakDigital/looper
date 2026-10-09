@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: evidence gate blocked
+why:    a blocked evidence gate is the "this is broken" half, and it has to outrank convergence in both directions: a converged run cannot push past it, and an unconverged run cannot push past it by virtue of being merely unfinished.
+--- old
+	if s.GateState == "blocked" {
+		return false, "evidence gate blocked or hit its restart cap"
+	}
+--- new

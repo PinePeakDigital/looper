@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: the_halted_head_counts_every_cycle_and_every_agent
+why:    the halted head counts the CYCLES of the whole run. Hardcoding 1 is the shape a reader cannot distinguish from a real single-cycle run, and it understates every multi-cycle halt — the runs where the disclosure matters most, because they are the ones that spent real budget and still had findings arriving.
+--- old
+		head = fmt.Sprintf("Review HALTED after %d cycle(s), %d agents", len(r.Cycles), spent)--- new
+		head = fmt.Sprintf("Review HALTED after %d cycle(s), %d agents", 1, spent)

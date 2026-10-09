@@ -1,0 +1,11 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: a_non-zero_cycle_count_is_not_overridden_by_the_run_total
+why:    the other direction of the same `or`: the CYCLE's count wins when it is non-zero, so a stale run-level total cannot overwrite the live one. Preferring the run total reports the figure written at finish over the one written by the cycle that actually ran last.
+--- old
+	asked := 0
+	if last.Asked != nil {
+		asked = *last.Asked
+	}
+--- new
+	asked := 0

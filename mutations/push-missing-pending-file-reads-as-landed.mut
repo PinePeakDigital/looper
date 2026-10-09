@@ -1,0 +1,14 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLanded$'
+expect: fails closed
+why:    no gh and no git must both read as NOT landed. pr-report guarantees the body lands in one of the two places checked, including when the post fails, so "neither" means pr-report did not run — which is the one thing this gate exists to catch. Returning true here makes the gate pass hardest on the machine that has the least evidence.
+--- old
+	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
+	if err != nil {
+		return false
+	}
+--- new
+	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
+	if err != nil {
+		return true
+	}

@@ -96,8 +96,36 @@ jobs:
             echo "$c $t parity subtests compared against the Python"
           done
 
+      # internal/push is the same situation one slice later: its parity gate compares the
+      # whole push decision, disclosure wording included, against push-check.py. Same
+      # oracle checkout, same skip-is-success problem, so the same three steps rather than
+      # being folded into "everything else" — where a skip would be invisible again.
+      - name: go test (push, with the oracle)
+        env:
+          REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v ./internal/push/ > push.log 2>&1 || { cat push.log; exit 1; }
+          tail -5 push.log
+
+      - name: the push parity gate actually ran
+        run: |
+          [ -r push.log ] || { echo "push.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' push.log; then
+            echo "the push parity gate SKIPPED — push-check.py was not reachable:"; cat push.log; exit 1
+          fi
+          # The decision table and the one enumerated divergence, counted separately. The
+          # divergence test is NOT a subtest of the table, and it is the only thing asserting
+          # which half of the `applied: null` wording each side owns — so an aggregate count
+          # would let it vanish under a table that grew by one.
+          c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
+          [ "$c" -ge 18 ] || { echo "only $c push parity subtests passed, expected at least 18"; cat push.log; exit 1; }
+          grep -q -- '--- PASS: TestTheOneDisclosureDivergence' push.log || {
+            echo "the enumerated disclosure divergence was not compared against the Python"; cat push.log; exit 1; }
+          echo "$c push parity subtests compared against the Python, plus the enumerated divergence"
+
       - name: go test (everything else)
-        run: go test -count=1 $(go list ./... | grep -v '/internal/record$')
+        run: go test -count=1 $(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$')
 
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
@@ -110,7 +138,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 111 ] || { echo "only $n mutations, expected at least 111 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 152 ] || { echo "only $n mutations, expected at least 152 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

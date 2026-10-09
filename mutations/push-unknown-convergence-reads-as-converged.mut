@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: unknown (review not finished)
+why:    the zero value of a string is not a convergence word. An unset Convergence must read as unknown and owe the disclosure, never fall into the converged branch: `unknown` is what a run with no cycle rows derives, and it is the cheapest state to produce.
+--- old
+	conv := s.Convergence
+	if conv == "" {
+		conv = record.Unknown
+	}
+--- new
+	conv := s.Convergence

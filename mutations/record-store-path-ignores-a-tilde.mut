@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestStorePath'
+expect: a_tilde_in_the_env_value_is_expanded
+why:    the Python applies expanduser to the ENV VALUE, not only to the default. Dropping it here makes the two implementations read DIFFERENT FILES for the same configuration: the parity gate then compares answers about two stores, and the push gate reads a store that does not exist and answers `unknown` for every run — a disclosure where there should be a verdict, on a record that was there all along.
+--- old
+	if p == "~" || strings.HasPrefix(p, "~/") {
+--- new
+	if false {

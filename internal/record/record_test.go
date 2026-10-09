@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -513,6 +514,35 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
+	t.Run("a misplaced or folded outcome cannot unblock a push", func(t *testing.T) {
+		// `outcome` is the first run-level field a derivation here reads, and it is read to
+		// BLOCK: Decide refuses a push on test-failure, blocked or abandoned. So every
+		// mechanism this file closes points at it at once. load() merges it off any
+		// non-cycle row, so the Python's blocker sees all five of these; the typed decode
+		// either files the row by phase and drops it, or folds the variant spelling onto
+		// the field and reads the wrong one.
+		//
+		// The last two go opposite ways and are both refused, because the rule is "Go and
+		// the Python read different values", not "Go reads the permissive one".
+		for _, bad := range []string{
+			`{"run_id":"r","phase":"plan","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"nudge","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"finnish","outcome":"test-failure"}`,
+			`{"run_id":"r","phase":"finish","outcome":"test-failure","Outcome":"clean"}`,
+			`{"run_id":"r","phase":"finish","OUTCOME":"test-failure"}`,
+		} {
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				bad), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if _, cErr := runs["r"].Convergence(); cErr == nil {
+				t.Errorf("row %s decoded without an error; the Python's push blocker reads its outcome and this would not", bad)
+			}
+		}
+	})
+
 	t.Run("a folded key inside a gate cannot buy a clean sweep", func(t *testing.T) {
 		// The gate maps are the worse half: here a folded key makes this report NOTHING
 		// dropped where the Python reports the gate. Measured — `status:"failed"` beside
@@ -959,4 +989,325 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 			t.Errorf("the cap must report how many rows actually failed, not how many it listed; got %v", got)
 		}
 	})
+}
+
+func disclosureOf(t *testing.T, rows ...string) string {
+	t.Helper()
+	runs, err := Load(store(t, rows...), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runs["r"]
+	if r == nil {
+		r = &Run{ID: "r"}
+	}
+	got, err := r.Disclosure()
+	if err != nil {
+		t.Fatalf("Disclosure: unexpected decode error: %v", err)
+	}
+	return got
+}
+
+// The tail every non-converged disclosure ends with. A constant here and a literal in
+// record.go on purpose: asserting the sentence against a reference to the code that builds
+// it would pass whatever that code said.
+const moreLikely = ". The loop had not stopped finding things — another cycle would likely find more."
+
+func TestDisclosureRules(t *testing.T) {
+	const cap8 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`
+	for _, c := range []struct {
+		name string
+		want string
+		rows []string
+	}{
+		// A converged run owes nothing, and the empty string is the whole signal: the
+		// subcommand turns it into a JSON null, and Step 14 pushes with no disclosure.
+		{"a converged run owes no disclosure", "", []string{plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`}},
+
+		// Omitting the cycle rows is the cheapest state to produce, so it must buy the
+		// LOUDEST line rather than silence. The push still happens; what it owes is this.
+		{"a run with no cycles discloses that nothing is known",
+			"Review completeness UNKNOWN: this run recorded no cycles, so nothing can say " +
+				"whether the loop still had findings when it stopped. Treat as unreviewed.",
+			[]string{plan40}},
+		{"a run absent from the store discloses the same",
+			"Review completeness UNKNOWN: this run recorded no cycles, so nothing can say " +
+				"whether the loop still had findings when it stopped. Treat as unreviewed.",
+			nil},
+
+		// The cap head names the RECORDED cap, not the spend. Printing the spend twice
+		// renders "CAPPED at 9 of 9 agents", which reads as a budget met exactly rather
+		// than one overshot by a cycle — and the overshoot is the number that says the
+		// fan-out width, not the cap, is what bound the run.
+		{"the capped head names the spend and the recorded cap",
+			"Review CAPPED at 9 of 8 agents: the last cycle applied 3 fix(es)" + moreLikely,
+			[]string{cap8, `{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":9}`}},
+
+		// The halted head counts CYCLES, and the count is of the whole run, not of the
+		// last cycle's `n` — which nothing reads, and which a Step 13 restart resets to 1.
+		{"the halted head counts every cycle and every agent",
+			"Review HALTED after 3 cycle(s), 10 agents: the last cycle applied 2 fix(es)" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":5,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":2,"applied":2,"agents":2}`}},
+
+		// The asks clause, from the cycle row.
+		{"asks on the last cycle are disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4}`}},
+
+		// And the fallback: asks recorded only at FINISH still reach the line. This is the
+		// same channel the convergence check reads — a cycle that routed findings to the
+		// user and recorded them nowhere but the finish row has not run out of findings.
+		{"asks recorded only at finish are disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 7 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// Zero FALLS THROUGH to the run-level total, which is the Python's `or`. Reading
+		// the cycle's 0 as the answer hid seven outstanding findings behind a recorded
+		// zero — and a cycle row carrying `asked: 0` is what every cycle writes.
+		{"a zero cycle count falls through to the run total",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 7 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":0,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// The cycle's count wins when it is non-zero, so a stale run-level total cannot
+		// overwrite the live one.
+		{"a non-zero cycle count is not overridden by the run total",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4}`,
+				`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":7}`}},
+		// A negative count RENDERS rather than being hidden as falsy. Corrupt data the
+		// reader can see beats a line that silently drops it.
+		{"a negative ask count is disclosed, not swallowed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left -1 finding(s) awaiting a decision" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":-1,"agents":4}`}},
+
+		// The deterministic pass is unfinished work too, and says so in its own clause.
+		{"a changed analysis pass is disclosed",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and the deterministic pass still had unresolved findings" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4,"analysis_changed":true}`}},
+		{"both clauses render in order",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" +
+				" and left 3 finding(s) awaiting a decision" +
+				" and the deterministic pass still had unresolved findings" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"asked":3,"agents":4,"analysis_changed":true}`}},
+		{"a false analysis flag renders no clause",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied 2 fix(es)" + moreLikely,
+			[]string{plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4,"analysis_changed":false}`}},
+
+		// An absent `applied` renders "?" and must not render 0: a zero there says the
+		// cycle found nothing left to apply, which is the opposite of what absence means
+		// and is the exact claim convergence refuses to read out of it.
+		{"an absent applied count renders as unknown, not zero",
+			"Review HALTED after 1 cycle(s), 4 agents: the last cycle applied ? fix(es)" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"agents":4}`}},
+		// A cycle with no `agents` spends nothing, matching the Python's `or 0`.
+		{"a cycle with no agents field contributes no spend",
+			"Review HALTED after 2 cycle(s), 4 agents: the last cycle applied 1 fix(es)" + moreLikely,
+			[]string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":2,"agents":4}`,
+				`{"run_id":"r","phase":"cycle","n":2,"applied":1}`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := disclosureOf(t, c.rows...); got != c.want {
+				t.Errorf("Disclosure:\n got %q\nwant %q", got, c.want)
+			}
+		})
+	}
+}
+
+// The three answers must agree about which run they describe, because a report rendered
+// from one and gated on another is the shape that put a `converged` summary on a halted run.
+func TestDisclosureAgreesWithConvergence(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		conv string
+		rows []string
+	}{
+		{"converged", Converged, []string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`}},
+		{"unknown", Unknown, []string{plan40}},
+		{"capped", Capped, []string{
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":9}`}},
+		{"halted", Halted, []string{plan40, `{"run_id":"r","phase":"cycle","n":1,"applied":3,"agents":2}`}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			runs, err := Load(store(t, c.rows...), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := runs["r"]
+			if r == nil {
+				r = &Run{ID: "r"}
+			}
+			if got := mustConv(t, r); got != c.conv {
+				t.Fatalf("Convergence = %q, want %q", got, c.conv)
+			}
+			disc, err := r.Disclosure()
+			if err != nil {
+				t.Fatalf("Disclosure: %v", err)
+			}
+			// Exactly one of the two states, keyed on convergence and nothing else:
+			// converged owes silence, everything else owes a line.
+			if (c.conv == Converged) != (disc == "") {
+				t.Errorf("convergence %q with disclosure %q — converged must owe nothing and "+
+					"every other value must owe a line", c.conv, disc)
+			}
+		})
+	}
+}
+
+// A decode error must reach the caller instead of a disclosure, the same way it does for
+// the other two derivations. A run whose record is unreadable is not a run whose review can
+// be summarised, and an empty disclosure here would read as `converged` to Step 14.
+func TestDisclosureRefusesAnUnreadableRun(t *testing.T) {
+	runs, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":"3","agents":4}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := runs["r"].Disclosure()
+	if err == nil {
+		t.Fatalf("Disclosure returned %q for a run with an unreadable cycle row", got)
+	}
+	if got != "" {
+		t.Errorf("Disclosure returned both %q and an error; the text would be rendered", got)
+	}
+}
+
+// StorePath has to agree with runlog.STORE exactly, including the expanduser. If the two
+// resolve different files the parity gate silently compares answers about different stores,
+// and worse, the push gate reads an empty store and answers `unknown` for every run — a
+// disclosure where there should be a verdict, on a record that was there all along.
+func TestStorePath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	t.Run("the env value wins", func(t *testing.T) {
+		t.Setenv("REVIEW_LOOP_RUNS", "/somewhere/runs.jsonl")
+		if got := StorePath(); got != "/somewhere/runs.jsonl" {
+			t.Errorf("StorePath = %q", got)
+		}
+	})
+	// The Python applies expanduser to the ENV VALUE, not only to the default, so a store
+	// configured as ~/alt/runs.jsonl must name the same file in both.
+	t.Run("a tilde in the env value is expanded", func(t *testing.T) {
+		t.Setenv("REVIEW_LOOP_RUNS", "~/alt/runs.jsonl")
+		if got, want := StorePath(), filepath.Join(home, "alt", "runs.jsonl"); got != want {
+			t.Errorf("StorePath = %q, want %q", got, want)
+		}
+	})
+	t.Run("the default is the skill's own store", func(t *testing.T) {
+		t.Setenv("REVIEW_LOOP_RUNS", "")
+		want := filepath.Join(home, ".claude", "review-loop", "runs.jsonl")
+		if got := StorePath(); got != want {
+			t.Errorf("StorePath = %q, want %q", got, want)
+		}
+	})
+}
+
+// derivations is every method on *Run that answers a question about the run: signature
+// `func() (T, error)`, where the error means "this run could not be read, so there is no
+// answer". The list is LITERAL and the set is checked against reflection below, in both
+// directions — a test that ranges only over what reflection finds would delete its own case
+// the moment a derivation was dropped, and one that ranges only over the literal list would
+// miss a derivation added without a line here.
+//
+// This replaces a hand-enumerated pair that sat in two and a half places (the paired check
+// in the refusal loop, plus one mutation entry per derivation). At two derivations that was
+// adequate and reflection would have been scaffolding ahead of its need; the deferral said
+// to write it in the commit that added the third, and Disclosure is the third.
+var derivations = []string{"Convergence", "Disclosure", "DroppedGates"}
+
+// refusingDerivations finds them by shape rather than by name, so a derivation added without
+// a line in `derivations` is reported rather than silently unguarded.
+func refusingDerivations(r *Run) map[string]func() error {
+	out := map[string]func() error{}
+	rt := reflect.TypeOf(r)
+	errType := reflect.TypeOf((*error)(nil)).Elem()
+	for i := 0; i < rt.NumMethod(); i++ {
+		m := rt.Method(i)
+		ft := m.Func.Type()
+		// NumIn 1 is the receiver and no arguments; NumOut 2 with an error second.
+		if ft.NumIn() != 1 || ft.NumOut() != 2 || ft.Out(1) != errType {
+			continue
+		}
+		fn := m.Func
+		out[m.Name] = func() error {
+			res := fn.Call([]reflect.Value{reflect.ValueOf(r)})
+			if res[1].IsNil() {
+				return nil
+			}
+			return res[1].Interface().(error)
+		}
+	}
+	return out
+}
+
+func TestEveryDerivationRefusesAPoisonedRun(t *testing.T) {
+	poisoned, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":"3","agents":4}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := poisoned["r"]
+	if bad.Err == nil {
+		t.Fatal("the fixture decoded cleanly; it is meant to be the unreadable one")
+	}
+
+	found := refusingDerivations(bad)
+	// Set equality, both directions.
+	for _, name := range derivations {
+		if _, ok := found[name]; !ok {
+			t.Errorf("derivations names %q, which is no longer a func() (T, error) method on *Run", name)
+		}
+	}
+	for name := range found {
+		if !contains(derivations, name) {
+			t.Errorf("*Run has a derivation %q with no line in `derivations` — it is unguarded "+
+				"by this test and probably by the catalog too", name)
+		}
+	}
+
+	// RED side: every one must refuse rather than answer.
+	for name, call := range found {
+		if call() == nil {
+			t.Errorf("%s returned an answer for a run it could not decode", name)
+		}
+	}
+
+	// GREEN side, on the same channel: a healthy run must get an answer out of every one of
+	// them. Without this, a derivation that ALWAYS errored would pass the loop above, and
+	// so would deleting the decode and returning a bare error.
+	healthy, err := Load(store(t, plan40,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":4}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range refusingDerivations(healthy["r"]) {
+		if gotErr := call(); gotErr != nil {
+			t.Errorf("%s refused a healthy run: %v", name, gotErr)
+		}
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -196,5 +197,63 @@ func write(t *testing.T, dir, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The push-check subcommand's own surface: the flags it refuses, and the fact that it
+// prints its answer on stdout and exits 0 whether or not the push is permitted. A refusal
+// that exits non-zero is indistinguishable from the tool failing to produce one, and Step 14
+// reads the JSON either way.
+func TestPushCheck(t *testing.T) {
+	dir := t.TempDir()
+	store := filepath.Join(dir, "runs.jsonl")
+	rows := []string{
+		`{"run_id":"pc1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"pc1","phase":"cycle","n":1,"applied":0,"asked":0,"agents":3}`,
+	}
+	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// -run-id is REQUIRED. In the Python it was optional, and both record-derived blockers
+	// were computed only when it was present — so omitting it turned off the owed-report
+	// check AND the broken-outcome check, while a bogus id was correctly caught. The
+	// cheapest wrong spelling was the one that passed.
+	code, _, errOut := doRun(t, "push-check")
+	if code == 0 || !strings.Contains(errOut, "-run-id is required") {
+		t.Errorf("a missing -run-id gave exit %d and stderr %q", code, errOut)
+	}
+
+	// An unrecognised gate state is refused rather than read as "not blocked". The Python
+	// gets this from argparse `choices`; here it is an explicit switch, so it needs a test.
+	code, _, errOut = doRun(t, "push-check", "-run-id", "pc1", "-gate-state", "pased", "-store", store)
+	if code == 0 || !strings.Contains(errOut, "not passed, skipped or blocked") {
+		t.Errorf("a misspelled -gate-state gave exit %d and stderr %q", code, errOut)
+	}
+
+	// A refusal is still a successful answer: exit 0, JSON on stdout, push false. This run
+	// has no report landed anywhere, which is what refuses it.
+	code, out, errOut := doRun(t, "push-check", "-run-id", "pc1", "-store", store,
+		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
+	if code != 0 {
+		t.Fatalf("a refusal exited %d: stdout %q stderr %q", code, out, errOut)
+	}
+	var got struct {
+		Push        bool    `json:"push"`
+		Reason      string  `json:"reason"`
+		Convergence string  `json:"convergence"`
+		Disclose    *string `json:"disclose"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the JSON Step 14 reads: %v\n%q", err, out)
+	}
+	if got.Push {
+		t.Errorf("a run with no report landed was permitted: %q", out)
+	}
+	if got.Convergence != "converged" {
+		t.Errorf("convergence = %q, want converged", got.Convergence)
+	}
+	if got.Disclose != nil {
+		t.Errorf("a converged run owes no disclosure, got %q", *got.Disclose)
 	}
 }

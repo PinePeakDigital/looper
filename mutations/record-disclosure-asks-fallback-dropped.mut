@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: asks_recorded_only_at_finish_are_disclosed
+why:    asks recorded ONLY at finish must still reach the line. This is the same channel the convergence check reads before it tests converged, and for the same reason: a cycle that routed every finding to the user and recorded the count nowhere but the finish row has not run out of findings. Dropping the fallthrough renders a disclosure saying nothing was left awaiting a decision on a run with seven findings outstanding.
+--- old
+	if asked == 0 && r.Finish != nil && r.Finish.UnresolvedAsks != nil {
+		asked = *r.Finish.UnresolvedAsks
+	}
+--- new

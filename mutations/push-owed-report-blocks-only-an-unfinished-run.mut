@@ -1,0 +1,7 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: an_owed_report_blocks_a_converged_run
+why:    required on EVERY terminal exit, not just the non-converged ones. The incident that motivated this redesign was a CLEAN exit on a fresh branch whose summary never reached the PR, so gating only the unfinished runs misses exactly the case that happened — and does so while looking like the obvious optimisation, since a converged run has nothing to disclose.
+--- old
+	if s.Unreported != "" {--- new
+	if s.Unreported != "" && s.Convergence != record.Converged {

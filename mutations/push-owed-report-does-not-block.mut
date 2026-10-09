@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide'
+expect: report has not reached the PR
+why:    the report is the ENTIRE consideration for which a non-converged run is allowed to push at all, so an owed-but-missing one has to block. Prose instructions to post it are the ones that get skipped, which is why pr-report.py is a script rather than a step.
+--- old
+	if s.Unreported != "" {
+		return false, s.Unreported
+	}
+--- new

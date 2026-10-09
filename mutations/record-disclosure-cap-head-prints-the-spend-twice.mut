@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestDisclosureRules'
+expect: the_capped_head_names_the_spend_and_the_recorded_cap
+why:    the cap head must name the RECORDED cap beside the spend. Printing the spend twice renders "CAPPED at 9 of 9 agents", which reads as a budget met exactly rather than one overshot by a whole cycle — and the overshoot is the number that says the fan-out WIDTH, not the cap, is what bound the run. The cap check is `spent >= cap`, so the two are equal only by coincidence.
+--- old
+		head = fmt.Sprintf("Review CAPPED at %d of %d agents", spent, *r.Plan.AgentCap)--- new
+		head = fmt.Sprintf("Review CAPPED at %d of %d agents", spent, spent)

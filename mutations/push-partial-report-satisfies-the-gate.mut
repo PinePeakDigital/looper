@@ -1,0 +1,21 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLanded$'
+expect: satisfied the gate
+why:    ALL the needles, not any. With `any`, the 38-byte marker file is back: one needle present out of three is exactly what a forged pending file looks like, and it is also what a report rendered for a different run looks like.
+--- old
+func containsAll(hay string, needles []string) bool {
+	for _, n := range needles {
+		if !strings.Contains(hay, n) {
+			return false
+		}
+	}
+	return true
+}--- new
+func containsAll(hay string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(hay, n) {
+			return true
+		}
+	}
+	return false
+}

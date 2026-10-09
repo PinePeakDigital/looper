@@ -1,0 +1,20 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestEveryDerivationRefusesAPoisonedRun'
+expect: no line in `derivations`
+why:    the rule this test exists for: a derivation added without a line in `derivations` is unguarded by the refusal check AND almost certainly by the catalog, which is how the hand-enumerated pair this replaced would have let a third one through. Found by SHAPE, so the new method does not have to be remembered — it has to be declared. The mutation adds a real derivation (`Spend`, the agent sum two functions already compute inline) rather than a stub, because a stub is a defect nobody would write.
+--- old
+// GateOK are the statuses
+--- new
+// Spend is the agents this run spent. Added by a mutation entry to check that an
+// unlisted derivation is reported; it duplicates a sum two callers compute inline.
+func (r *Run) Spend() (int, error) {
+	var n int
+	for _, c := range r.Cycles {
+		if c.Agents != nil {
+			n += *c.Agents
+		}
+	}
+	return n, nil
+}
+
+// GateOK are the statuses

@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestStorePath'
+expect: the_default_is_the_skill
+why:    the default is runlog.STORE's default, character for character. Any other path reads an empty or absent store whenever REVIEW_LOOP_RUNS is unset — which is the normal case — and every run then derives `unknown`, so the gate discloses instead of deciding and nothing looks broken.
+--- old
+		p = "~/.claude/review-loop/runs.jsonl"--- new
+		p = "~/.claude/looper/runs.jsonl"
