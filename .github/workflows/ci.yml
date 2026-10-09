@@ -164,5 +164,16 @@ jobs:
       # The suite passing says nothing on its own. This reintroduces each defect in
       # mutations/ and requires the suite to notice. A survivor is a hole: the
       # defect could ship with CI green.
+      # The oracle paths are exported HERE too, not just for the two parity steps. A catalog
+      # entry whose `verify:` runs a parity test needs the oracle, and without it that test
+      # calls t.Skip — which `go test` reports as SUCCESS, so the mutation SURVIVES and the
+      # entry silently guards nothing. Measured the first time this step ever ran in CI (it
+      # could not start before push.log was gitignored): 177/178, with
+      # record-parity-trims-the-oracle-side-only the one survivor, caught locally and inert
+      # here. Same skip-is-success hazard the two "parity gate actually ran" steps exist for,
+      # one level down — in the catalog rather than in a test step.
       - name: mutation score
+        env:
+          REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
         run: go run ./cmd/looper mutate
