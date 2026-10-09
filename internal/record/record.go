@@ -336,9 +336,19 @@ func Load(path string, limit int) (map[string]*Run, error) {
 // row whose phase does not own it still reaches the Python's verdict while the typed decode
 // files the row by phase and never sees it.
 //
-// `outcome` is deliberately absent: nothing here derives from it, so a misplaced one changes
-// no answer on either side. Cycle-owned counts are absent for the same reason in reverse —
-// load() does not merge cycle rows at all, so `applied` on a finish row is ignored by both.
+// The map must grow with the derivations, and it is currently SHORT of what the Python reads.
+// Measured against the oracle, these are also read off the merged run dict and are not here:
+// `outcome` (push-check.py:112 blocks the push on test-failure/blocked/abandoned, read as
+// `run.get("outcome")`; review-stats' is_abandoned also reads it), `session_id`, `head`,
+// `repo`, `finished_at` and `abandoned_missing`. Omitting them is safe TODAY and only today,
+// for one reason: no derivation in this package reads any of them, so a misplaced one cannot
+// change an answer HERE. It can change the Python's — so the earlier claim that a misplaced
+// `outcome` "changes no answer on either side" was false. When the push gate ports,
+// `outcome` becomes the first of these a Go derivation reads, and it has to join this map in
+// the same commit or the forgery this guard exists to stop reopens through it.
+//
+// Cycle-owned counts are absent for the opposite reason, which is permanent: load() does not
+// merge cycle rows at all, so `applied` on a finish row is ignored by both implementations.
 var runLevelFields = map[string]string{
 	"agent_cap":       "plan",
 	"gates":           "plan",
