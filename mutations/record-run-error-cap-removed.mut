@@ -1,8 +1,10 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
-expect: the cap must say it elided rows
-why:    accumulating every row's error is right, but unbounded it turned a store with 10,000 bad rows for one run into a 1.3 MB error — measured — on a channel whose whole purpose is to be read by a person. The cap still reports the count, so it cannot hide how bad the store is.
+expect: a message nobody can print
+why:    accumulating every row's error is right, but unbounded it turned a store with 10,000 bad rows for one run into a 1.3 MB error — measured — on a channel whose whole purpose is to be read by a person. Anchored with the comment below it because `if r.errN > maxRunErrs {` alone now matches twice: the finalise pass that reports the total carries the same condition one indent deeper, and an ambiguous anchor scores stale rather than mutating anything.
 --- old
 	if r.errN > maxRunErrs {
+		// Bounded, because accumulating without a cap turned a store with 10,000 bad rows
 --- new
 	if false {
+		// Bounded, because accumulating without a cap turned a store with 10,000 bad rows
