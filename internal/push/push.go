@@ -121,8 +121,11 @@ func Decide(s State) (bool, string) {
 func Fingerprint(r *record.Run) []string {
 	// record.AgentsSpent, not a local sum. The figure has to equal the one pr-report.py
 	// rendered — `sum(c.get("agents") or 0 for c in cycles)` — and equal what Disclosure
-	// says, or a report disagrees with the verdict printed beside it. That is a real
-	// incident in runlog.py's history, recorded on `cycles_of`.
+	// says, or a report disagrees with the verdict printed beside it. `cycles_of`'s docstring
+	// in runlog.py records that divergence, and records in the same breath that it was
+	// REPRODUCED IN A FIXTURE and never seen on a real PR. An earlier version of this comment
+	// called it "a real incident", which is the blurring that docstring exists to warn about;
+	// record.AgentsSpent carries the corrected framing and the argument that needs no incident.
 	return []string{"## review-loop",
 		fmt.Sprintf("%d cycle(s) · %d agent(s)", len(r.Cycles), r.AgentsSpent())}
 }
@@ -148,11 +151,19 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 //
 // attributable is whether the not-landed answer has a cause the refusal text already covers:
 // a probe ran and said no, or the run id was refused outright. It is FALSE only when neither
-// probe could run, which is the one case an operator cannot act on from the refusal alone.
+// probe could run.
 //
-// Named for that question rather than for "could a probe be asked", which is what the earlier
-// name `couldAsk` claimed and which needed an exception in a comment: the refused-run-id path
-// asks nothing and still wants the refusal taken at face value.
+// That is NOT the only state an operator cannot act on from the refusal alone, and an earlier
+// version of this comment said it was. Measured: with a store that does not hold the run — a
+// wrong -store, a missing file, a mistyped -run-id — record.Load returns an empty map and NO
+// error, so Fingerprint asks for `0 cycle(s) · 0 agent(s)`, git answers, `attributable` is
+// true, nothing is written to Diag, and the refusal's stated remedy cannot fix it. Posting the
+// report again renders the same two lines off the same empty record. The store path that was
+// read is printed nowhere. Covering that is a separate change; this names the gap rather than
+// leaving the comment claiming there is none.
+//
+// Named for the question it answers rather than for "could a probe be asked", which is what
+// the earlier name `couldAsk` claimed while the refused-run-id path asks nothing.
 func reportProbe(runID string, r *record.Run, repo string) (landed, attributable bool) {
 	// The guard travels with the path interpolation, not with one caller. It was in Check
 	// only, which made it a property of whoever remembered to call Check first — and the
@@ -164,8 +175,9 @@ func reportProbe(runID string, r *record.Run, repo string) (landed, attributable
 	// Fails closed rather than erroring, because every other way this function cannot find
 	// the report already does.
 	if !ValidRunID(runID) {
-		// A refused id is not an inability to ask — the question was well-formed enough to
-		// answer, and the answer is no.
+		// Attributable: the question was well-formed enough to answer and the answer is no.
+		// Nothing is asked here, which is why `couldAsk` needed this comment as an exception
+		// and `attributable` does not.
 		return false, true
 	}
 	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
@@ -291,9 +303,11 @@ type CheckParams struct {
 	DefaultBranch  string
 	// Repo is where the git and gh facts are read from.
 	Repo string
-	// Diag receives one line when the report check could not be run at all, as opposed to
-	// having run and found nothing. Optional: nil writes nothing. It must NOT be the stream
-	// the Result is encoded to — stdout is a machine-readable contract.
+	// Diag receives a line for each refusal whose stated reason is the wrong instruction for
+	// the actual cause: the report check could not be RUN at all, or the run was not in the
+	// store. Neither can be said in the reason itself, which parity pins byte-for-byte.
+	// Optional: nil writes nothing. It must NOT be the stream the Result is encoded to —
+	// stdout is a machine-readable contract.
 	Diag io.Writer
 }
 
@@ -315,6 +329,20 @@ func Check(p CheckParams) (Result, error) {
 	r := runs[p.RunID]
 	if r == nil {
 		r = &record.Run{ID: p.RunID}
+		if p.Diag != nil {
+			// Every derivation below now comes off an EMPTY record, and each one reads as a
+			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
+			// outcome can block, and the required fingerprint collapses to the two lines
+			// pr-report.py renders for a run with no cycles. On this store that collides
+			// with a real report for 22 of 41 runs, so the refusal below is as likely to be
+			// a wrong -store or a mistyped -run-id as a missing report — and "run
+			// pr-report.py --post first" cannot fix either. The store path is the one fact
+			// that separates them and it appears nowhere else in the output.
+			fmt.Fprintf(p.Diag, "push-check: run %q was not found in %s, so convergence, the "+
+				"outcome and the required report fingerprint are all derived from an empty "+
+				"record; the refusal below may not be about the report at all\n",
+				p.RunID, p.Store)
+		}
 	}
 	// The derivations are read FIRST, and each refuses a run whose record did not decode.
 	// That ordering is load-bearing rather than tidy: Fingerprint reads Cycles, which is

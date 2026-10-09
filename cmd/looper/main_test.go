@@ -335,8 +335,9 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 }
 
 // The one line wiring the diagnostic to the real binary: `Diag: errOut` in runPushCheck's
-// CheckParams literal. Deleting it left `go test ./...` fully green, including all three tests
-// written for the feature — none of which went through the CLI. Reproduced before this existed.
+// CheckParams literal. Deleting it left `go test ./...` fully green, including all four
+// subtests of TestCheckDiagnosesBeingUnableToAsk — the one test written for the feature —
+// none of which went through the CLI. Reproduced before this existed.
 //
 // stdout must still carry only the decision: the note is a second stream, not a prefix.
 func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {

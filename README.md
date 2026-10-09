@@ -158,6 +158,20 @@ to forge (37 bytes of `printf` for a real run id) than the self-report it replac
 every terminal exit, converged included: the incident behind the design was a clean
 exit on a fresh branch whose summary never reached the PR.
 
+stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
+also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
+run at all, because the gate then fails closed with a reason — "run `pr-report.py
+--post` first" — that is the wrong instruction for a missing binary or a killed
+subprocess. The reason itself cannot say so: parity pins it byte-for-byte against the
+Python, which has no second stream. A refusal for a report that is genuinely unposted
+stays silent, so the note's presence is the signal.
+
+One state is not covered by that note and is worth knowing: if the store does not
+hold the run — a wrong `-store`, a missing file, a mistyped `-run-id` — the record
+loads as empty with no error, the required fingerprint collapses to `0 cycle(s) · 0
+agent(s)`, and the refusal reads as an unposted report with nothing on stderr. The
+store path that was read is printed nowhere.
+
 A port of `push-check.py`, with a parity gate that runs the Python against the same
 store, repo and flags and requires the same JSON — `disclose` wording included,
 since a reworded disclosure is a behaviour change no verdict comparison catches.

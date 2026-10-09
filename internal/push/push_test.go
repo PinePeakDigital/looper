@@ -723,9 +723,17 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 
 	t.Run("gh could be asked and said no", func(t *testing.T) {
 		// gh ANSWERS — a PR exists and its comments were fetched — but the report is not
-		// among them, and git is unavailable. couldAsk must be true on the strength of gh
-		// alone, so no note is owed. Without this case the gh branch's couldAsk assignment
-		// was dead to the suite: every other test here shims gh to fail.
+		// among them, and git is unavailable. `attributable` must be true on the strength of
+		// gh alone, so no note is owed. This is the ONLY place the gh branch's
+		// `attributable = true` is observed: TestReportProbeReportsBothAnswers reaches every
+		// other state but this one, and mutations/push-gh-answer-not-counted-as-asked
+		// therefore verifies THIS test rather than that one.
+		//
+		// An earlier version of these lines said the assignment was dead to the suite because
+		// "every other test here shims gh to fail", which is false —
+		// TestReportLandedFromAPRComment shims a SUCCEEDING gh at three call sites. It was
+		// unobserved because ReportLanded discards the second value and Check reads it only
+		// when `landed` is false.
 		shimGh(t, "printf 'some unrelated comment\\n'")
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
@@ -749,11 +757,20 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	})
 }
 
-// reportProbe's two return values on every path. Four of its six were unasserted: the second
-// value is observable through Check only when the first is false, so its value on every
-// landed=true path was structurally invisible, and ReportLanded discards it. Reproduced before
-// this existed — flipping the refused-id return and the shared final return both left the
-// whole package green.
+// reportProbe's two return values on every path it can return them from. The accounting, by
+// instrumenting every return site rather than counting them by eye: five syntactic returns,
+// SEVEN reachable (site, value) states, of which three were already asserted at Check level
+// before this test existed — the two git-unavailable states and the unreadable-pending-file
+// one, each via a subtest of TestCheckDiagnosesBeingUnableToAsk. The other four were not, the
+// second value being observable through Check only when the first is false and discarded
+// outright by ReportLanded. Reproduced before this existed: flipping the refused-id return and
+// the shared final return both left the whole package green.
+//
+// An earlier version of this comment said "four of its six", and the commit message said the
+// test covered "all six paths". Both were wrong, and the second was wrong in the direction
+// that invites deleting the Check-level case still holding a state this test misses — which is
+// why the gh-answered-and-git-unavailable subtest below exists rather than the claim being
+// narrowed to five of six.
 //
 // Called directly, which needs no export: this file is `package push`.
 func TestReportProbeReportsBothAnswers(t *testing.T) {
@@ -763,6 +780,12 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 	t.Run("a refused run id is attributable without asking anything", func(t *testing.T) {
 		// Nothing runs, and `attributable` is still true: the refusal has a cause the caller
 		// can state. This is the path whose name the rename was about.
+		//
+		// This is NOT the traversal test, despite the `../` — with the ValidRunID guard
+		// disabled this subtest still passes, because the traversed path does not exist, so
+		// os.ReadFile fails and the function returns the same (false, true) by another route.
+		// The bound is held by TestReportLandedRefusesATraversingRunID, which plants a
+		// satisfying report at the destination and so can tell the two routes apart.
 		shimGh(t, "exit 1")
 		dir, _ := repo(t)
 		landed, attributable := reportProbe("../escape", r, dir)
@@ -780,11 +803,27 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		}
 	})
 
-	t.Run("gh answers without a match and git has no report", func(t *testing.T) {
+	t.Run("gh answers without a match and the pending file is unreadable", func(t *testing.T) {
+		// A REAL git repo, so git answers and the return comes from the os.ReadFile error
+		// branch, whose second value is a literal `true`. Named for that, because an earlier
+		// version called this the gh path and asserted on a hardcoded constant: deleting
+		// `attributable = true` from the gh branch left this subtest green.
 		shimGh(t, "printf 'unrelated\\n'")
 		dir, _ := repo(t)
 		if landed, attributable := reportProbe("run1", r, dir); landed || !attributable {
-			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered", landed, attributable)
+			t.Errorf("reportProbe = (%v, %v), want (false, true) — git answered and the "+
+				"pending file was absent", landed, attributable)
+		}
+	})
+
+	t.Run("gh answers without a match and git cannot be asked", func(t *testing.T) {
+		// The seventh state, and the only one where the gh branch's `attributable = true`
+		// reaches a return: gh answered, so the refusal is attributable, while git cannot run
+		// at all. A non-git dir rather than repo(t) is the whole difference.
+		shimGh(t, "printf 'unrelated\\n'")
+		if landed, attributable := reportProbe("run1", r, t.TempDir()); landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered on its own",
+				landed, attributable)
 		}
 	})
 
@@ -811,6 +850,76 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		if landed, attributable := reportProbe("run1", r, t.TempDir()); landed || attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, false) — this is the ONLY path "+
 				"where the refusal has no stateable cause", landed, attributable)
+		}
+	})
+}
+
+// The second refusal whose stated reason is the wrong instruction: the run is not in the
+// store. Measured before this existed — a wrong -store produced exit 0, an EMPTY stderr, and
+// "run pr-report.py --post first", which re-renders the same empty record and cannot fix it.
+//
+// Kept separate from TestCheckDiagnosesBeingUnableToAsk because the two notes answer different
+// questions and only this one can name the store path.
+func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
+	st := writeStore(t, cappedRun("run1")...)
+
+	t.Run("a run id absent from the store is named, with the store that was read", func(t *testing.T) {
+		shimGh(t, "exit 1")
+		var diag strings.Builder
+		dir, _ := repo(t)
+		res, err := Check(CheckParams{Store: st, RunID: "absent1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push {
+			t.Errorf("push permitted for a run that is not in the store: %+v", res)
+		}
+		for _, want := range []string{`"absent1"`, st, "empty record"} {
+			if !strings.Contains(diag.String(), want) {
+				t.Errorf("Diag = %q, want it to contain %q", diag.String(), want)
+			}
+		}
+	})
+
+	t.Run("a missing store file is the same state and says so", func(t *testing.T) {
+		// record.Load returns an empty map and NO error for a path that does not exist, which
+		// is why this is indistinguishable from a typo without the note.
+		shimGh(t, "exit 1")
+		var diag strings.Builder
+		dir, _ := repo(t)
+		missing := filepath.Join(t.TempDir(), "nosuchstore.jsonl")
+		if _, err := Check(CheckParams{Store: missing, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag}); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(diag.String(), missing) {
+			t.Errorf("Diag = %q, want the store path %q that was actually read", diag.String(), missing)
+		}
+	})
+
+	t.Run("a run that IS in the store is silent", func(t *testing.T) {
+		// The note must not fire on the ordinary path, or it stops being a signal. gh is
+		// shimmed to fail and git answers, so this still refuses — for a reason that IS
+		// about the report.
+		shimGh(t, "exit 1")
+		var diag strings.Builder
+		dir, _ := repo(t)
+		if _, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag}); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(diag.String(), "not found in") {
+			t.Errorf("Diag = %q for a run that is in the store; it must stay silent", diag.String())
+		}
+	})
+
+	t.Run("a nil Diag is not a crash", func(t *testing.T) {
+		shimGh(t, "exit 1")
+		dir, _ := repo(t)
+		if _, err := Check(CheckParams{Store: st, RunID: "absent2", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir}); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

@@ -1288,21 +1288,33 @@ func contains(ss []string, want string) bool {
 	return false
 }
 
-// storePathCases are every shape of `$HOME` and `$REVIEW_LOOP_RUNS` the two implementations
-// could answer differently about. All TEN are compared against the oracle by
+// storePathCases are every shape of a TILDE-EXPANDED `$HOME` and `$REVIEW_LOOP_RUNS` the two
+// implementations could answer differently about. All TEN are compared against the oracle by
 // TestStorePathMatchesThePython in this package's parity_test.go, which imports runlog under
 // each combination and reads its STORE; the expectations here state the answer directly as
 // well, because that parity test skips when the Python is unreachable and this must not.
 //
-// An earlier version of this comment said "all nine" and named internal/push/parity_test.go,
-// where no such test existed — the hand measurement had been done once, in a shell, and
-// written up as though it were wired into CI. Three cycle-2 agents found it independently.
-// The parity test above was added to make the claim true rather than to soften it.
+// The `~user` arm is deliberately OUT of scope, and this table is therefore not exhaustive
+// over every tilde form. expanduser has one (`i = path.find(sep, 1)`; `i != 1` →
+// `pwd.getpwnam`) and StorePath short-circuits anything that is not exactly `~` or `~/`-
+// prefixed, so they diverge: measured, `REVIEW_LOOP_RUNS=~root/x` reads `~root/x` here —
+// relative, resolved against the working directory, never exists — and `/var/root/x` there.
+// StorePath's own comment records the exception; nothing configures a `~user` path, and
+// implementing getpwnam lookup would be real code for a shape nobody writes. An earlier
+// version of this comment claimed the ten were "every shape ... the two implementations could
+// answer differently about", which this measurement contradicts.
+//
+// An earlier version also said "all nine" and named internal/push/parity_test.go, where no
+// such test existed — the hand measurement had been done once, in a shell, and written up as
+// though it were wired into CI. The parity test above was added to make the claim true rather
+// than to soften it.
 //
 // The reason this matters more than it looks: a gate reading a different store than the oracle
 // answers `unknown` for EVERY run, with no error anywhere. `Finish` is nil, so a recorded
-// `test-failure` never reaches the blocker, and the only thing left standing between that and
-// a granted push is the report fingerprint happening not to match.
+// `test-failure` never reaches the blocker — and for a run with NO cycle rows, which is 22 of
+// the live store's 41, nothing at all is left standing: the empty record fingerprints as
+// `0 cycle(s) · 0 agent(s)`, which is exactly what pr-report.py renders for such a run, so a
+// genuine posted report satisfies the gate and the push is GRANTED. Measured end to end.
 var storePathCases = []struct {
 	name, home, env, want string
 	unsetHome             bool

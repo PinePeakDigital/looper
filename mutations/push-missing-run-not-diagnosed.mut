@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore'
+expect: want it to contain
+why:    a run absent from the store and a genuinely unposted report refuse with the SAME reason, and the reason's remedy ("run pr-report.py --post first") fixes only one of them: re-posting renders the same two lines off the same empty record. record.Load returns an empty map with NO error for a missing file or a mistyped id, so convergence reads `unknown`, Finish is nil and no recorded outcome can block, and the required fingerprint collapses to `0 cycle(s) · 0 agent(s)` — which is exactly what pr-report.py renders for a run with no cycle rows, 22 of the live store's 41. The store path is the one fact separating the two states and it appears nowhere else in the output. Disabled rather than deleted so p.Diag stays referenced: a mutation that does not compile scores broken and tests nothing.
+--- old
+		if p.Diag != nil {
+			// Every derivation below now comes off an EMPTY record, and each one reads as a
+--- new
+		if false && p.Diag != nil {
+			// Every derivation below now comes off an EMPTY record, and each one reads as a

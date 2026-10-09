@@ -1,0 +1,8 @@
+target: .github/workflows/ci.yml
+verify: bash -c 'grep -q "StorePath:10" .github/workflows/ci.yml || { echo "the StorePath parity oracle has no floor"; exit 1; }'
+expect: the StorePath parity oracle has no floor
+why:    TestStorePathMatchesThePython exists to make storePathCases' comment true, and four cycle-3 agents independently measured that deleting it — or emptying storePathCases — left `go test ./...` green AND this workflow green, because the per-test floor loop named only three oracles. Dropping StorePath from the loop returns the repo to exactly the state cycle 2 was written to fix, with nothing red. The floor of 10 also pins the table's WIDTH, which the catalog cannot: 5 of the 10 case names appear in no entry's `expect:` string. Verified by a grep rather than a Go test because the guard IS the workflow line; nothing in the Go suite can observe it.
+--- old
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:10; do
+--- new
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25; do

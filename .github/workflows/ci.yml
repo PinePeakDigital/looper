@@ -82,7 +82,15 @@ jobs:
           # oracles, so growth in one dimension masks collapse in another: at 50 fixtures,
           # losing the whole DroppedGates oracle would still count 100 and pass — which is
           # exactly the regression that oracle was added to fix.
-          for t in Convergence CycleCount DroppedGates; do
+          # Each oracle carries its OWN floor, because they are different widths: the three
+          # fixture tables run 28 subtests apiece, StorePath runs one per env shape. A shared
+          # floor of 25 would have failed the fourth oracle outright, which is why it was left
+          # out of this loop when it was added — and four agents then measured that it could be
+          # deleted, or storePathCases silently emptied, with every gate here green. The floor
+          # of 10 pins the table's WIDTH as well as the test's existence; the per-case `expect:`
+          # strings in the catalog pin neither (5 of the 10 case names appear in no entry).
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:10; do
+            t=${spec%:*}; min=${spec#*:}
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
             # Two reasons written here before were wrong, and the third is deliberately
             # narrow. A fixture NAME cannot carry the needle: go test replaces spaces with
@@ -95,7 +103,7 @@ jobs:
             # table would be indented eight and UNDER-count, which fails the floor rather
             # than passing it.
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
-            [ "$c" -ge 25 ] || { echo "only $c $t parity subtests passed, expected at least 25"; cat record.log; exit 1; }
+            [ "$c" -ge "$min" ] || { echo "only $c $t parity subtests passed, expected at least $min"; cat record.log; exit 1; }
             echo "$c $t parity subtests compared against the Python"
           done
 
@@ -137,11 +145,17 @@ jobs:
       # (The same gap was found and closed in the skills repo's workflow first.)
       - name: no catalog entry has gone missing
         run: |
-          n=$(ls mutations/*.mut 2>/dev/null | wc -l | tr -d ' ')
+          # A glob array, not `ls | wc -l`: wc counts LINES, so one filename containing a
+          # newline counts twice and the floor passes with an entry deleted — the single
+          # failure mode this step exists to prevent, and the only direction that fails
+          # quietly. nullglob also makes the empty case 0 rather than a literal glob.
+          shopt -s nullglob
+          f=(mutations/*.mut)
+          n=${#f[@]}
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 172 ] || { echo "only $n mutations, expected at least 172 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 175 ] || { echo "only $n mutations, expected at least 175 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

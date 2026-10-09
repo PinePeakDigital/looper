@@ -109,8 +109,14 @@ const noRun = "NO-SUCH-RUN"
 //
 // runpy rather than an import: review-stats.py's name has a hyphen and is therefore not
 // importable, and its own `import runlog` needs the skill directory on sys.path — run_path
-// does not put the script's directory there. runlog.py needs neither, but both oracles go
-// through here so a third cannot invent a third mechanism.
+// does not put the script's directory there. runlog.py needs neither, but both oracles that
+// take a STORE and a BODY go through here, so neither can invent its own mechanism.
+//
+// TestStorePathMatchesThePython does not, and cannot: it needs a FRESH environment rather
+// than os.Environ() plus overrides, because an inherited HOME cannot be removed by appending
+// and an absent HOME is the input the two implementations diverged on. It also wants STORE's
+// value rather than a subcommand's output, so there is no body and no sentinel to detect.
+// Routing it through here would mean an env parameter and a no-store mode for one caller.
 //
 // Output, not CombinedOutput: stderr merged into stdout is parsed as part of the answer, so
 // one DeprecationWarning at import turned 72 subtests red across the two tests that had it
@@ -956,7 +962,7 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 //
 // This exists because `storePathCases`' own comment claimed these were "measured against the
 // oracle in internal/push/parity_test.go" and they were not — they had been measured by hand,
-// once, and written down as literals. Three cycle-2 agents found that independently. The
+// once, and written down as literals. The
 // expectations in record_test.go stay (this skips when the Python is unreachable, and a gate
 // that can skip is not a gate on its own); what this adds is the half the comment promised.
 //
@@ -984,7 +990,11 @@ func TestStorePathMatchesThePython(t *testing.T) {
 			if err != nil {
 				t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
 			}
-			want := strings.TrimSpace(string(out))
+			// TrimSuffix, not TrimSpace: print() adds exactly one newline, and trimming more
+			// strips legitimate whitespace from the ORACLE side only. StorePath returns the
+			// env value verbatim, so REVIEW_LOOP_RUNS=" " matched byte-for-byte before the
+			// trim and mismatched after it — a false alarm blaming the code for the harness.
+			want := strings.TrimSuffix(string(out), "\n")
 
 			// The Go side under the same environment. t.Setenv cannot unset, and unset is a
 			// distinct input here, so that case unsets by hand and restores in a defer.
