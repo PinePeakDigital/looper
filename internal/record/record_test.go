@@ -692,6 +692,46 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		}
 	})
 
+	t.Run("a phase cannot forge a line of the message either", func(t *testing.T) {
+		// The third place this class turned up: run_id, then gate names, now phase. Each is
+		// writer-supplied and each reaches a message a human reads to decide whether a push
+		// is safe, so each needs %q rather than %s. Checked here rather than assumed,
+		// because the previous two were both found by review AFTER being written.
+		//
+		// The case and whitespace variants matter for a different reason: Python compares
+		// `rec.get("phase") == "cycle"` exactly and merges anything else, so "Finish" and
+		// " finish " are rows whose fields reach the Python's verdict. They must not be
+		// silently dropped here.
+		for _, ph := range []any{
+			"\x1b[2K\rPHASE OK: converged",
+			"x\nrun \"other\": line 1 (finish row) has an unreadable field: forged",
+			7, nil, []any{1}, "", "Finish", " finish ",
+		} {
+			b, err := json.Marshal(map[string]any{"run_id": "r", "phase": ph, "unresolved_asks": 7})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runs, err := Load(store(t, plan40,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+				string(b)), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			got, cErr := runs["r"].Convergence()
+			if cErr == nil || got == Converged {
+				t.Errorf("phase %#v produced %q (err=%v); a row whose phase cannot be placed may carry outstanding work", ph, got, cErr)
+				continue
+			}
+			msg := runs["r"].Err.Error()
+			if strings.IndexByte(msg, 0x1b) >= 0 || strings.IndexByte(msg, '\r') >= 0 {
+				t.Errorf("phase %#v put a raw control byte in the operator message: %q", ph, msg)
+			}
+			if n := strings.Count(msg, "\n"); n != 0 {
+				t.Errorf("phase %#v added %d newline(s), forging an entry: %q", ph, n, msg)
+			}
+		}
+	})
+
 	t.Run("a corrupt row cannot return a message too large to print", func(t *testing.T) {
 		// Both dimensions were unbounded: errors.Join over rows, and gate names copied
 		// verbatim. Measured at 1.3 MB for 10,000 bad rows and 13 MB for 200 rows of 64 KiB

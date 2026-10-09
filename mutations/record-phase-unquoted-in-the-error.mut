@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: put a raw control byte in the operator message
+why:    the third writer-supplied string to reach the operator message, after run_id and gate names, and the same %q fix for the same reason — this message is what a human reads to decide whether a push is safe, and a value holding ESC+CR erases the line it prints on. Written with %q from the start this time, and pinned so it stays that way, because the previous two were both found by review after the fact.
+--- old
+				"phase %q is not one this build models", phase))
+--- new
+				"phase %s is not one this build models", phase))
