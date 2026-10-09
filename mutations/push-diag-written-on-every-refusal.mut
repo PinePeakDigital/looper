@@ -1,8 +1,8 @@
 target: internal/push/push.go
 verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesBeingUnableToAsk'
 expect: must stay silent
-why:    the GREEN side: a report that genuinely is not there is the case the refusal's instruction is RIGHT for, and noting "could not be determined" on every ordinary refusal makes the note noise and teaches an operator to scroll past it — the same failure as an alarm that fires on gates nobody can fix. Over-firing is a failure mode, not a safe default.
+why:    the GREEN side: a report that genuinely is not there is the case the refusal's instruction is RIGHT for, and noting "could not be determined" on every ordinary refusal makes the note noise and teaches an operator to scroll past it — the same failure as an alarm that fires on gates nobody can fix. Over-firing is a failure mode, not a safe default. The condition is DISABLED rather than deleted so `attributable` stays referenced: a bare `if false {}` would leave it unused, and a mutation that does not compile scores broken and tests nothing. Same idiom, same reason, as push-check-store-default-removed and push-reportlanded-reads-a-relative-path.
 --- old
-		if !couldAsk && p.Diag != nil {
+		if !attributable && p.Diag != nil {
 --- new
-		if (couldAsk || true) && p.Diag != nil {
+		if (attributable || true) && p.Diag != nil {

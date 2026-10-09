@@ -949,3 +949,63 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 		})
 	}
 }
+
+// StorePath against the oracle, for every shape of $HOME and $REVIEW_LOOP_RUNS in
+// storePathCases. runlog computes STORE at import time from the environment, so importing it
+// under each combination and printing STORE IS the oracle's answer for that combination.
+//
+// This exists because `storePathCases`' own comment claimed these were "measured against the
+// oracle in internal/push/parity_test.go" and they were not — they had been measured by hand,
+// once, and written down as literals. Three cycle-2 agents found that independently. The
+// expectations in record_test.go stay (this skips when the Python is unreachable, and a gate
+// that can skip is not a gate on its own); what this adds is the half the comment promised.
+//
+// Nothing here touches the real store: only STORE's VALUE is read, never the file.
+func TestStorePathMatchesThePython(t *testing.T) {
+	script := runlogPath(t)
+	for _, c := range storePathCases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := exec.Command("python3", "-c",
+				"import os,sys,runpy;"+
+					"sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[1])));"+
+					"print(runpy.run_path(sys.argv[1])['STORE'])", script)
+			// A FRESH environment rather than os.Environ() plus overrides, because an
+			// inherited HOME cannot be removed by appending — and the absent-HOME case is
+			// the one where the two implementations diverged. PATH is carried so python3's
+			// own subprocesses work; nothing else is needed.
+			env := []string{"PATH=" + os.Getenv("PATH"), "REVIEW_LOOP_RUNS=" + c.env}
+			if !c.unsetHome {
+				env = append(env, "HOME="+c.home)
+			}
+			cmd.Env = env
+			var errOut strings.Builder
+			cmd.Stderr = &errOut
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
+			}
+			want := strings.TrimSpace(string(out))
+
+			// The Go side under the same environment. t.Setenv cannot unset, and unset is a
+			// distinct input here, so that case unsets by hand and restores in a defer.
+			t.Setenv("REVIEW_LOOP_RUNS", c.env)
+			if c.unsetHome {
+				prev, had := os.LookupEnv("HOME")
+				if err := os.Unsetenv("HOME"); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if had {
+						os.Setenv("HOME", prev)
+					}
+				}()
+			} else {
+				t.Setenv("HOME", c.home)
+			}
+			if got := StorePath(); got != want {
+				t.Errorf("StorePath = %q, python = %q (HOME=%q unset=%v REVIEW_LOOP_RUNS=%q)",
+					got, want, c.home, c.unsetHome, c.env)
+			}
+		})
+	}
+}

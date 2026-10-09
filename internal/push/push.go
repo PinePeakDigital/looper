@@ -146,10 +146,14 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // compares it byte-for-byte against push-check.py. So the distinction goes to stderr instead,
 // where neither implementation writes anything and nothing parses.
 //
-// couldAsk is true when EITHER probe produced a usable answer: gh returned the PR's comments,
-// or git returned a git dir so the pending file could at least be looked for. Both failing is
-// the only case an operator cannot act on from the refusal alone.
-func reportProbe(runID string, r *record.Run, repo string) (landed, couldAsk bool) {
+// attributable is whether the not-landed answer has a cause the refusal text already covers:
+// a probe ran and said no, or the run id was refused outright. It is FALSE only when neither
+// probe could run, which is the one case an operator cannot act on from the refusal alone.
+//
+// Named for that question rather than for "could a probe be asked", which is what the earlier
+// name `couldAsk` claimed and which needed an exception in a comment: the refused-run-id path
+// asks nothing and still wants the refusal taken at face value.
+func reportProbe(runID string, r *record.Run, repo string) (landed, attributable bool) {
 	// The guard travels with the path interpolation, not with one caller. It was in Check
 	// only, which made it a property of whoever remembered to call Check first — and the
 	// tests in this package already call ReportLanded directly, bypassing it. Measured:
@@ -166,16 +170,16 @@ func reportProbe(runID string, r *record.Run, repo string) (landed, couldAsk boo
 	}
 	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
 	if rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body"); rc == 0 {
-		couldAsk = true
+		attributable = true
 		if containsAll(out, needles) {
 			return true, true
 		}
 	}
 	rc, gitdir := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if rc != 0 || gitdir == "" {
-		return false, couldAsk
+		return false, attributable
 	}
-	// No couldAsk assignment here: git answered, so both paths below return true outright.
+	// No attributable assignment here: git answered, so both paths below return true outright.
 	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
 	if err != nil {
 		return false, true
@@ -343,10 +347,10 @@ func Check(p CheckParams) (Result, error) {
 		outcome = r.Finish.Outcome
 	}
 	var unreported string
-	if landed, couldAsk := reportProbe(p.RunID, r, p.Repo); !landed {
+	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
 			"run pr-report.py --post first"
-		if !couldAsk && p.Diag != nil {
+		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe
 			// ran. Said here rather than in the reason, which parity pins byte-for-byte.

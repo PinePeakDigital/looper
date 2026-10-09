@@ -1,7 +1,7 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: a_cycle_with_no_agents_field_spends_nothing
-why:    a cycle row with NO `agents` key spends nothing, which is the Python's `or 0`. 17 of the real store's cycle rows omit it, so reading absence as one inflates the spend on most runs and can push a run over its cap. Now anchored on AgentsSpent, the ONE place the rule lives: before the extraction it was written out three times (Convergence, Disclosure, push.Fingerprint) and this entry pinned only one of them, so the other two could have been edited without the catalog noticing — which is the duplication the extraction removed.
+why:    a cycle row with NO `agents` key spends nothing, which is the Python's `or 0`. Absent from ZERO of the real store's 61 cycle rows (measured 2026-10-09 two ways), so this pins the parity answer for a shape no writer produces rather than guarding live data — and `cmd_plan`/the loop's step j2 always write the key, so it is not writer-reachable today and nothing enforces that. An earlier version of this line claimed "17 of the real store's cycle rows omit it", which is the store's NUDGE-row count: the right store, the wrong question, and flattering, because it made the entry look like it guarded real data. The text it replaced ("absent from all 59 real cycle rows") was correct. Now anchored on AgentsSpent, the ONE place the rule lives: before the extraction it was written out three times (Convergence, Disclosure, push.Fingerprint) and this entry pinned only one of them, so the other two could have been edited without the catalog noticing — which is the duplication the extraction removed.
 --- old
 		if c.Agents != nil {
 			n += *c.Agents

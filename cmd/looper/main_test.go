@@ -333,3 +333,51 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 		t.Errorf("disclosure = %v, want the capped line derived from the fixture's cycle row", got.Disclose)
 	}
 }
+
+// The one line wiring the diagnostic to the real binary: `Diag: errOut` in runPushCheck's
+// CheckParams literal. Deleting it left `go test ./...` fully green, including all three tests
+// written for the feature — none of which went through the CLI. Reproduced before this existed.
+//
+// stdout must still carry only the decision: the note is a second stream, not a prefix.
+func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
+	// gh shimmed to fail AND a repo that is not a git dir, so neither probe can run — the one
+	// state that owes the note.
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dir := t.TempDir()
+	store := filepath.Join(dir, "runs.jsonl")
+	rows := []string{
+		`{"run_id":"pc3","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+		`{"run_id":"pc3","phase":"cycle","n":1,"applied":3,"agents":9}`,
+	}
+	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := doRun(t, "push-check", "-run-id", "pc3", "-store", store,
+		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
+	if code != 0 {
+		t.Fatalf("exit = %d: stdout %q stderr %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "could not be determined") {
+		t.Errorf("stderr = %q, want the diagnosis that the report check could not be run", errOut)
+	}
+	var got struct {
+		Push   bool   `json:"push"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the JSON Step 14 reads: %v\n%q", err, out)
+	}
+	if got.Push {
+		t.Errorf("the push was permitted despite an undeterminable report: %q", out)
+	}
+	// The refusal text is unchanged, which is what keeps the parity gate green.
+	if !strings.Contains(got.Reason, "pr-report.py --post") {
+		t.Errorf("reason = %q, want the unchanged owed-report refusal", got.Reason)
+	}
+}

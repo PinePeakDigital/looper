@@ -4,10 +4,10 @@ expect: did not reach the decision
 why:    the other half of the same unwiring. The report check can be correct in every detail and still never reach Decide, and the run then pushes with the reason "converged, evidence gate ok" while its summary exists nowhere.
 --- old
 	var unreported string
-	if landed, couldAsk := reportProbe(p.RunID, r, p.Repo); !landed {
+	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
 			"run pr-report.py --post first"
 --- new
 	var unreported string
-	if _, couldAsk := reportProbe(p.RunID, r, p.Repo); false {
-		_ = couldAsk
+	if _, attributable := reportProbe(p.RunID, r, p.Repo); false {
+		_ = attributable

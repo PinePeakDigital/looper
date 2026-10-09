@@ -2,6 +2,7 @@ package record
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -1288,9 +1289,15 @@ func contains(ss []string, want string) bool {
 }
 
 // storePathCases are every shape of `$HOME` and `$REVIEW_LOOP_RUNS` the two implementations
-// could answer differently about. All nine are measured against the oracle in
-// internal/push/parity_test.go; the expectations here state the answer directly, because that
-// parity test skips when the Python is unreachable and this must not.
+// could answer differently about. All TEN are compared against the oracle by
+// TestStorePathMatchesThePython in this package's parity_test.go, which imports runlog under
+// each combination and reads its STORE; the expectations here state the answer directly as
+// well, because that parity test skips when the Python is unreachable and this must not.
+//
+// An earlier version of this comment said "all nine" and named internal/push/parity_test.go,
+// where no such test existed — the hand measurement had been done once, in a shell, and
+// written up as though it were wired into CI. Three cycle-2 agents found it independently.
+// The parity test above was added to make the claim true rather than to soften it.
 //
 // The reason this matters more than it looks: a gate reading a different store than the oracle
 // answers `unknown` for EVERY run, with no error anywhere. `Finish` is nil, so a recorded
@@ -1431,5 +1438,39 @@ func TestConvergenceAnswersOnlyTheFourWords(t *testing.T) {
 		if seen[w] == 0 {
 			t.Errorf("the matrix never produced %q, so this test does not cover it", w)
 		}
+	}
+}
+
+// The passwd-failure branch of homeDirOrTilde, which is otherwise unreachable: a machine with
+// no passwd entry for its own uid. It was 0% covered and `return ""` in its place left the
+// whole suite green, while its comment claimed the caller's concatenation "rebuilds the
+// original string" — a checkable claim with nothing behind it.
+//
+// expanduser's own behaviour here is to return the path UNEXPANDED when the pwd lookup raises
+// KeyError, and that is what the "~" return reproduces.
+func TestAnUnresolvableHomeLeavesTheTildeInPlace(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_RUNS", "")
+	prev, had := os.LookupEnv("HOME")
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if had {
+			os.Setenv("HOME", prev)
+		}
+	}()
+	saved := userCurrent
+	userCurrent = func() (*user.User, error) { return nil, errors.New("no passwd entry") }
+	defer func() { userCurrent = saved }()
+
+	// Unexpanded, exactly as written — not "" and not a path rooted anywhere.
+	if got, want := StorePath(), "~/.claude/review-loop/runs.jsonl"; got != want {
+		t.Errorf("StorePath = %q, want %q — the tilde must survive an unresolvable home, "+
+			"because that is what expanduser does with a KeyError from pwd", got, want)
+	}
+	// And for a bare tilde, where the concatenation is empty before the root fallback.
+	t.Setenv("REVIEW_LOOP_RUNS", "~")
+	if got := StorePath(); got != "~" {
+		t.Errorf("StorePath = %q for a bare tilde with no resolvable home, want %q", got, "~")
 	}
 }

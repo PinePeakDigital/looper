@@ -868,11 +868,16 @@ func (r *Run) Disclosure() (string, error) {
 //
 // Exported and shared by every reader for the reason runlog.py gives for `cycles_of`: it
 // "exists as a function rather than inline so that convergence(), disclosure() and pr-report
-// cannot read the list three different ways — which is exactly what had happened:
-// disclosure() read the raw list and the other two read this one, so a rendered report said
-// 'CAPPED at 11 of 8 agents' above a table showing 8." This port kept the cycle LIST shared
-// and then re-derived the SUM three times, which is the same hazard one level down: three
-// copies of the nil-handling rule, any one of which can be edited without the others.
+// cannot read the list three different ways". The divergence it names — a rendered report
+// saying "CAPPED at 11 of 8 agents" above a table showing 8 — was REPRODUCED IN A FIXTURE and
+// never seen on a real PR, which that docstring says in the sentence immediately after, adding
+// that "blurring 'reproduced' into 'observed' is how an invented measurement got committed
+// here twice". An earlier version of this comment quoted the first half and dropped the
+// second, and the commit message said "after exactly this incident".
+//
+// The hazard does not need the incident: this port kept the cycle LIST shared and then
+// re-derived the SUM three times, so three copies of one nil-handling rule existed and any
+// could be edited without the others. That is the whole argument.
 //
 // NOT named Spend: mutations/record-unlisted-derivation-goes-unguarded.mut injects a method
 // by that name, and a mutation that does not compile scores broken and tests nothing.
@@ -975,23 +980,32 @@ func StorePath() string {
 	// CLEANS its arguments, so Join("", ".claude/x") drops the empty element and yields the
 	// RELATIVE `.claude/x` where the Python yields `/.claude/x` — measured, and the reason
 	// this function is not one line shorter.
-	expanded := strings.TrimRight(homeDir(), "/") + p[1:]
+	expanded := strings.TrimRight(homeDirOrTilde(), "/") + p[1:]
 	if expanded == "" {
 		return "/"
 	}
 	return expanded
 }
 
-// homeDir is expanduser's notion of `~`, which is not os.UserHomeDir's. expanduser branches on
+// userCurrent is os/user.Current, as a variable so a test can make it fail. The branch below
+// it is otherwise unreachable — a machine with no passwd entry for its own uid — and it
+// carries a correctness CLAIM about what the caller then does with "~", which `return ""`
+// left the entire suite green. A one-word seam is cheaper than an untestable claim.
+var userCurrent = user.Current
+
+// homeDirOrTilde is expanduser's notion of `~`, which is not os.UserHomeDir's. Named for the
+// fallback rather than for the happy path: on a failed passwd lookup it returns the literal
+// "~", which is not a directory, and a name saying "home directory" would have hidden the one
+// return value a reader needs to notice. expanduser branches on
 // whether HOME is in the environment AT ALL: present-but-blank yields "", and absent falls back
 // to the passwd entry. os.UserHomeDir collapses both into one error, so it cannot express either
 // answer — and a caller that treats its error as "leave the tilde alone" diverges from the
 // oracle in both directions at once.
-func homeDir() string {
+func homeDirOrTilde() string {
 	if v, set := os.LookupEnv("HOME"); set {
 		return v // including "", which is what expanduser does with a blank HOME
 	}
-	if u, err := user.Current(); err == nil {
+	if u, err := userCurrent(); err == nil {
 		return u.HomeDir // pwd.getpwuid(os.getuid()).pw_dir
 	}
 	// expanduser returns the path unexpanded when the passwd lookup raises KeyError. Returning

@@ -1,0 +1,12 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeReportsBothAnswers'
+expect: a_refused_run_id_is_attributable
+why:    a refused run id and an unrunnable probe are different facts. The id was well-formed enough to answer and the answer is no, so the refusal has a stateable cause; conflating it with "could not ask" makes Check emit the stderr diagnosis blaming a missing gh/git for what is actually a bad -run-id, pointing the operator at the wrong repair. Unobservable through Check, which only reads the second value when the first is false AND the reason is already fixed — so this needed the direct reportProbe test. Reproduced: this exact flip left the whole package green.
+--- old
+		return false, true
+	}
+	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
+--- new
+		return false, false
+	}
+	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)

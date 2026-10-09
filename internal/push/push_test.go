@@ -748,3 +748,69 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		}
 	})
 }
+
+// reportProbe's two return values on every path. Four of its six were unasserted: the second
+// value is observable through Check only when the first is false, so its value on every
+// landed=true path was structurally invisible, and ReportLanded discards it. Reproduced before
+// this existed — flipping the refused-id return and the shared final return both left the
+// whole package green.
+//
+// Called directly, which needs no export: this file is `package push`.
+func TestReportProbeReportsBothAnswers(t *testing.T) {
+	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
+	good := Fingerprint(r)
+
+	t.Run("a refused run id is attributable without asking anything", func(t *testing.T) {
+		// Nothing runs, and `attributable` is still true: the refusal has a cause the caller
+		// can state. This is the path whose name the rename was about.
+		shimGh(t, "exit 1")
+		dir, _ := repo(t)
+		landed, attributable := reportProbe("../escape", r, dir)
+		if landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, true)", landed, attributable)
+		}
+	})
+
+	t.Run("gh matches", func(t *testing.T) {
+		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(good, "\\n")
+		shimGh(t, "printf '"+body+"\\n'")
+		dir, _ := repo(t)
+		if landed, attributable := reportProbe("run1", r, dir); !landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (true, true)", landed, attributable)
+		}
+	})
+
+	t.Run("gh answers without a match and git has no report", func(t *testing.T) {
+		shimGh(t, "printf 'unrelated\\n'")
+		dir, _ := repo(t)
+		if landed, attributable := reportProbe("run1", r, dir); landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered", landed, attributable)
+		}
+	})
+
+	t.Run("the pending file matches", func(t *testing.T) {
+		shimGh(t, "exit 1")
+		dir, gitdir := repo(t)
+		landReport(t, gitdir, "run1", good)
+		if landed, attributable := reportProbe("run1", r, dir); !landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (true, true)", landed, attributable)
+		}
+	})
+
+	t.Run("the pending file contradicts the record", func(t *testing.T) {
+		shimGh(t, "exit 1")
+		dir, gitdir := repo(t)
+		landReport(t, gitdir, "run1", []string{"## review-loop", "1 cycle(s) · 1 agent(s)"})
+		if landed, attributable := reportProbe("run1", r, dir); landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, true) — git answered", landed, attributable)
+		}
+	})
+
+	t.Run("neither probe can run", func(t *testing.T) {
+		shimGh(t, "exit 1")
+		if landed, attributable := reportProbe("run1", r, t.TempDir()); landed || attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, false) — this is the ONLY path "+
+				"where the refusal has no stateable cause", landed, attributable)
+		}
+	})
+}

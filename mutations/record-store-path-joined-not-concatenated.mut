@@ -3,6 +3,6 @@ verify: go test ./internal/record/ -count=1 -run 'TestStorePathShapes'
 expect: a_blank_home_is_used,_not_rejected
 why:    expanduser is `userhome.rstrip('/') + path[i:]`, and the remainder's LEADING SLASH is what makes the result absolute. Drop it and a blank HOME yields the relative `.claude/review-loop/runs.jsonl` where the Python yields `/.claude/...` — the exact form this bug took before it was fixed, when it was written as filepath.Join(home, strings.TrimPrefix(p[1:], "/")): Join CLEANS its arguments, so the empty home element disappears. Expressed here without filepath, which this file no longer imports — a mutation that does not compile scores broken and tests nothing, which is how the first version of this entry failed. The relative path is the dangerous half: it resolves against the working directory, so the gate reads a file that never exists and every run derives `unknown` with no error.
 --- old
-	expanded := strings.TrimRight(homeDir(), "/") + p[1:]
+	expanded := strings.TrimRight(homeDirOrTilde(), "/") + p[1:]
 --- new
-	expanded := strings.TrimRight(homeDir(), "/") + strings.TrimPrefix(p[1:], "/")
+	expanded := strings.TrimRight(homeDirOrTilde(), "/") + strings.TrimPrefix(p[1:], "/")
