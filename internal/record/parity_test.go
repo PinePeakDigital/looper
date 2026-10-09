@@ -462,10 +462,10 @@ var refusedNames = map[string][]string{
 	// and wanting it asserted nothing at all. Both subtests stayed GREEN when the json error
 	// was stripped of every field name, which is the same vacuity this map was added to fix,
 	// one wrapper further down. The struct-qualified path is text only encoding/json emits.
-	"executed entry is not a dict":                {"executed", `gate(s) "g":`},
+	"executed entry is not a dict":                {"Finish.executed", `gate(s) "g":`},
 	"gate false status is unreported":             {"status", `gate(s) "g":`},
 	"gate small-integer status renders as itself": {"status", `gate(s) "g":`},
-	"gate spec is not a dict":                     {"gates", `gate(s) "g":`},
+	"gate spec is not a dict":                     {"Plan.gates", `gate(s) "g":`},
 	"gate true status renders as True":            {"status", `gate(s) "g":`},
 	"gate zero status is unreported":              {"status", `gate(s) "g":`},
 }

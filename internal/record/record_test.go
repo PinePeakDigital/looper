@@ -115,7 +115,7 @@ func TestConvergenceRules(t *testing.T) {
 		// The `c.Agents != nil` arm of the spend sum, which also survived. Absence must
 		// contribute 0, matching the Python's `or 0`; a mutant contributing 1 instead needs
 		// a cap small enough for one agent to cross it, which no case had. Not reachable
-		// from the writer (`--agents` is required=True) and absent from all 57 real cycle
+		// from the writer (`--agents` is required=True) and absent from all 59 real cycle
 		// rows, so this pins a parity claim that would otherwise stand with nothing behind
 		// it rather than guarding a live defect.
 		{"a cycle with no agents field spends nothing", Halted, []string{
@@ -815,8 +815,11 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		if n := len(runs["r"].Err.Error()); n > 64*1024 {
 			t.Errorf("the error is %d bytes; a corrupt store must not produce a message nobody can print", n)
 		}
-		if got := runs["r"].Err.Error(); !strings.Contains(got, "more rows did not decode") {
-			t.Errorf("the cap must say it elided rows, or it hides the scale of the problem; got %v", got)
+		// The TOTAL, not the cap. An earlier version printed maxRunErrs, which made the
+		// whole error byte-identical for 200, 2,000 and 10,000 bad rows while its comment
+		// claimed the count could not be hidden.
+		if got := runs["r"].Err.Error(); !strings.Contains(got, "2000 rows did not decode in total") {
+			t.Errorf("the cap must report how many rows actually failed, not how many it listed; got %v", got)
 		}
 	})
 }

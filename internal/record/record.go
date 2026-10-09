@@ -48,8 +48,9 @@ import (
 // decided there, on the measurement that no row in the store holds a null value in any
 // count a derivation READS: `applied`, `asked`, `agents`, `unresolved_asks`, `n` and
 // `agent_cap` have zero nulls between them. Not "no null count" flatly — `subagent_tokens`
-// is null in 47 of 58 cycle rows, which the lines above already say, and nothing here
-// derives from it.
+// is null in 48 of 59 cycle rows (measured 2026-10-08; the figure two paragraphs up is
+// pinned at 8c07d63 and reads 46 of 57, which is the same fact at an earlier store), and
+// nothing here derives from it.
 type GateSpec struct {
 	Planned string `json:"planned"`
 }
@@ -174,11 +175,21 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// What this does NOT match is RETENTION, and the parity argument above covers only
 	// record size. `runlog.py:136` is `deque(fh, maxlen=limit)`, which streams and holds at
 	// most `limit` lines; this holds every line and applies the limit afterwards, so
-	// retention is O(file) — measured at roughly 3-4x file size resident (a 200 MiB store
-	// costs ~600 MiB to return one run with limit=1). Deliberately not fixed: every caller
-	// passes 0, which reads the whole store by design, so a ring buffer would bound a path
-	// nothing takes. The narrow claim is the true one — `limit` bounds what is RETURNED, not
-	// what is read. Fix the retention when a caller first passes a limit.
+	// retention is O(file) rather than O(limit).
+	//
+	// The cost, measured on a 200 MiB store built by repeating the real one (which averages
+	// 936 bytes a line): 231 MiB allocated and 218-231 MiB heap to return one run at
+	// limit=1. That is 1.1-1.2x. An earlier version of this comment said "3-4x file size
+	// resident (~600 MiB)", which was wrong three ways: the figure came from a store that
+	// was ONE 200 MiB line, it quoted a heap number as resident, and it blamed this slice
+	// when the identical store costs the identical amount at limit=0 — a single oversized
+	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
+	//
+	// Not fixed, and the honest reason is not "every caller passes 0": nothing outside this
+	// package's tests calls Load at all, and two tests do pass a limit. It is that 1.1x on a
+	// 143 KiB store buys nothing. The claim worth keeping is the narrow one — `limit` bounds
+	// what is RETURNED, not what is read. Revisit when a caller passes a limit over a store
+	// big enough for the difference to matter.
 	var lines []string
 	br := bufio.NewReader(f)
 	for {
@@ -307,6 +318,14 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			// above, which is what load()'s setdefault does — a run known only by a nudge
 			// exists and has no cycles — and the guard above has already established that
 			// the row carries nothing a derivation would have read off the merged run.
+		}
+	}
+	// The elision line goes here, not in setErr, because only now is the total known.
+	for _, r := range runs {
+		if r.errN > maxRunErrs {
+			r.Err = errors.Join(r.Err, fmt.Errorf(
+				"run %q: %d rows did not decode in total; the first %d are listed above",
+				r.ID, r.errN, maxRunErrs))
 		}
 	}
 	return runs, nil
@@ -466,12 +485,11 @@ func (r *Run) setErr(lineNo int, phase string, err error) {
 	r.errN++
 	if r.errN > maxRunErrs {
 		// Bounded, because accumulating without a cap turned a store with 10,000 bad rows
-		// for one run into a 1.3 MB error. The count still says how many there were, so the
-		// cap cannot hide the scale of the problem — only the repetition.
-		if r.errN == maxRunErrs+1 {
-			r.Err = errors.Join(r.Err, fmt.Errorf(
-				"run %q: more rows did not decode; only the first %d are listed", r.ID, maxRunErrs))
-		}
+		// for one run into a 1.3 MB error. The TOTAL is reported by Load once the loop ends
+		// — see the finalise pass — because it is not known here: this is called per row,
+		// and an earlier version wrote the line mid-loop and printed maxRunErrs instead,
+		// which made the whole error byte-identical for 200, 2,000 and 10,000 bad rows while
+		// its comment claimed the count could not be hidden.
 		return
 	}
 	r.Err = errors.Join(r.Err, fmt.Errorf(

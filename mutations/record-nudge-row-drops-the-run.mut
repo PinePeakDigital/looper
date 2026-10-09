@@ -1,0 +1,14 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a run known only by a nudge must still exist
+why:    runlog.load does `runs.setdefault(rid, {})` BEFORE it looks at the phase, so a run known only by a nudge row exists and has no cycles — and review-stats' run total and in-flight count both read it. RESTORED after being retired on the false reasoning that the defect was no longer expressible: it is, by decoding the phase early and skipping before the run is created, which is what this mutation does. The original entry was `broken` (it switched on env.Phase, now a json.RawMessage) and needed re-anchoring rather than retiring — a non-compiling mutation tests nothing, but that is a reason to fix the mutation, not to drop the rule.
+--- old
+		r := runs[env.RunID]
+		if r == nil {
+--- new
+		var ph0 string
+		if json.Unmarshal(env.Phase, &ph0) == nil && ph0 == "nudge" {
+			continue
+		}
+		r := runs[env.RunID]
+		if r == nil {
