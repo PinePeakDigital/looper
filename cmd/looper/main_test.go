@@ -478,9 +478,19 @@ func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
 // two halves refuse together, by the same measurement.
 func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 	store := prReportStore(t, "pr1")
+	// A run that is PRESENT and says nothing: a row filed under a phase the typed decode does
+	// not own creates a *Run with no plan, no cycles and no finish. `r == nil` missed it, and
+	// that narrower test is the one PR #4's review rejected in the sibling gate. Measured
+	// before the fix: this store printed a complete, plausible report reading
+	// `0 cycle(s) · 0 agent(s)` and exited 0 — exactly the fingerprint push-check accepts.
+	nudgeOnly := filepath.Join(t.TempDir(), "runs.jsonl")
+	if err := os.WriteFile(nudgeOnly, []byte(`{"run_id":"pr1","phase":"nudge"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct{ name, id, store string }{
 		{"a mistyped run id", "pr2", store},
 		{"a store that does not exist", "pr1", filepath.Join(t.TempDir(), "absent.jsonl")},
+		{"a run known only by a nudge", "pr1", nudgeOnly},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errOut := doRun(t, "pr-report", "-run-id", c.id, "-store", c.store)
@@ -582,4 +592,72 @@ func TestPrReportDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 	if !strings.Contains(out, "1 cycle(s) · 9 agent(s)") {
 		t.Errorf("the store named by $REVIEW_LOOP_RUNS was not read:\n%s", out)
 	}
+}
+
+// readNarrative's *os.File branch, which no test reached: every other test drives run() with a
+// strings.Reader, so the type assertion always failed and the tty check — the thing the
+// function's own comment says it exists for — never ran. os.Stdin in production is always an
+// *os.File, so this was the shape that ships.
+func TestTheNarrativeReadsARealFile(t *testing.T) {
+	t.Run("a regular file is read through", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "narrative.md")
+		if err := os.WriteFile(p, []byte("from a real file\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		got, err := readNarrative("", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "from a real file\n" {
+			t.Errorf("a regular *os.File was not read through: %q", got)
+		}
+	})
+
+	t.Run("a pipe is read through", func(t *testing.T) {
+		rd, wr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			_, _ = wr.WriteString("from a pipe")
+			_ = wr.Close()
+		}()
+		got, err := readNarrative("", rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "from a pipe" {
+			t.Errorf("a pipe was not read through: %q", got)
+		}
+	})
+
+	t.Run("a character device is not read at all", func(t *testing.T) {
+		// The branch the comment exists for: an interactive run must not block on a read
+		// nobody will feed. /dev/null is a character device, so it takes the same path a
+		// terminal does without needing one.
+		f, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode()&os.ModeCharDevice == 0 {
+			t.Skipf("%s is not a character device on this platform", os.DevNull)
+		}
+		got, err := readNarrative("", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "" {
+			t.Errorf("a character device was read: %q", got)
+		}
+	})
 }

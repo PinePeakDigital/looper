@@ -66,7 +66,8 @@ type GateSpec struct {
 // null or an empty status renders as nothing. A *string cannot hold that distinction:
 // encoding/json leaves a pointer nil for an absent key and for JSON null alike, and Go read
 // "**unreported**" out of existence for `{"evidence": {"reason": "..."}}`, a shape `runlog
-// finish --gates-executed` accepts and an LLM writes. UnmarshalJSON runs only when the key is
+// finish --executed` accepts — its unexplained-gates check passes any entry carrying a
+// non-empty `reason`, whatever its status — and an LLM writes. UnmarshalJSON runs only when the key is
 // present, so Present is exactly "the key was there".
 //
 // A status that is not a string is still a decode error: the Python rendered `status: true` as
@@ -129,12 +130,15 @@ type Cycle struct {
 	Agents          *int  `json:"agents"`
 	AnalysisChanged *bool `json:"analysis_changed"`
 
-	// Read only by the report's cycle table. N is a pointer because the Python prints it
+	// Read only by the report's cycle table. Number is a pointer because the Python prints it
 	// RAW — `{c.get('n')}` with no `or`, so an absent n renders the literal "None" — and a
-	// pointer is the only way to reproduce that rather than silently printing 0. The three
+	// pointer is the only way to reproduce that rather than silently printing 0. Named
+	// Number, not N: the record's KEY is `n` and the json tag carries that, but a
+	// single-letter field beside DefectFindings and SubagentTokens made a reader open the
+	// comment to learn it is an ordinal rather than one more count. The three
 	// counts below are `or 0` on the Python side, so absence is zero and the pointer only
 	// exists to keep the folded-key guard able to see them.
-	N               *int `json:"n"`
+	Number          *int `json:"n"`
 	DefectFindings  *int `json:"defect_findings"`
 	CommentFindings *int `json:"comment_findings"`
 	SubagentTokens  *int `json:"subagent_tokens"`
@@ -434,6 +438,10 @@ func Load(path string, limit int) (map[string]*Run, error) {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
+			if err := foldedListEntryKeys([]byte(line), "escalations", "gate", "reason"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
 			var fi Finish
 			if err := json.Unmarshal([]byte(line), &fi); err != nil {
 				r.setErr(lineNo, phase, nameBadGates(line, "executed", err, func(v json.RawMessage) error {
@@ -534,6 +542,35 @@ func foldedEntryKeys(raw []byte, field string, names ...string) error {
 	for _, g := range gates {
 		if err := foldedKeys(entries[g], names...); err != nil {
 			return fmt.Errorf("%s gate %s: %w", field, quoteCapped(g), err)
+		}
+	}
+	return nil
+}
+
+// foldedListEntryKeys is foldedEntryKeys for a field whose value is an ARRAY of objects, which
+// `escalations` is and `gates`/`executed` are not. foldedEntryKeys cannot cover it: it decodes
+// the field into a map and returns nil when that fails, so pointing it at a list silently
+// checks nothing — a guard that reads as present and is not.
+//
+// Reached by `{"escalations":[{"Gate":"x"}]}`: encoding/json folds `Gate` onto the `gate` field
+// and renders a gate name the Python's exact `e.get('gate')` never sees, where it prints the
+// literal "None". That is the same forgery this file's other folded-key guards exist for, and
+// `escalations` was the one new entry-shaped field in the report slice that had none.
+func foldedListEntryKeys(raw []byte, field string, names ...string) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	if _, ok := top[field]; !ok {
+		return nil
+	}
+	var entries []json.RawMessage
+	if json.Unmarshal(top[field], &entries) != nil {
+		return nil // not a list; the caller's own decode reports that
+	}
+	for i, e := range entries {
+		if err := foldedKeys(e, names...); err != nil {
+			return fmt.Errorf("%s entry %d: %w", field, i, err)
 		}
 	}
 	return nil
@@ -977,6 +1014,26 @@ func (r *Run) Disclosure() (string, error) {
 // One return value, not two, so it is deliberately NOT one of the `func() (T, error)`
 // derivations `refusingDerivations` enumerates — it answers a question about the cycle rows
 // rather than a verdict about the run, and it has no decode of its own to refuse.
+// Empty reports whether the record derived NOTHING for this run: no plan row, no cycle row and
+// no finish row. It is the question both halves of the push gate ask, and it lives here so they
+// cannot answer it differently.
+//
+// `r == nil` alone is the narrower, wrong answer, and it shipped once in internal/push before
+// PR #4's review caught it: a row carrying the id under a phase the typed decode does not own —
+// `{"run_id":"x","phase":"nudge"}` — creates a *Run that says nothing, and from that the
+// convergence derives `unknown` (a DISCLOSURE, not a block), no recorded outcome can block, and
+// the report's fingerprint collapses to `0 cycle(s) · 0 agent(s)`. That fingerprint is exactly
+// what push-check requires, so a report rendered off nothing SATISFIES the gate with no forgery.
+// Measured again in the report slice: `looper pr-report` on a nudge-only store printed a
+// complete, plausible report and exited 0.
+//
+// Deliberately NOT the shape ValidRunID takes, which internal/report duplicates on purpose so
+// the writer and the reader of the pending path cannot agree by accident. Here the opposite is
+// wanted — the two must agree — so there is one definition.
+func (r *Run) Empty() bool {
+	return r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
+}
+
 func (r *Run) AgentsSpent() int {
 	var n int
 	for _, c := range r.Cycles {

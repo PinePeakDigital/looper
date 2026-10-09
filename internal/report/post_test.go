@@ -1,11 +1,13 @@
 package report
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinepeakdigital/looper/internal/push"
 	"github.com/pinepeakdigital/looper/internal/record"
@@ -112,17 +114,27 @@ func TestFindPRDistinguishesTheThreeCauses(t *testing.T) {
 	}
 }
 
-// A detached HEAD and an unresolvable branch have no PR by this route, and the report still
-// has to survive — so this is a probe failure, not a crash and not a claim about PRs.
+// A detached HEAD has no PR by this route, and the report still has to survive — so this is a
+// probe failure, not a crash and not a claim about PRs.
+//
+// Really detached, not the string "HEAD" passed as the branch. That is what this asserted
+// while FindPR read `rev-parse --abbrev-ref HEAD`, whose answer for a detached HEAD IS the
+// literal "HEAD" — so the test fed the code its own magic value instead of producing the state
+// that generates it. `git branch --show-current` answers empty here, and the magic string is
+// gone, so the fixture has to make a real detached HEAD.
 func TestFindPRWithNoBranchToAskAbout(t *testing.T) {
 	dir := gitRepo(t)
+	// No hooks: this machine has a global pre-commit hook that reaches the network.
+	mustGit(t, dir, "-c", "core.hooksPath=/dev/null", "-c", "user.email=t@example.com",
+		"-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
+	mustGit(t, dir, "checkout", "-q", "--detach")
 	log := shimGh(t, `echo 7`)
-	got := FindPR(dir, "HEAD")
+	got := FindPR(dir, "")
 	if got.State != GhFailed {
-		t.Fatalf("state %v, want GhFailed", got.State)
+		t.Fatalf("state %v number %q detail %q, want GhFailed", got.State, got.Number, got.Detail)
 	}
 	if calls(t, log) != "" {
-		t.Errorf("gh was asked anyway, with a branch name of %q: %s", "HEAD", calls(t, log))
+		t.Errorf("gh was asked about a PR with no branch to ask about: %s", calls(t, log))
 	}
 }
 
@@ -275,8 +287,22 @@ func TestWritePending(t *testing.T) {
 		if _, err := WritePending(dir, "../../../../tmp/evil", "halted", postBody); err == nil {
 			t.Error("a traversing run id was accepted")
 		}
-		if _, err := os.Stat("/tmp/evil.md"); err == nil {
-			t.Error("the traversal landed")
+		// And nothing was written ANYWHERE under the repo. The earlier version of this
+		// assertion checked os.Stat("/tmp/evil.md") and could not fail: the filename prefix
+		// ends in a dot, so the id's first ".." glues onto it as "report..." — not a parent
+		// reference — and the naive path resolves to <repo>/tmp/evil.md, measured. A
+		// completely unguarded WritePending would have passed that check.
+		var found []string
+		if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(path, "evil.md") {
+				found = append(found, path)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(found) > 0 {
+			t.Errorf("the traversal landed at %v", found)
 		}
 	})
 	t.Run("no git dir is an error, not a silent drop", func(t *testing.T) {
@@ -390,5 +416,198 @@ func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
 	if push.ReportLanded("fp02", r, dir) {
 		t.Error("one run's report, filed under another run's id, satisfied that run's gate — " +
 			"the marker is not being checked")
+	}
+}
+
+// The branches a coverage pass found at execution count 0. Each is a real path with its own
+// failure mode, and each was reachable only by a shape no existing test produced.
+func TestTheBranchesNothingReached(t *testing.T) {
+	t.Run("commas carries a sign", func(t *testing.T) {
+		// The `neg` branch was never entered: every fixture and every real run sums
+		// subagent_tokens to a non-negative number. MinInt is here because the obvious
+		// recursive rewrite of this function overflows the stack on it — see commas' comment.
+		for _, c := range []struct {
+			n    int
+			want string
+		}{
+			{0, "0"}, {999, "999"}, {1000, "1,000"}, {-1, "-1"}, {-999, "-999"},
+			{-1000, "-1,000"}, {-1234567, "-1,234,567"},
+			{-9223372036854775808, "-9,223,372,036,854,775,808"},
+		} {
+			if got := commas(c.n); got != c.want {
+				t.Errorf("commas(%d) = %q, want %q", c.n, got, c.want)
+			}
+		}
+	})
+
+	t.Run("firstLine truncates a multi-line stderr", func(t *testing.T) {
+		// firstLine exists so a multi-line gh stderr cannot become several diag lines or
+		// reach a PR comment. Every test fed it one line, so only the pass-through half ran.
+		if got := firstLine("line one\nline two\nline three"); got != "line one" {
+			t.Errorf("firstLine kept more than the first line: %q", got)
+		}
+		if got := firstLine("  padded  \nsecond"); got != "padded" {
+			t.Errorf("firstLine did not trim: %q", got)
+		}
+		if got := firstLine("only one"); got != "only one" {
+			t.Errorf("firstLine altered a single line: %q", got)
+		}
+	})
+
+	t.Run("FindPR resolves the branch itself when none is given", func(t *testing.T) {
+		// This is the PRODUCTION call shape: -branch defaults to "", so runPrReport passes
+		// "" through and FindPR asks git. Every test passed an explicit branch, so the one
+		// path a real run takes was the one path never exercised.
+		dir := gitRepo(t)
+		// No commit is made: `git branch --show-current` answers on an unborn branch, which
+		// is the measurement that moved FindPR off `rev-parse --abbrev-ref HEAD`.
+		mustGit(t, dir, "checkout", "-q", "-b", "feat/detected")
+		log := shimGh(t, `echo 11`)
+		got := FindPR(dir, "")
+		if got.State != PRFound || got.Number != "11" {
+			t.Fatalf("state %v number %q, want PRFound/11 (detail %q)", got.State, got.Number, got.Detail)
+		}
+		if !strings.Contains(calls(t, log), "--head feat/detected") {
+			t.Errorf("gh was not asked about the branch git reported:\n%s", calls(t, log))
+		}
+	})
+
+	t.Run("WritePending tells an unrunnable git from a non-repo", func(t *testing.T) {
+		// Two differently-worded errors, and only the second was covered. A regression that
+		// collapsed them — dropping the Runnable check — would have gone unnoticed.
+		noGit(t)
+		if _, err := WritePending(t.TempDir(), "abc123", "halted", postBody); err == nil ||
+			!strings.Contains(err.Error(), "git could not be run") {
+			t.Errorf("want a git-unrunnable error, got %v", err)
+		}
+	})
+
+	t.Run("a report that can reach nowhere at all is an error", func(t *testing.T) {
+		// The module's one stated invariant has two halves: never fail on a failed post, and
+		// DO fail when the body could not be preserved. The second half had no test: every
+		// Post test used a real git repo, where WritePending always succeeds.
+		noGh(t)
+		var diag strings.Builder
+		path, err := Post(PostParams{Repo: t.TempDir(), RunID: "post01", Branch: "feat/x",
+			Convergence: "capped", Body: postBody, Diag: &diag})
+		if err == nil {
+			t.Fatalf("Post returned nil error with nowhere to keep the report (path %q)", path)
+		}
+		if !strings.Contains(err.Error(), "could not be preserved") {
+			t.Errorf("the error does not say the report was lost: %v", err)
+		}
+	})
+
+	t.Run("a posted report whose local copy fails still succeeds", func(t *testing.T) {
+		// The deliberate swallow: the report IS posted, so losing the belt-and-braces copy
+		// must not fail the publish — it must say so and carry on.
+		dir := gitRepo(t)
+		shimGh(t, `case "$*" in "pr list"*) echo 9;; esac`)
+		// Replace .git with a file, so git can run but reports no common dir.
+		if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("not a repo\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var diag strings.Builder
+		if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+			Convergence: "capped", Body: postBody, Diag: &diag}); err != nil {
+			t.Fatalf("a failed local copy failed a successful post: %v", err)
+		}
+		if !strings.Contains(diag.String(), "local copy could not be written") {
+			t.Errorf("stderr does not say the local copy was lost: %q", diag.String())
+		}
+	})
+
+	t.Run("a hung subprocess is killed and reads as a failure", func(t *testing.T) {
+		// The timeout branch, which a const budget made untestable: shBudget is threaded
+		// through shTimeout so this costs milliseconds instead of twenty seconds.
+		dir := gitRepo(t)
+		shimGh(t, `sleep 5`)
+		r := shTimeout(dir, time.Millisecond, "gh", "pr", "list")
+		// It RAN, and it failed. Runnable stays true on purpose: folding a kill in with
+		// not-installed would answer "install gh", which is the one action that cannot help
+		// a gh that hung. Code is normalised to 1 because Go reports -1 for a
+		// signal-terminated process and no caller here could read -1 as "cannot tell".
+		if !r.Runnable {
+			t.Errorf("a killed subprocess reads as NOT RUNNABLE, which would advise installing "+
+				"gh for a gh that is installed and hung: %+v", r)
+		}
+		if r.Code == 0 {
+			t.Errorf("a killed subprocess reads as success, so a hung gh would look like an "+
+				"answer about whether a PR exists: %+v", r)
+		}
+		if !strings.Contains(r.Err, "signal") {
+			t.Errorf("the detail does not name the kill, so the diag line cannot say why: %+v", r)
+		}
+	})
+}
+
+// The label must move even when the comment did not land: the Python applies it whenever a PR
+// number is known, and the runs whose comment failed are exactly the ones whose report is
+// hardest to find, so they need the at-a-glance signal most.
+func TestTheLabelMovesEvenWhenTheCommentFails(t *testing.T) {
+	dir := gitRepo(t)
+	log := shimGh(t, `case "$*" in
+	  "pr list"*) echo 9;;
+	  "pr comment"*) echo "rate limited" >&2; exit 1;;
+	  *) exit 0;;
+	esac`)
+	var diag strings.Builder
+	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	c := calls(t, log)
+	if !strings.Contains(c, "pr edit 9 --add-label review:halted") {
+		t.Errorf("the label was dropped because the comment failed:\n%s", c)
+	}
+	if !strings.Contains(diag.String(), "comment failed") {
+		t.Errorf("stderr does not report the comment failure: %q", diag.String())
+	}
+}
+
+// A removal that fails leaves the PREVIOUS run's label standing beside the new one. Four of
+// applyLabel's five gh calls discarded their result, so that happened with no note anywhere —
+// the same discarded-stderr defect this whole slice exists to stop.
+func TestAFailedLabelRemovalIsReported(t *testing.T) {
+	dir := gitRepo(t)
+	shimGh(t, `case "$*" in
+	  "pr list"*) echo 9;;
+	  *"--remove-label review:converged"*) echo "label not found" >&2; exit 1;;
+	  *) exit 0;;
+	esac`)
+	var diag strings.Builder
+	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if !strings.Contains(diag.String(), "review:converged not removed") {
+		t.Errorf("a failed removal was silent, so a PR can carry two convergences at once: %q",
+			diag.String())
+	}
+	if !strings.Contains(diag.String(), "label review:halted") {
+		t.Errorf("the add was not reported: %q", diag.String())
+	}
+}
+
+// noGit is noGh's mirror: a PATH with gh but no git, so WritePending's two failure modes can
+// be told apart.
+func noGit(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

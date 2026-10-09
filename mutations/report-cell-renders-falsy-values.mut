@@ -1,8 +1,12 @@
 target: internal/report/report.go
 verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
 expect: --- FAIL:
-why:    the Python's cell() is `" ".join(str(text or "").split())`, and `or` tests FALSINESS: `cell(0)` is "" there, not "0". The store's roster really holds `findings: 0` — it renders as "ok,  finding(s)" with the value simply gone. This was the FIRST divergence this port produced, found by rendering all 42 real runs rather than by reading the Python, and it is the kind no reader would notice because "0 finding(s)" looks more correct than the truth. Dropping 0 from the falsy set leaves the other spellings, so the entry fails on the one value the store actually contains.
+why:    the Python's cell() is `" ".join(str(text or "").split())`, and `or` tests FALSINESS: `cell(0)` is "" there, not "0". The store's roster really does carry `findings: 0` — it renders as "ok,  finding(s)" with the value simply gone. This was the FIRST divergence this port produced, found by rendering all 42 real runs through both implementations rather than by reading the Python, and it is the kind no reader would question because "0 finding(s)" looks more correct than the truth. Removing the zero-VALUE test leaves the handful of non-numeric falsy spellings, so the entry fails on the one value the store actually contains. The test is on the value and not on a list of spellings for a reason of its own: the list enumerated `0`, `0.0` and `-0` and missed `-0.0`, which is the same defect one spelling over.
 --- old
-	case "0", "0.0", "-0", "false", "null", `""`:
+	if f, err := strconv.ParseFloat(t, 64); err == nil && f == 0 {
+		return ""
+	}
 --- new
-	case "0.0", "-0", "false", "null", `""`:
+	if f, err := strconv.ParseFloat(t, 64); err == nil && f == 0 && false {
+		return ""
+	}

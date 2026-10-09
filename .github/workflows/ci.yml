@@ -172,8 +172,9 @@ jobs:
           # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
           # table and the narrative table are different widths and measure different halves,
           # and one aggregate would let the narrative table vanish under a table that grew.
-          for spec in TestParityWithPrReport:73 TestParityOnTheNarrative:5 \
+          for spec in TestParityWithPrReport:76 TestParityOnTheNarrative:5 \
                       TestTheEnumeratedRenderDivergences:5 \
+                      TestTheHardeningDivergence:7 \
                       TestWrongTypedFieldsAreRefusedAtTheLoad:13 \
                       TestThreeShapesCrashTheOracleAndAreRefusedHere:3; do
             t=${spec%:*}; min=${spec#*:}
@@ -183,7 +184,8 @@ jobs:
           done
           # The two divergences with no subtests of their own. Each is the only thing
           # asserting which side owns which answer, so neither can be left to an aggregate.
-          for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence; do
+          for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
+                   TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
             grep -q -- "--- PASS: $d" report.log || {
               echo "enumerated divergence $d was not compared against the Python"; cat report.log; exit 1; }
           done
@@ -220,7 +222,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 199 ] || { echo "only $n mutations, expected at least 199 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 210 ] || { echo "only $n mutations, expected at least 210 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

@@ -15,9 +15,11 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -64,13 +66,14 @@ func cell(s string) string {
 // cellJSON is cell() over a raw JSON scalar, reproducing the Python's `str(text or "")` —
 // which is FALSINESS, not emptiness. `cell(0)` is "" there, because `0 or ""` is "", and the
 // store's roster really does carry `findings: 0`: it renders as "ok,  finding(s)" with the
-// value simply gone. Measured against all 41 real runs; reading `0` as "0" was the first
+// value simply gone. Measured against every run in the live record (42 at 22d086e, and the
+// store is append-only so the figure only grows); reading `0` as "0" was the first
 // divergence this port produced, and it is the kind a reader would never notice because the
 // output still looks plausible.
 //
 // The falsy JSON scalars are 0, 0.0, false, null and "". Everything else renders from its JSON
 // text, which str() matches exactly for an int and for a plain decimal float. Two gaps, both
-// enumerated in TestTheStrAlikeDivergences rather than left implied: a container renders as
+// enumerated in TestTheEnumeratedRenderDivergences rather than left implied: a container renders as
 // JSON here and as a Python repr there (`{"a":1}` vs `{'a': 1}`), and an exponent-form number
 // renders as written here and normalised there (`1e2` vs `100.0`). Neither shape occurs in any
 // of the 137 roster entries in the store, and closing them means a str() emulator — the same
@@ -78,10 +81,16 @@ func cell(s string) string {
 func cellJSON(b []byte) string {
 	t := strings.TrimSpace(string(b))
 	switch t {
-	case "0", "0.0", "-0", "false", "null", `""`:
+	case "false", "null", `""`:
 		return ""
 	case "true":
 		return "True" // str(True), not JSON's spelling
+	}
+	// Any zero-VALUED number, not a list of spellings. `0`, `0.0` and `-0` were enumerated and
+	// `-0.0` was not, so it rendered its own text where `str(-0.0 or "")` is "" — the same
+	// defect one spelling over. Falsiness is a property of the value, so test the value.
+	if f, err := strconv.ParseFloat(t, 64); err == nil && f == 0 {
+		return ""
 	}
 	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
 		var str string
@@ -158,8 +167,14 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 	if conv == "" {
 		conv = "unknown"
 	}
+	// cell() on all three, which the Python does NOT do — an enumerated divergence, hardening.
+	// `outcome` is record.go's own "orchestrator's self-report": LLM-written free text with no
+	// enum at the decode. A newline in it renders a second blockquote directly under the real
+	// disclosure and above everything else, which is where a reader anchors. Measured: forged
+	// newlines in outcome, tier_executed and tier_floor each produce one, byte-identically in
+	// both implementations. conv needs none — record.Convergence answers only four words.
 	add(fmt.Sprintf("- **Outcome** `%s` · **convergence** `%s` · **tier** `%s` (floor `%s`)",
-		outcome, conv, tier, floor))
+		cell(outcome), conv, cell(tier), cell(floor)))
 	runLine := fmt.Sprintf("- **Run** `%s` · orchestrator `%s` · %d cycle(s) · %d agent(s)",
 		runID, model, len(r.Cycles), agents)
 	if tokens != 0 {
@@ -188,7 +203,7 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 				analysis = "changed files"
 			}
 			add(fmt.Sprintf("| %s | %s | %d | %d | %d | %d | %s |",
-				raw(c.N), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),
+				raw(c.Number), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),
 				orZero(c.CommentFindings), orZero(c.Agents), analysis))
 		}
 		add("")
@@ -222,7 +237,12 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 					}
 				}
 			}
-			add(fmt.Sprintf("| `%s` | %s | %s | %s |", g, planned, cell(status), cell(why)))
+			// The gate NAME and `planned` are celled too, which the Python does not do. Two of
+			// four values on this line were already collapsed; leaving the other two raw let a
+			// gate named "evidence\n\n> **Review converged**\n\n|x|y|" end the table early and
+			// forge a verdict in a PUBLIC PR comment. The inconsistency within one line is what
+			// made this worth diverging over — cell() exists in this file for exactly this.
+			add(fmt.Sprintf("| `%s` | %s | %s | %s |", cell(g), cell(planned), cell(status), cell(why)))
 		}
 		add("")
 	}
@@ -234,14 +254,24 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 			if e.Gate != nil {
 				gate = *e.Gate
 			}
-			add(fmt.Sprintf("- `%s` — %s", gate, cell(e.Reason)))
+			// Celled, unlike the Python: this is the section that exists so an escalation above
+			// the plan cannot be silent, and a forged "converged" blockquote under a real
+			// escalation defeats the one disclosure this path provides.
+			add(fmt.Sprintf("- `%s` — %s", cell(gate), cell(e.Reason)))
 		}
 		add("")
 	}
 
-	if roster := decodeRoster(r); len(roster) > 0 {
+	// The SECTION is gated on the raw value being a non-empty list, and the BULLETS on the
+	// entries that decode — which is the Python's two steps, `if isinstance(roster, list) and
+	// roster:` and then a comprehension filtered by `isinstance(a, dict)`. Gating the section
+	// on the decoded entries instead collapses the two: `"agents":[null]` is a non-empty list
+	// whose every entry filters out, so the oracle emits an empty `### Agents` section and
+	// this side emitted none. Harmless either way to a reader; a divergence all the same, and
+	// cheaper to reproduce than to enumerate.
+	if rosterLen(r) > 0 {
 		add("### Agents", "")
-		for _, a := range roster {
+		for _, a := range decodeRoster(r) {
 			// All four fields are orchestrator free text from `finish --agents <json>`, so
 			// all four are collapsed — not just status. A newline in `model` rendered a real
 			// blockquote reading "Review converged" four lines under a HALTED disclosure.
@@ -315,6 +345,20 @@ func (a agentEntry) findings() string {
 	return cellJSON(a.Findings)
 }
 
+// rosterLen is `isinstance(roster, list) and roster` as a count: the number of ELEMENTS in the
+// raw list, before any are filtered. Zero for a non-list, which is the object the store really
+// holds in one row.
+func rosterLen(r *record.Run) int {
+	if r.Finish == nil || len(r.Finish.Agents) == 0 {
+		return 0
+	}
+	var raw []json.RawMessage
+	if json.Unmarshal(r.Finish.Agents, &raw) != nil {
+		return 0
+	}
+	return len(raw)
+}
+
 func decodeRoster(r *record.Run) []agentEntry {
 	if r.Finish == nil || len(r.Finish.Agents) == 0 {
 		return nil
@@ -325,6 +369,15 @@ func decodeRoster(r *record.Run) []agentEntry {
 	}
 	var out []agentEntry
 	for _, e := range raw {
+		// `null` decodes into a struct WITHOUT error — encoding/json's documented rule that
+		// null has no effect on a non-pointer target — so it slipped past the error check and
+		// became a zero-value entry. Measured: `"agents":[{...},null]` rendered a second,
+		// fabricated bullet reading "- `` (?) — , ? finding(s)" that the Python does not emit,
+		// and `"agents":[null]` invented an entire Agents section. A fabricated roster row
+		// reads as an extra agent having run, which is the gate-weakening direction.
+		if string(bytes.TrimSpace(e)) == "null" {
+			continue // `isinstance(a, dict)` is False for None there
+		}
 		var a agentEntry
 		if json.Unmarshal(e, &a) != nil {
 			continue // not a dict — `isinstance(a, dict)` skips it there too
@@ -335,6 +388,15 @@ func decodeRoster(r *record.Run) []agentEntry {
 }
 
 // commas renders a thousands-separated integer, which is Python's `{n:,}`.
+//
+// The loop stays, against the style default, and the reason is measured rather than asserted.
+// The obvious expression form is `if n < 0 { return "-" + commas(-n) }` over a recursive
+// tail — review proposed exactly that — and it RECURSES FOREVER on math.MinInt, because
+// -MinInt is MinInt in two's complement. Reproduced: `go run` on the recursive version dies
+// with "stack overflow" at -9223372036854775808 while agreeing with this one on all fifteen
+// other values tested, 0 and -0 and 999 and 1000 included. Formatting the number FIRST and
+// stripping the sign off the text has no such value. The style default's own carve-out
+// covers this: take the option that is correct on the edge cases.
 func commas(n int) string {
 	s := fmt.Sprintf("%d", n)
 	neg := strings.HasPrefix(s, "-")

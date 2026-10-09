@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/FindPR_resolves_the_branch_itself'
+expect: --- FAIL:
+why:    this is the PRODUCTION call shape — `-branch` defaults to empty, so runPrReport passes "" and FindPR asks git — and it was the one path no test exercised. `git rev-parse --abbrev-ref HEAD` is the obvious command and it answers wrongly twice: measured, it exits 128 on an UNBORN branch (a repo with no commits) while printing the literal "HEAD" on stdout, and on a detached HEAD it exits 0 printing "HEAD", so a caller needs a magic-string check to tell a branch named HEAD from no branch at all. `git branch --show-current` answers the question asked: the name, or empty, exit 0 either way.
+--- old
+		if r := sh(repo, "git", "branch", "--show-current"); r.Runnable && r.Code == 0 {
+--- new
+		if r := sh(repo, "git", "rev-parse", "--abbrev-ref", "HEAD"); r.Runnable && r.Code == 0 {

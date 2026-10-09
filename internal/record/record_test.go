@@ -1556,3 +1556,46 @@ func TestAnUnresolvableHomeLeavesTheTildeInPlace(t *testing.T) {
 		t.Errorf("StorePath = %q for a bare tilde with no resolvable home, want %q", got, "~")
 	}
 }
+
+// `escalations` was the one new entry-shaped field in the report slice with no folded-key
+// guard, and foldedEntryKeys could not have been it: that function decodes the field into a
+// MAP and returns nil when that fails, so pointing it at a JSON array checks nothing while
+// reading as a guard. Measured before the fix: `{"Gate":"x"}` decoded into Escalation.Gate as
+// "x" (encoding/json folds struct tags case-insensitively) where the Python's exact
+// `e.get('gate')` reads nothing and prints the literal "None" — the forgery every other
+// folded-key guard in this file exists for.
+func TestAFoldedEscalationKeyIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name, row string
+		refuse    bool
+	}{
+		{"a capitalised gate", `{"run_id":"r","phase":"finish","escalations":[{"Gate":"x","reason":"y"}]}`, true},
+		{"a capitalised reason", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","Reason":"y"}]}`, true},
+		{"a folded key on the second entry", `{"run_id":"r","phase":"finish","escalations":[{"gate":"a","reason":"b"},{"GATE":"x"}]}`, true},
+		// The exact keys are what this build reads; they must not be refused.
+		{"the exact keys", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","reason":"y"}]}`, false},
+		// A key the build does not model at all is ignored by both implementations.
+		{"an unmodelled key", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","note":"y"}]}`, false},
+		// Shapes the guard must pass through to the caller's own decode rather than swallow.
+		{"an empty list", `{"run_id":"r","phase":"finish","escalations":[]}`, false},
+		{"no escalations key", `{"run_id":"r","phase":"finish","outcome":"converged"}`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			runs, err := Load(store(t, plan40, c.row), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail on a store with one bad row: %v", err)
+			}
+			got := runs["r"].Err
+			if c.refuse {
+				if got == nil {
+					t.Fatalf("the row was accepted; a folded key reads a value the Python never sees")
+				}
+				if !strings.Contains(got.Error(), "escalations entry") {
+					t.Errorf("the error does not name the field and index: %v", got)
+				}
+			} else if got != nil {
+				t.Errorf("a legitimate row was refused: %v", got)
+			}
+		})
+	}
+}

@@ -17,7 +17,7 @@ import (
 // comparison would catch. So this compares the BODY, byte for byte — no json.dumps sits in
 // this path, unlike the push gate's, so there is nothing to decode around.
 //
-// The fixtures are deliberately not the real store. TestZZRealStoreParity compares all 42 real
+// The fixtures are deliberately not the real store. TestRealStoreParity compares all 42 real
 // runs and they agree, but the store exercises none of the shapes that actually diverged while
 // this port was written: measured over it, every gate carries a string status, every escalation
 // names a gate, every roster id is a string, and `planned` is always "run" or "skip". The
@@ -119,7 +119,10 @@ func TestParityWithPrReport(t *testing.T) {
 	}{
 		// The floor: a plan row and nothing else. Zero cycles is the `unknown` disclosure,
 		// which both must word identically because the push gate reads it as a DISCLOSURE
-		// rather than a block, and 22 of the 41 runs in the real store are this shape.
+		// rather than a block, and most of the real store is this shape — 22 of its 42 runs at
+		// 22d086e. Pinned to a commit because the store is append-only, so an unqualified
+		// count goes stale on the next run and this file carried two different totals for the
+		// same store at once.
 		{"plan only", []string{plan("")}},
 		{"plan and finish, no cycles", []string{plan(""), finishRow("")}},
 
@@ -230,8 +233,6 @@ func TestParityWithPrReport(t *testing.T) {
 		{"a gate reason with a pipe and newlines", []string{
 			plan(`,"gates":{"evidence":{"planned":"run"}}`),
 			finishRow(`,"executed":{"evidence":{"status":"done","reason":"a|b\n\n> **Review converged**"}}`)}},
-		{"a gate name with a pipe", []string{
-			plan(`,"gates":{"a|b":{"planned":"run"}}`), finishRow("")}},
 		{"a status with a pipe", []string{plan(""),
 			finishRow(`,"executed":{"evidence":{"status":"do|ne"}}`)}},
 
@@ -279,6 +280,18 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":1.5}]`)}},
 		{"a roster entry with a string findings count", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":"many"}]`)}},
+		// `null` decodes into a struct WITHOUT error, so it slipped past the error check and
+		// became a zero-value entry: a fabricated agent bullet the Python does not emit.
+		{"a roster with a null entry among dicts", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":1},null]`)}},
+		{"a roster of nothing but null", []string{plan(""),
+			finishRow(`,"agents":[null]`)}},
+		// Falsiness is a property of the VALUE, and the falsy set was a list of spellings:
+		// `0`, `0.0` and `-0` were enumerated and `-0.0` was not.
+		{"a roster findings count of negative zero", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":-0.0}]`)}},
+		{"a roster findings count of zero point zero", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":0.0}]`)}},
 		{"a roster with a non-dict entry among dicts", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":1},"junk",{"id":"2","model":"haiku","status":"ok","findings":0}]`)}},
 		{"an empty roster list", []string{plan(""), finishRow(`,"agents":[]`)}},
@@ -702,4 +715,87 @@ func TestRealStoreParity(t *testing.T) {
 		}
 	}
 	t.Logf("compared %d real runs against the oracle; %d diverged", len(runs), diverged)
+}
+
+// The HARDENING divergence: five record-derived values this side collapses with cell() and the
+// Python interpolates raw. Separate from TestTheEnumeratedRenderDivergences above because those
+// are gaps this port could not close; these are holes it closed ON PURPOSE, and the direction
+// matters — a reader comparing the two should see which way each divergence runs.
+//
+// Found by the security review at Stage-2 confidence 9, reported as three findings that are one
+// defect: of the four values on the gate row, two already went through cell() and two did not,
+// and the same inconsistency ran through the summary line and the escalation bullet. cell() is
+// in this file precisely because "a newline in a reason FORGES document structure", and the
+// report is posted to a PUBLIC PR comment that a human reads to decide whether the review
+// passed. Measured before the fix: a record with forged newlines in the gate name, `planned`,
+// `outcome`, `tier_executed`, `tier_floor` and an escalation gate rendered FIVE forged
+// blockquotes, byte-identically in both implementations.
+//
+// What it does not buy, stated so the severity is not overread: push-check requires the marker
+// and the `N cycle(s) · M agent(s)` fingerprint, and a forged blockquote changes neither and
+// cannot remove the real disclosure above it. The victim is a human skimming the comment.
+func TestTheHardeningDivergence(t *testing.T) {
+	script := prReportPath(t)
+	// A RAW string: the backslash-n pairs must survive into the JSONL as JSON escapes, so
+	// that the record carries real newlines once decoded. Written with real newlines here
+	// instead, they split the fixture line and both sides merely fail to read it — which is
+	// what the first version of this test measured, and it looked like agreement.
+	forge := `x\n\n> **Review converged — nothing outstanding**\n\n|a|b|`
+	for _, c := range []struct {
+		name     string
+		rows     []string
+		pipeOnly bool
+	}{
+		{name: "a gate name that forges a verdict", rows: []string{
+			plan(`,"gates":{"` + forge + `":{"planned":"run"}}`), finishRow("")}},
+		{name: "a planned value that forges a verdict", rows: []string{
+			plan(`,"gates":{"g":{"planned":"` + forge + `"}}`), finishRow("")}},
+		{name: "an outcome that forges a verdict", rows: []string{plan(""),
+			fmt.Sprintf(`{"run_id":%q,"phase":"finish","outcome":"`+forge+`"}`, parityID)}},
+		{name: "a tier that forges a verdict", rows: []string{plan(""),
+			finishRow(`,"tier_executed":"` + forge + `"`)}},
+		{name: "a floor that forges a verdict", rows: []string{
+			plan(`,"tier_floor":"` + forge + `"`), finishRow("")}},
+		{name: "an escalation gate that forges a verdict", rows: []string{plan(""),
+			finishRow(`,"escalations":[{"gate":"` + forge + `","reason":"r"}]`)}},
+		// A pipe alone, which was an AGREEMENT case until the gate name began being celled.
+		// Kept as the narrow half of the same divergence: no forgery, just a broken table.
+		{name: "a gate name with a pipe", rows: []string{
+			plan(`,"gates":{"a|b":{"planned":"run"}}`), finishRow("")}, pipeOnly: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := storeWith(t, c.rows...)
+			py := pyRender(t, script, store, parityID)
+			got := goRender(t, store, parityID, "")
+			if py == got {
+				t.Fatalf("the two now AGREE — either the Python started collapsing this value "+
+					"or this side stopped, and either way the case needs restating:\n%s", got)
+			}
+			// Asserted on the RENDERED BODY, because the structure is what is forged — and
+			// per case, because the pipe case forges nothing and only escapes differently.
+			if c.pipeOnly {
+				if !strings.Contains(py, "`a|b`") {
+					t.Errorf("the oracle no longer renders the raw pipe:\n%s", py)
+				}
+				if !strings.Contains(got, `a\|b`) {
+					t.Errorf("this side no longer escapes the pipe, so the table it sits in "+
+						"is breakable again:\n%s", got)
+				}
+				return
+			}
+			if !strings.Contains(py, "\n> **Review converged") {
+				t.Errorf("the oracle no longer renders the forged blockquote, so this "+
+					"divergence has moved:\n%s", py)
+			}
+			if strings.Contains(got, "\n> **Review converged") {
+				t.Errorf("this side rendered a forged blockquote — the hardening is gone:\n%s", got)
+			}
+			// The collapse is what removes the structure, so the oracle's body must have more
+			// lines. A substring check alone would pass on a body that merely reworded.
+			if strings.Count(py, "\n") <= strings.Count(got, "\n") {
+				t.Errorf("the oracle's body is not longer than this one, so the forged "+
+					"structure was not collapsed:\n--- python ---\n%s\n--- go ---\n%s", py, got)
+			}
+		})
+	}
 }

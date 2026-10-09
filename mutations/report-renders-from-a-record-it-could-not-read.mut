@@ -1,10 +1,10 @@
 target: cmd/looper/main.go
 verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportRefusesARunItCannotRead'
 expect: --- FAIL:
-why:    record.Load returns an empty map and NO error for a mistyped id or a wrong -store, and a report rendered from that is not an empty report — it is a genuine-looking one reading `0 cycle(s) · 0 agent(s)`, which is exactly the fingerprint push-check then accepts. The two halves of the gate refuse together or the gate is satisfiable by misresolving a path. Naming only the run id is the plausible half-fix: the store is usually the wrong half.
+why:    record.Load returns an empty map and NO error for a mistyped id or a wrong -store, and a report rendered from that is not an empty report — it is a genuine-looking one reading `0 cycle(s) · 0 agent(s)`, which is exactly the fingerprint push-check then accepts. The two halves of the gate refuse together or the gate is satisfiable by misresolving a path. Naming only the run id is the plausible half-fix: the store is usually the wrong half, and an operator told to check the id will re-type the id.
 --- old
-		return fmt.Errorf("pr-report: no run %q in %s — check -store and -run-id; a report "+
-			"rendered from no record would read as a reviewed run that spawned no agents",
-			*runID, *store)
+		return fmt.Errorf("pr-report: no readable record for run %q in %s — check -store and "+
+			"-run-id; a report rendered from no record would read as a reviewed run that "+
+			"spawned no agents", *runID, *store)
 --- new
 		return fmt.Errorf("pr-report: no run %q in the record", *runID)

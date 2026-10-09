@@ -260,10 +260,16 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	// not an empty report: it is a GENUINE one reading `0 cycle(s) · 0 agent(s)`, which is
 	// exactly what the push gate's required fingerprint collapses to. So the two halves
 	// refuse together. The store is named because the id is usually not the wrong half.
-	if r == nil {
-		return fmt.Errorf("pr-report: no run %q in %s — check -store and -run-id; a report "+
-			"rendered from no record would read as a reviewed run that spawned no agents",
-			*runID, *store)
+	// record.Run.Empty, not `r == nil`: the narrower test shipped here and misses a run that
+	// is PRESENT and says nothing — a row filed under a phase the typed decode does not own,
+	// such as `{"run_id":"x","phase":"nudge"}`. Measured: that store rendered a complete,
+	// plausible report reading `0 cycle(s) · 0 agent(s)` and exited 0, which is exactly the
+	// fingerprint push-check accepts. One definition, in internal/record, so the two halves of
+	// the gate cannot drift — which is the same mistake PR #4 caught in internal/push.
+	if r.Empty() {
+		return fmt.Errorf("pr-report: no readable record for run %q in %s — check -store and "+
+			"-run-id; a report rendered from no record would read as a reviewed run that "+
+			"spawned no agents", *runID, *store)
 	}
 	conv, err := r.Convergence()
 	if err != nil {

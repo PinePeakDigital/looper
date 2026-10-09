@@ -1,10 +1,14 @@
 target: internal/report/post.go
 verify: go test ./internal/report/ -count=1 -run 'TestPostMovesTheLabel'
 expect: --- FAIL:
-why:    the label is the at-a-glance half of the signal, and it only works if exactly one stands. Leave the previous ones on and a PR reviewed twice carries `review:halted` and `review:converged` together, which is worse than no label: a reader who trusts the green one is reading the earlier run.
+why:    the label is the at-a-glance half of the signal, and it only works if exactly one stands. Leave the previous ones on and a PR reviewed twice carries `review:halted` and `review:converged` together, which is worse than no label: a reader who trusts the green one is reading the earlier run. Skipping every removal is the shape a loop whose body is guarded by the wrong condition takes.
 --- old
 	for _, l := range Labels {
-		if l.Name != want.Name {
+		if l.Name == want.Name {
+			continue
+		}
 --- new
 	for _, l := range Labels {
-		if false && l.Name != want.Name {
+		if l.Name == want.Name || true {
+			continue
+		}

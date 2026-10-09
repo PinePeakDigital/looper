@@ -12,8 +12,17 @@ import (
 	"time"
 )
 
-// shBudget bounds every subprocess this package starts. The Python's `timeout=20`, named so
-// the kill branch can be exercised in milliseconds rather than in twenty seconds.
+// shBudget bounds every subprocess this package starts.
+//
+// NOT the Python's — pr-report.py's `sh()` passes no timeout at all and can hang forever on a
+// stuck gh. (push-check.py does pass `timeout=20`, which is where this line's wording came
+// from; it was copied with the number and without the fact.) A bound this port adds, with the
+// same value its sibling gate uses so an operator sees one figure.
+//
+// Threaded through shTimeout rather than read inline, so the kill branch can be exercised in
+// milliseconds. With the constant inline that claim was false by construction: a const cannot
+// be lowered by a test, so the one branch deciding whether a hung gh fails open or closed had
+// no test and could not have one.
 const shBudget = 20 * time.Second
 
 // result is one subprocess outcome, INCLUDING its stderr. The Python throws stderr away on
@@ -28,7 +37,11 @@ type result struct {
 }
 
 func sh(repo, prog string, args ...string) result {
-	ctx, cancel := context.WithTimeout(context.Background(), shBudget)
+	return shTimeout(repo, shBudget, prog, args...)
+}
+
+func shTimeout(repo string, budget time.Duration, prog string, args ...string) result {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, prog, args...)
 	cmd.Dir = repo
@@ -121,11 +134,17 @@ func (p Probe) Note() string {
 // PR was merged between the loop finishing and the flush.
 func FindPR(repo, branch string) Probe {
 	if branch == "" {
-		if r := sh(repo, "git", "rev-parse", "--abbrev-ref", "HEAD"); r.Runnable && r.Code == 0 {
+		// `git branch --show-current`, not `rev-parse --abbrev-ref HEAD`. Measured: on an
+		// UNBORN branch — a repo with no commits yet — rev-parse exits 128 and prints the
+		// literal "HEAD" on stdout, and on a detached HEAD it exits 0 and prints "HEAD",
+		// so the caller needs a magic-string check to tell a branch named HEAD from no
+		// branch at all. --show-current answers the question asked: the branch name, or
+		// empty when there is none, exit 0 either way.
+		if r := sh(repo, "git", "branch", "--show-current"); r.Runnable && r.Code == 0 {
 			branch = r.Out
 		}
 	}
-	if branch == "" || branch == "HEAD" {
+	if branch == "" {
 		// No branch to ask about. Not an error: a detached HEAD has no PR by this route, and
 		// the report still has to survive.
 		return Probe{State: GhFailed, Detail: "no branch name to look a PR up by (detached HEAD?)"}
@@ -199,6 +218,15 @@ func Post(p PostParams) (pending string, err error) {
 				"preserved: %w", probe.Number, werr)
 		}
 		diag("kept the report at %s for Step 0c", path)
+		// The label still goes on. The Python's `if a.label:` sits AFTER both the posted and
+		// the comment-failed branches, so it runs whenever a PR number is known, and nothing
+		// about labelling depends on the comment having landed: it is a separate `gh pr edit`
+		// against a PR this probe already found. Returning here instead dropped the
+		// at-a-glance signal for exactly the runs whose report is hardest to find — the ones
+		// whose comment failed. Three agents in separate contexts found this independently.
+		if p.Label {
+			applyLabel(p, probe.Number, diag)
+		}
 		return path, nil
 	}
 	diag("posted to PR #%s", probe.Number)
@@ -236,10 +264,24 @@ func applyLabel(p PostParams, num string, diag func(string, ...any)) {
 		diag("no label for convergence %q — none applied", conv)
 		return
 	}
-	sh(p.Repo, "gh", "label", "create", want.Name, "--color", want.Colour, "--description", want.Description)
+	// Every one of these is checked, which four of the five were not. `// Every call is
+	// best-effort` described the add below and nothing else: a removal that failed left the
+	// PREVIOUS run's label standing beside the new one, the add still succeeded, and the diag
+	// still said the label had moved — a PR advertising two convergences at once with nothing
+	// anywhere saying so. Discarding the stream that says why a gh call failed is the exact
+	// defect this whole slice exists to stop doing.
+	if r := sh(p.Repo, "gh", "label", "create", want.Name, "--color", want.Colour,
+		"--description", want.Description); !r.Runnable || r.Code != 0 {
+		// Ordinary: the label already exists from a previous run. Noted, not treated as a
+		// failure, because the add below is what actually has to work.
+		diag("label %s not created (it may already exist): %s", want.Name, firstLine(r.Err))
+	}
 	for _, l := range Labels {
-		if l.Name != want.Name {
-			sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name)
+		if l.Name == want.Name {
+			continue
+		}
+		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
+			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
 		}
 	}
 	if r := sh(p.Repo, "gh", "pr", "edit", num, "--add-label", want.Name); !r.Runnable || r.Code != 0 {
