@@ -1,0 +1,18 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: naming one owner for the whole list is wrong for half of them
+why:    the message reported runLevelFields[bad[0]] as the owner of every misplaced field, so a nudge row carrying agent_cap, executed, gates and unresolved_asks was told "only a plan row may set" — wrong for two of the four, and the singular phrasing read as covering all four. The row still errored, so no verdict moved; what moved was the operator to the wrong field. Survived the suite until this case existed.
+--- old
+	named := make([]string, 0, len(bad))
+	for _, f := range bad {
+		if owner := runLevelFields[f]; owner == synthesized {
+			named = append(named, fmt.Sprintf("%s (which no row may set: this build builds it)", f))
+		} else {
+			named = append(named, fmt.Sprintf("%s (only a %s row may set it)", f, owner))
+		}
+	}
+--- new
+	named := make([]string, 0, len(bad))
+	for _, f := range bad {
+		named = append(named, fmt.Sprintf("%s (only a %s row may set it)", f, runLevelFields[bad[0]]))
+	}

@@ -226,7 +226,18 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			RunID string          `json:"run_id"`
 			Phase json.RawMessage `json:"phase"`
 		}
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
+		// `env.RunID == ""` and not `err != nil`: a DUPLICATE run_id whose first occurrence
+		// is wrong-typed returns an error AND populates RunID from the last occurrence, so
+		// bailing on the error alone skipped a row Go could already attribute — and the
+		// Python's last-wins merged its body. Measured:
+		//
+		//	{"run_id":7,"run_id":"r","phase":"nudge","unresolved_asks":7}
+		//	python=halted   go=CONVERGED
+		//
+		// Four bytes prepended to the row from the commit message, and the guard below never
+		// ran. Skipping only when there is nobody to attribute the row to is the rule the
+		// comment already claimed ("the row belongs to no run"); now the code matches it.
+		if err := json.Unmarshal([]byte(line), &env); err != nil && env.RunID == "" {
 			// A torn line never invalidates the rest of the store. This also swallows
 			// well-formed JSON that has no usable `run_id` — `"run_id": 7`, a top-level
 			// array, a bare string — and for those there is genuinely nowhere to hang an
@@ -354,14 +365,41 @@ var runLevelFields = map[string]string{
 	"gates":           "plan",
 	"unresolved_asks": "finish",
 	"executed":        "finish",
+	"cycles":          synthesized,
 }
+
+// synthesized is the owner for a key load() BUILDS rather than reads off a row, so no row
+// may carry it. It cannot be a real phase, and it cannot be "" either: a row whose phase is
+// absent or wrong-typed decodes to "", and an owner of "" would exempt exactly those rows.
+//
+// `cycles` is the only one, and it is the sharpest form of this whole class. load() does
+// `run.setdefault("cycles", []).append(rec)` for cycle rows and `run.update(rec)` for every
+// other, so a non-cycle row carrying a top-level `cycles` key OVERWRITES the entire cycle
+// list — and `cycles_of` reads it back out of the merged run at runlog.py:180, feeding both
+// convergence() and disclosure(). Measured on a store whose one real cycle converged:
+//
+//	{"run_id":"r","phase":"nudge","cycles":[]}   python=unknown   go=CONVERGED
+//
+// The Python says "Review completeness UNKNOWN ... Treat as unreviewed" and discloses; this
+// said converged and pushed clean. It worked on all 14 phase spellings, a nudge row being
+// the cheapest. No writer emits the key — load() synthesizes it — and no row in the real
+// store carries it, so closing it over-fires on nothing.
+const synthesized = "\x00synthesized"
 
 // misplacedRunField reports a field this row carries that a derivation reads and this row's
 // phase does not own. Decodes the top level only, and only the keys — the values stay raw.
 func misplacedRunField(line, phase string) error {
 	var top map[string]json.RawMessage
 	if json.Unmarshal([]byte(line), &top) != nil {
-		return nil // not an object; the envelope decode already let this row through
+		// UNREACHABLE, and labelled rather than left looking like a guard. json.Unmarshal
+		// runs checkValid over the whole document in both decodes, so a line whose envelope
+		// struct decode succeeded is a JSON object (or `null`, which env.RunID == "" already
+		// filtered), and map[string]json.RawMessage accepts every object. Verified two ways:
+		// replacing this return with a panic decodes all 40 real runs and passes the whole
+		// suite, and every wrong-typed-run_id line above reports mapErr == nil. Deleting it
+		// also survives, which is why it is labelled — an unreachable branch that scores as
+		// covered is worth saying so about, the same way the \r trim above is.
+		return nil
 	}
 	var bad []string
 	for name, owner := range runLevelFields {
@@ -380,10 +418,23 @@ func misplacedRunField(line, phase string) error {
 	if len(shown) > maxGateNameLen {
 		shown = shown[:maxGateNameLen] + "..."
 	}
+	// Each field with ITS OWN owner. Reporting runLevelFields[bad[0]] named one owner for
+	// the whole list, so a nudge row carrying agent_cap, executed, gates and unresolved_asks
+	// was told "only a plan row may set" — wrong for two of the four, and the singular
+	// phrasing read as covering all of them. sort.Strings above made that deterministically
+	// the alphabetically-first field's owner, which is arbitrary rather than informative.
+	named := make([]string, 0, len(bad))
+	for _, f := range bad {
+		if owner := runLevelFields[f]; owner == synthesized {
+			named = append(named, fmt.Sprintf("%s (which no row may set: this build builds it)", f))
+		} else {
+			named = append(named, fmt.Sprintf("%s (only a %s row may set it)", f, owner))
+		}
+	}
 	return fmt.Errorf(
-		"a %q row carries %s, which this build reads off the run and only a %s row may set; "+
-			"the Python merges it regardless of phase, so ignoring it here would answer from a row it read",
-		shown, strings.Join(bad, ", "), runLevelFields[bad[0]])
+		"a %q row carries %s; this build reads these off the run, and the Python merges them "+
+			"regardless of phase, so ignoring the row here would answer from one it read",
+		shown, strings.Join(named, ", "))
 }
 
 // nameBadGates says WHICH gate failed, because encoding/json never names a map key. A

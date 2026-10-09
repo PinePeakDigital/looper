@@ -444,6 +444,25 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			`{"run_id":"r","phase":"finish","unresolved_asks":7,"phase":"nudge"}`,
 			`{"run_id":"r","phase":"finish","gates":{"g":{"planned":"run"}}}`,
 			`{"run_id":"r","phase":"nudge","executed":{"g":{"status":"done"}}}`,
+			// agent_cap was the one map entry nothing pinned: deleting it survived the
+			// whole suite. The plan row above sets no cap, so a misplaced 1 is the cap the
+			// Python reads and this one did not.
+			`{"run_id":"r","phase":"nudge","agent_cap":1}`,
+			// `cycles` is the sharpest form of the class and belongs to NO phase: load()
+			// builds it with setdefault+append for cycle rows and merges it like any other
+			// key for the rest, so a non-cycle row carrying it OVERWRITES the whole cycle
+			// list, and cycles_of reads it back at runlog.py:180. The Python answers
+			// "Review completeness UNKNOWN ... Treat as unreviewed"; this answered
+			// converged and pushed clean.
+			`{"run_id":"r","phase":"nudge","cycles":[]}`,
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"cycles":[]}`,
+			`{"run_id":"r","phase":"plan","cycles":[]}`,
+			// A DUPLICATE run_id whose first occurrence is wrong-typed: the envelope decode
+			// returns an error AND populates RunID from the last occurrence, so bailing on
+			// the error alone skipped a row Go could already attribute, while the Python's
+			// last-wins merged its body. Four bytes prepended to the row above.
+			`{"run_id":7,"run_id":"r","phase":"nudge","unresolved_asks":7}`,
+			`{"run_id":[],"run_id":"r","phase":"nudge","unresolved_asks":7}`,
 		} {
 			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
@@ -471,6 +490,12 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			`{"run_id":"r","phase":"nudge","nudged_at":"2026-01-01T00:00:00"}`,
 			`{"run_id":"r","phase":"rebase","rebased_at":"2026-01-01T00:00:00"}`,
 			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"asked":0,"agents":1,"unresolved_asks":7}`,
+			// A cycle row's own `cycles` key is harmless: load() appends cycle rows and
+			// never merges them, so setdefault ignores it on both sides.
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"asked":0,"agents":1,"cycles":[]}`,
+			// The check reads the TOP level only. A key named like a run-level field, nested
+			// under another, is not merged into the run by either implementation.
+			`{"run_id":"r","phase":"nudge","inputs":{"gates":{"g":1},"unresolved_asks":7}}`,
 		} {
 			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
@@ -739,6 +764,38 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		}
 		if !strings.Contains(got, "...") {
 			t.Errorf("an over-long gate name must be truncated visibly; got %v", got)
+		}
+	})
+
+	t.Run("a misplaced field names its own owner, in a fixed order", func(t *testing.T) {
+		// The message used to report runLevelFields[bad[0]] as the owner of the whole list,
+		// so a nudge row carrying all four was told "only a plan row may set" — wrong for
+		// two of them, and the singular phrasing read as covering all four. sort.Strings
+		// made that deterministically the alphabetically-first field's owner, which is
+		// arbitrary rather than informative. Three mutations in that half survived: dropping
+		// the sort, joining only bad[0], and taking bad[len(bad)-1].
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
+			`{"run_id":"r","phase":"nudge","agent_cap":1,"executed":{},"gates":{},"unresolved_asks":7}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		// Each field with its own owner, and `cycles` would say no row may set it at all.
+		for _, want := range []string{
+			"agent_cap (only a plan row may set it)",
+			"executed (only a finish row may set it)",
+			"gates (only a plan row may set it)",
+			"unresolved_asks (only a finish row may set it)",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the error must say %q; naming one owner for the whole list is wrong for half of them. got %v", want, got)
+			}
+		}
+		// Sorted, because Go map order is random and an error message must not be.
+		if i, j := strings.Index(got, "agent_cap"), strings.Index(got, "unresolved_asks"); i > j {
+			t.Errorf("the fields are not in a fixed order, so the same bad row prints differently run to run: %v", got)
 		}
 	})
 

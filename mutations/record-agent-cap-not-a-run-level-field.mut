@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by filing a run-level field under the wrong phase
+why:    the one entry in runLevelFields that nothing pinned — deleting it survived the whole suite, because the fixture list covered unresolved_asks six times, gates once, executed once and agent_cap never. A nudge row carrying `agent_cap: 1` is the cap the Python reads off the merged run and this build did not.
+--- old
+	"agent_cap":       "plan",
+--- new
