@@ -997,18 +997,10 @@ func TestStorePathMatchesThePython(t *testing.T) {
 			want := strings.TrimSuffix(string(out), "\n")
 
 			// The Go side under the same environment. t.Setenv cannot unset, and unset is a
-			// distinct input here, so that case unsets by hand and restores in a defer.
+			// distinct input here, so that case uses unsetHOME, which restores via t.Cleanup.
 			t.Setenv("REVIEW_LOOP_RUNS", c.env)
 			if c.unsetHome {
-				prev, had := os.LookupEnv("HOME")
-				if err := os.Unsetenv("HOME"); err != nil {
-					t.Fatal(err)
-				}
-				defer func() {
-					if had {
-						os.Setenv("HOME", prev)
-					}
-				}()
+				unsetHOME(t)
 			} else {
 				t.Setenv("HOME", c.home)
 			}

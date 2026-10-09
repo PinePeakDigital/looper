@@ -89,7 +89,7 @@ jobs:
           # every gate here green, measured. (Why it was left out is recorded nowhere, so this
           # comment no longer guesses at it, and the agent count that was here belongs in a commit
           # message, not in the tree.) The floor
-          # of 10 pins the table's WIDTH as well as the test's existence; the per-case `expect:`
+          # of 11 pins the table's WIDTH as well as the test's existence; the per-case `expect:`
           # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
           # entry, because two of the five store-path entries share one `expect:` string.
           for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11; do
@@ -128,23 +128,43 @@ jobs:
           if grep -q -- '--- SKIP' push.log; then
             echo "the push parity gate SKIPPED — push-check.py was not reachable:"; cat push.log; exit 1
           fi
-          # The decision table and the one enumerated divergence, counted separately. The
-          # divergence test is NOT a subtest of the table, and it is the only thing asserting
-          # which half of the `applied: null` wording each side owns — so an aggregate count
-          # would let it vanish under a table that grew by one.
+          # The decision table and the enumerated divergences, counted separately. A
+          # divergence test is NOT a subtest of the table, and each is the only thing
+          # asserting which side owns which answer — so an aggregate count would let one
+          # vanish under a table that grew by one. Each is named individually for the same
+          # reason the record floors are per-oracle.
+          #
+          # The table floor is 17, not 18: `absent from the store` moved OUT of it when the
+          # empty-record block landed, because it stopped being an agreement case. A floor
+          # that stayed at 18 would have had to be met by some other case, which is how a
+          # count starts measuring the wrong thing.
           c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
-          [ "$c" -ge 18 ] || { echo "only $c push parity subtests passed, expected at least 18"; cat push.log; exit 1; }
-          grep -q -- '--- PASS: TestTheOneDisclosureDivergence' push.log || {
-            echo "the enumerated disclosure divergence was not compared against the Python"; cat push.log; exit 1; }
-          echo "$c push parity subtests compared against the Python, plus the enumerated divergence"
+          [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
+          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence; do
+            grep -q -- "--- PASS: $d" push.log || {
+              echo "enumerated divergence $d was not compared against the Python"; cat push.log; exit 1; }
+          done
+          echo "$c push parity subtests compared against the Python, plus 2 enumerated divergences"
 
       - name: go test (everything else)
-        run: go test -count=1 $(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$')
+        # mapfile, not a bare $(...): the two packages above are excluded because they need the
+        # oracle, and the word splitting that reassembles the rest is the mechanism, not an
+        # accident — so quoting the substitution would pass the whole list as ONE argument and
+        # silently test nothing. An array says that explicitly and clears the last actionlint
+        # finding on this file, so a real one is not lost in a standing warning.
+        run: |
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$')
+          go test -count=1 "${pkgs[@]}"
 
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
       # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
-      # Raise the floor deliberately when adding entries; that edit is the review trail.
+      # Raise the floor deliberately when adding entries; that edit is the review trail — and
+      # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
+      # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
+      # and an empty record can no longer grant, so its defect is unreachable by construction
+      # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
+      # not left to score `survived` forever.
       # (The same gap was found and closed in the skills repo's workflow first.)
       - name: no catalog entry has gone missing
         run: |
@@ -158,7 +178,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 178 ] || { echo "only $n mutations, expected at least 178 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 181 ] || { echo "only $n mutations, expected at least 181 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

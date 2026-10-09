@@ -930,12 +930,17 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		}
 	})
 
-	t.Run("the note fires on a GRANTED push, which is the case worth saying something about", func(t *testing.T) {
-		// The empty record derives `unknown`, which is a DISCLOSURE and not a block, and its
-		// fingerprint is the two lines pr-report.py renders for a run with no cycles — so a
-		// genuine report satisfies the gate and the push is permitted off a record that said
-		// nothing. Every other subtest here is a refusal, which is how the note shipped
-		// saying "the refusal below" while firing on grants.
+	t.Run("a satisfying report does NOT buy a push off an empty record", func(t *testing.T) {
+		// The security property, and the reason this blocks rather than disclosing. Everything
+		// the gate reads comes off the record: convergence derives `unknown`, Finish is nil so
+		// no recorded outcome can block, and the required fingerprint collapses to the two
+		// lines pr-report.py renders for a run with no cycle rows — 22 of the 41 runs in the
+		// live store. So a GENUINE report, rendered by the real tool for a real zero-cycle
+		// run, matches an empty record's fingerprint exactly. No forgery is needed.
+		//
+		// This subtest asserted the opposite for one commit: it was written to prove the Diag
+		// note fired on the grant path, which documented the hole instead of closing it.
+		// push-check.py still grants here; see the enumerated divergence in parity_test.go.
 		shimGh(t, "exit 1")
 		var diag strings.Builder
 		dir, gitdir := repo(t)
@@ -945,14 +950,55 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !res.Push {
-			t.Fatalf("expected the empty record to GRANT here; got %+v", res)
+		if res.Push {
+			t.Fatalf("an empty record bought a push with a matching report: %+v", res)
+		}
+		if !strings.Contains(res.Reason, "no readable record") {
+			t.Errorf("reason = %q, want the empty-record refusal rather than a report or "+
+				"convergence reason — the report check PASSED here", res.Reason)
 		}
 		if !strings.Contains(diag.String(), "no readable row") {
-			t.Errorf("Diag = %q on a granted push; the note must fire here most of all", diag.String())
+			t.Errorf("Diag = %q; the note must still name the store that was read", diag.String())
 		}
-		if strings.Contains(diag.String(), "refusal") {
-			t.Errorf("Diag = %q — it says \"refusal\" on a push it just permitted", diag.String())
+	})
+
+	t.Run("the empty-record refusal outranks every other record-derived reason", func(t *testing.T) {
+		// Ordered first in Decide because the checks below it read the record, and with no
+		// record their answers are vacuous rather than reassuring. Asserted so a later
+		// reordering that puts, say, the report check first cannot quietly restore a reason
+		// that describes an empty record as merely unreported.
+		shimGh(t, "exit 1")
+		dir, _ := repo(t)
+		res, err := Check(CheckParams{Store: st, RunID: "absent5", GateState: "blocked",
+			UnresolvedSkip: true, Branch: "main", DefaultBranch: "main", Repo: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push || !strings.Contains(res.Reason, "no readable record") {
+			t.Errorf("reason = %q (push %v), want the empty-record refusal ahead of the "+
+				"blocked gate, the unresolved skip and the default branch", res.Reason, res.Push)
+		}
+	})
+
+	t.Run("a run present in the map but saying nothing is treated the same", func(t *testing.T) {
+		// The block keys on the DERIVED record, not the map lookup. A run can be present and
+		// still carry no plan, no cycles and no finish — here, rows under a phase the typed
+		// decode does not own — and that record derives exactly what an absent one does. The
+		// narrower `r == nil` predicate shipped for one commit and is invisible to every test
+		// that reaches the state by deleting the run entirely.
+		shimGh(t, "exit 1")
+		odd := writeStore(t,
+			`{"run_id":"ghost1","phase":"nudge","at":"2026-01-01T00:00:00"}`,
+			`{"run_id":"ghost1","phase":"nudge","at":"2026-01-02T00:00:00"}`)
+		dir, gitdir := repo(t)
+		landReport(t, gitdir, "ghost1", Fingerprint(&record.Run{ID: "ghost1"}))
+		res, err := Check(CheckParams{Store: odd, RunID: "ghost1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Push || !strings.Contains(res.Reason, "no readable record") {
+			t.Errorf("a run present in the map but says nothing bought a push: %+v", res)
 		}
 	})
 

@@ -147,9 +147,10 @@ func TestParityWithPushCheck(t *testing.T) {
 			finish("")}, land: true},
 		// No cycle rows at all: the UNKNOWN disclosure, which both must word identically.
 		{name: "no cycles", rows: []string{plan40, finish("")}, land: true},
-		// A run absent from the store. Nothing to land a report for, so this also exercises
-		// the report gate's blocking path on an unknown run.
-		{name: "absent from the store"},
+		// A run absent from the store used to live here as an agreement case. It is now an
+		// enumerated DIVERGENCE — this side refuses, the Python permits with a disclosure —
+		// so it is asserted by TestTheEmptyRecordDivergence below instead. Leaving it here
+		// would have failed the table, which is exactly what it did when the block landed.
 		// The report gate itself: same rows as the capped case, nothing landed.
 		{name: "no report landed", rows: []string{plan8,
 			fmt.Sprintf(`{"run_id":%q,"phase":"cycle","n":1,"applied":3,"agents":9}`, id),
@@ -250,7 +251,7 @@ func TestParityWithPushCheck(t *testing.T) {
 //
 // Stated as a TEST, not a comment, so the day the Python's wording is what matters, or the
 // day someone makes the pointer three-state, this says which half moved.
-func TestTheOneDisclosureDivergence(t *testing.T) {
+func TestTheDisclosureWordingDivergence(t *testing.T) {
 	script := pushCheckPath(t)
 	shimGh(t, "exit 1")
 	const id = "parity02"
@@ -290,5 +291,59 @@ func TestTheOneDisclosureDivergence(t *testing.T) {
 	// And the rest of the line is identical, so the divergence is exactly one token wide.
 	if strings.Replace(*py.Disclose, "applied None", "applied ?", 1) != *got.Disclose {
 		t.Errorf("the divergence is wider than the one word:\n py %q\n go %q", *py.Disclose, *got.Disclose)
+	}
+}
+
+// The second enumerated divergence, and the only one that changes a VERDICT rather than a
+// word: a run id that resolves to no readable record. The Python permits with an `unknown`
+// disclosure, because the design's split says "we stopped looking" discloses and pushes. This
+// side refuses, because an empty record is not a run that stopped looking — it is the absence
+// of any evidence that a run happened, and every input the gate reads comes off it.
+//
+// Deliberate, approved, and asserted here rather than left to drift. Both halves are pinned:
+// that the Python still permits (if it ever starts refusing, this divergence has closed and
+// the case belongs back in the agreement table), and that this side refuses for the empty-
+// record reason specifically rather than incidentally via the report or convergence checks.
+//
+// The report is LANDED and genuinely satisfying, which is the whole point: Fingerprint of an
+// empty record is the two lines pr-report.py renders for a run with no cycle rows, so no
+// forgery is needed to reach the state the Python permits.
+func TestTheEmptyRecordDivergence(t *testing.T) {
+	script := pushCheckPath(t)
+	shimGh(t, "exit 1")
+	const id = "parity03"
+	dir, gitdir := repo(t)
+	// A store that exists and holds a DIFFERENT run, so the file is readable and only this
+	// run id is absent — the wrong-run-id case rather than the missing-file case.
+	store := writeStore(t,
+		`{"run_id":"other1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+		`{"run_id":"other1","phase":"cycle","n":1,"applied":1,"agents":2}`)
+	landReport(t, gitdir, id, Fingerprint(&record.Run{ID: id}))
+
+	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
+		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
+	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+
+	if !py.Push {
+		t.Errorf("the Python now REFUSES an empty record (%q) — this divergence has closed; "+
+			"move the case back into TestParityWithPushCheck's table and delete this test",
+			py.Reason)
+	}
+	if got.Push {
+		t.Fatalf("this side permitted a push off an empty record with a matching report: %+v", got)
+	}
+	if !strings.Contains(got.Reason, "no readable record") {
+		t.Errorf("reason = %q, want the empty-record refusal — a refusal for some other "+
+			"reason would close this hole only by accident", got.Reason)
+	}
+	// Convergence still agrees: the divergence is the VERDICT, not the derivation. Both read
+	// the same empty record the same way.
+	if py.Convergence != got.Convergence {
+		t.Errorf("convergence diverged too (py %q, go %q) — the derivation is meant to be "+
+			"identical and only the decision different", py.Convergence, got.Convergence)
 	}
 }

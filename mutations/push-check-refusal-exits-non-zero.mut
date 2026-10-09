@@ -3,7 +3,8 @@ verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck'
 expect: a refusal exited
 why:    a refusal is a successful ANSWER, not a failure to produce one. Exiting non-zero makes "the push is not permitted" indistinguishable from "the tool could not decide", and Step 14 reads the JSON in both cases — so the shell check in front of it would route a legitimate refusal into the error path and print nothing the operator can act on.
 --- old
-	b, err := res.Encode()--- new
+	b, err := res.Encode()
+--- new
 	if !res.Push {
 		return errors.New(res.Reason)
 	}

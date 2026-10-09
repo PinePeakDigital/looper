@@ -59,11 +59,33 @@ type State struct {
 	// Unreported is the reason this run's report has not reached a reader, or "" when it
 	// has. A reason rather than a bool because it is the message the operator acts on.
 	Unreported string
+	// NoRecord is true when the run id resolved to no readable row at all. Derived from the
+	// loaded record, never asserted by the caller — same rule as Convergence and Outcome.
+	//
+	// It blocks, and that is a DELIBERATE DIVERGENCE from push-check.py, which permits here
+	// with a disclosure. See the enumerated divergence in parity_test.go. The Python's
+	// behaviour follows from the design's own split — `unknown` means "we stopped looking",
+	// which discloses and pushes — but an empty record is not a run that stopped looking, it
+	// is the absence of any evidence that a run happened. Everything the gate reads comes off
+	// it: convergence derives `unknown`, no recorded outcome can block, and the required
+	// report fingerprint collapses to the two lines pr-report.py renders for a run with no
+	// cycle rows, which is 22 of the 41 runs in the live store. Measured: changing only $HOME
+	// turned a recorded `test-failure` refusal into a granted push. That makes misresolving
+	// the store the cheapest way to make this gate say yes, which is the one thing it exists
+	// to prevent.
+	NoRecord bool
 }
 
 // Decide answers push/no-push with the reason. First failing check wins, mirroring SKILL.md
 // Step 14's "When NOT to auto-push".
 func Decide(s State) (bool, string) {
+	// First, because every check below it reads something off the record, and if there is no
+	// record their answers are vacuous rather than reassuring. Ordered ahead of the outcome
+	// loop for that reason, not because absence is worse than a recorded failure.
+	if s.NoRecord {
+		return false, "no readable record for this run — convergence, the outcome and the " +
+			"report fingerprint would all come off an empty record; check -store and -run-id"
+	}
 	for _, bad := range BrokenOutcomes {
 		if s.Outcome == bad {
 			return false, fmt.Sprintf("run recorded %s — broken, not merely unfinished", bad)
@@ -327,9 +349,18 @@ func Check(p CheckParams) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	// A run id absent from the store is UNKNOWN, never converged. Absence is the cheapest
-	// thing to produce, so it must buy the same disclosure a recorded unfinished run owes.
+	// A run id absent from the store derives UNKNOWN, never converged — absence is the
+	// cheapest thing to produce, so it cannot buy a better answer than a recorded unfinished
+	// run. The empty Run is still built, because Convergence and Disclosure must answer for
+	// it, but `noRecord` blocks the push outright: see State.NoRecord for why disclosing was
+	// not enough, and parity_test.go for the enumerated divergence this creates.
 	r := runs[p.RunID]
+	// The DERIVED emptiness, not the map lookup. `r == nil` misses a run that is present but
+	// says nothing — rows carrying the id under a phase the typed decode does not own, for
+	// instance — and the question the block asks is whether anything was readable, not
+	// whether a key existed. Measured against the live store: all 41 real runs carry a plan
+	// row, so this cannot fire on a legitimately zero-cycle run, which is 22 of them.
+	noRecord := r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
 	if r == nil {
 		r = &record.Run{ID: p.RunID}
 		if p.Diag != nil {
@@ -407,6 +438,7 @@ func Check(p CheckParams) (Result, error) {
 		UpstreamExists: upstreamExists(p.Repo),
 		Outcome:        outcome,
 		Unreported:     unreported,
+		NoRecord:       noRecord,
 	})
 	res := Result{Push: push, Reason: reason, Convergence: conv}
 	if disclose != "" {

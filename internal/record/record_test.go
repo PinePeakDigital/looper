@@ -1327,6 +1327,32 @@ func contains(ss []string, want string) bool {
 // the live store's 41, nothing at all is left standing: the empty record fingerprints as
 // `0 cycle(s) · 0 agent(s)`, which is exactly what pr-report.py renders for such a run, so a
 // genuine posted report satisfies the gate and the push is GRANTED. Measured end to end.
+// unsetHOME removes $HOME for the duration of t and restores it afterwards. Three copies of
+// this existed, two of them added in the same cycle, and the thing being hand-rolled is the
+// distinction the tests exist to pin: a copy that restores UNCONDITIONALLY sets HOME="", and
+// blank-HOME is a different input from absent-HOME in homeDirOrTilde — expanduser branches on
+// presence, not value. Both failure modes land in a later test, because the environment is
+// process-global.
+//
+// t.Cleanup rather than defer, and the restore error is checked rather than discarded:
+// cleanups run after t.Setenv's own, in reverse order of registration, and a silently failed
+// restore leaves every later test in the package running without HOME.
+func unsetHOME(t *testing.T) {
+	t.Helper()
+	prev, had := os.LookupEnv("HOME")
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatalf("unset HOME: %v", err)
+	}
+	t.Cleanup(func() {
+		if !had {
+			return
+		}
+		if err := os.Setenv("HOME", prev); err != nil {
+			t.Errorf("restore HOME to %q: %v", prev, err)
+		}
+	})
+}
+
 var storePathCases = []struct {
 	name, home, env, want string
 	unsetHome             bool
@@ -1374,15 +1400,7 @@ func TestStorePathShapes(t *testing.T) {
 			// difference between expanduser's two branches — so this case unsets by hand and
 			// restores in a defer rather than being skipped for being awkward.
 			if c.unsetHome {
-				prev, had := os.LookupEnv("HOME")
-				if err := os.Unsetenv("HOME"); err != nil {
-					t.Fatal(err)
-				}
-				defer func() {
-					if had {
-						os.Setenv("HOME", prev)
-					}
-				}()
+				unsetHOME(t)
 			} else {
 				t.Setenv("HOME", c.home)
 			}
@@ -1480,15 +1498,7 @@ func TestConvergenceAnswersOnlyTheFourWords(t *testing.T) {
 // KeyError, and that is what the "~" return reproduces.
 func TestAnUnresolvableHomeLeavesTheTildeInPlace(t *testing.T) {
 	t.Setenv("REVIEW_LOOP_RUNS", "")
-	prev, had := os.LookupEnv("HOME")
-	if err := os.Unsetenv("HOME"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if had {
-			os.Setenv("HOME", prev)
-		}
-	}()
+	unsetHOME(t)
 	saved := userCurrent
 	userCurrent = func() (*user.User, error) { return nil, errors.New("no passwd entry") }
 	defer func() { userCurrent = saved }()

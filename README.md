@@ -137,7 +137,8 @@ looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
 `disclose` line, because a cap that strands commits just moves the decision back to
 a human every time. **"It is broken" is a block**: a recorded `test-failure`,
 `blocked` or `abandoned` outcome, a blocked evidence gate, a finding skipped with no
-recorded dismissal, or the default branch.
+recorded dismissal, or the default branch. **"There is no evidence either way" is also
+a block**, and that one is a deliberate divergence from the Python — see below.
 
 Two things are read from the record rather than accepted as arguments, and both used
 to be flags:
@@ -167,21 +168,32 @@ reason for exact equality against the Python's, which has no second stream. A re
 for a report that is genuinely unposted stays silent, so the note's presence is the
 signal.
 
-stderr carries a second note when no row for the run was readable in the store — a
-wrong `-store`, a missing file, a mistyped `-run-id`, or every row for that run torn.
-The record then loads as empty *with no error*, convergence reads `unknown`, no
-recorded outcome can block, and the required fingerprint collapses to `0 cycle(s) · 0
-agent(s)` — which is exactly what `pr-report.py` renders for a run with no cycle rows,
-22 of the 41 runs in the author's own store. So that state can **grant** a push as
-readily as refuse one, and the note names the run and the file it read. It fires
-before the decision, which is why it says "the decision below" and not "the refusal
-below".
+**An empty record blocks, and the Python permits — the one deliberate divergence in
+the verdict.** When the run id resolves to no readable row — a wrong `-store`, a
+missing file, a mistyped `-run-id`, or every row for that run torn — the record loads
+as empty *with no error*. Convergence then reads `unknown`, which is a disclosure
+rather than a block; no recorded outcome can block, because there is none; and the
+required report fingerprint collapses to `0 cycle(s) · 0 agent(s)`, which is exactly
+what `pr-report.py` renders for a run with no cycle rows — 22 of the 41 runs in the
+author's own store. So a *genuine* report, rendered by the real tool for a real
+zero-cycle run, satisfies the gate off a record that said nothing, with no forgery at
+all. Measured: changing only `$HOME` turned a recorded `test-failure` refusal into a
+granted push, in both implementations.
 
-What it still cannot tell you is *why* nothing was readable. A run whose rows were all
-torn is absent from the loaded record exactly as a run that was never written is, and
-`record.Load` drops a torn line without counting it, so the note names a store that
-`grep` can find the run id in. Distinguishing the two needs `Load` to report how many
-rows it dropped.
+`push-check.py` still permits there, faithfully following the design's own split. This
+port refuses, because an empty record is not a run that stopped looking — it is the
+absence of any evidence that a run happened, and misresolving the store is otherwise
+the cheapest way to make this gate say yes. The divergence is asserted rather than
+left to drift, by `TestTheEmptyRecordDivergence`, which also pins that the Python still
+permits: if that ever changes, the divergence has closed and the case goes back in the
+agreement table.
+
+stderr still carries a note naming the run and the store that was read, because the
+refusal cannot say *why* nothing was readable. A run whose rows were all torn is
+absent from the loaded record exactly as a run that was never written is, and
+`record.Load` drops a torn line without counting it — so the note can name a store
+that `grep` finds the run id in. Distinguishing the two needs `Load` to report how
+many rows it dropped.
 
 A note on comparing the two implementations by hand: their stdout is **not** byte-
 identical and never has been. `json.dumps` defaults to `ensure_ascii=True`, so the
