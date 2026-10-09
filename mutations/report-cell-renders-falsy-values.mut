@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the Python's cell() is `" ".join(str(text or "").split())`, and `or` tests FALSINESS: `cell(0)` is "" there, not "0". The store's roster really holds `findings: 0` — it renders as "ok,  finding(s)" with the value simply gone. This was the FIRST divergence this port produced, found by rendering all 42 real runs rather than by reading the Python, and it is the kind no reader would notice because "0 finding(s)" looks more correct than the truth. Dropping 0 from the falsy set leaves the other spellings, so the entry fails on the one value the store actually contains.
+--- old
+	case "0", "0.0", "-0", "false", "null", `""`:
+--- new
+	case "0.0", "-0", "false", "null", `""`:

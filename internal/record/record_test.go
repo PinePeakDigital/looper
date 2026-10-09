@@ -596,8 +596,15 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			// actually decodes. `Agents` on a PLAN row folds onto nothing Plan reads, and
 			// the Python ignores it too, so refusing it would be over-firing.
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","Agents":99}`,
-			// Unmodelled keys that merely resemble record fields are not folded names.
-			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"Finished_At":"x","TIER_EXECUTED":"full"}`,
+			// Unmodelled keys that merely resemble record fields are not folded names. Both
+			// of these are run-level keys runlog WRITES and nothing here decodes — see the
+			// `runLevelFields` deferral, which lists the five still outstanding. This case
+			// previously used `TIER_EXECUTED`, and it stopped being valid the moment the
+			// report slice taught Finish to read `tier_executed`: the guard then refused it,
+			// correctly, and the FIXTURE was what had gone stale. Any key chosen here is
+			// one slice away from the same fate, which is the cost of asserting a negative
+			// over a field list that grows.
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"Finished_At":"x","SESSION_ID":"s1"}`,
 		} {
 			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -52,8 +53,15 @@ func git(t *testing.T, dir string, args ...string) {
 // doRun calls run() with its output captured, and returns the exit code plus both streams.
 func doRun(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
+	return doRunIn(t, strings.NewReader(""), args...)
+}
+
+// doRunIn is doRun with a stdin to feed: pr-report reads its narrative from there when no
+// -findings-file is named, which is how the skill pipes an orchestrator's findings in.
+func doRunIn(t *testing.T, in io.Reader, args ...string) (int, string, string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, &out, &errOut)
+	code := run(args, in, &out, &errOut)
 	return code, out.String(), errOut.String()
 }
 
@@ -382,5 +390,196 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 	// The refusal text is unchanged, which is what keeps the parity gate green.
 	if !strings.Contains(got.Reason, "pr-report.py --post") {
 		t.Errorf("reason = %q, want the unchanged owed-report refusal", got.Reason)
+	}
+}
+
+// prReportStore writes a one-run fixture and returns its path.
+func prReportStore(t *testing.T, id string) string {
+	t.Helper()
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	rows := []string{
+		`{"run_id":"` + id + `","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","gates":{"evidence":{"planned":"run"}}}`,
+		`{"run_id":"` + id + `","phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":"` + id + `","phase":"finish","outcome":"cycle-limit","executed":{"evidence":{"status":"done"}}}`,
+	}
+	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestPrReportWritesTheBodyToStdout(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1", "-store", store)
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	// The marker and the `N cycle(s) · M agent(s)` line are what push-check looks for; if
+	// either moves, every push is refused on advice that cannot succeed.
+	for _, want := range []string{
+		"<!-- review-loop:run=pr1 -->",
+		"## review-loop",
+		"1 cycle(s) · 9 agent(s)",
+		"CAPPED at 9 of 8 agents",
+		"| `evidence` | run | done |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout is missing %q:\n%s", want, out)
+		}
+	}
+	if errOut != "" {
+		t.Errorf("stderr should be silent without -post: %q", errOut)
+	}
+}
+
+func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	t.Run("stdin", func(t *testing.T) {
+		code, out, errOut := doRunIn(t, strings.NewReader("two real defects\n"),
+			"pr-report", "-run-id", "pr1", "-store", store)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if !strings.Contains(out, "### Findings\n\ntwo real defects") {
+			t.Errorf("the narrative from stdin is missing:\n%s", out)
+		}
+	})
+	t.Run("a findings file", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "findings.md")
+		if err := os.WriteFile(f, []byte("- one thing\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Stdin is fed too, and must LOSE: -findings-file is the explicit channel, and a
+		// piped-in stdin that silently won would append whatever the shell happened to hand
+		// the process.
+		code, out, errOut := doRunIn(t, strings.NewReader("from stdin"),
+			"pr-report", "-run-id", "pr1", "-store", store, "-findings-file", f)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if !strings.Contains(out, "- one thing") || strings.Contains(out, "from stdin") {
+			t.Errorf("the findings file did not win over stdin:\n%s", out)
+		}
+	})
+	t.Run("a missing findings file is an error", func(t *testing.T) {
+		code, out, _ := doRun(t, "pr-report", "-run-id", "pr1", "-store", store,
+			"-findings-file", filepath.Join(t.TempDir(), "nope.md"))
+		// Not silently empty: the narrative is the half of the report the record cannot
+		// derive, and a typo'd path would post a report with the findings section missing.
+		if code == 0 {
+			t.Errorf("a missing findings file exited 0 and printed:\n%s", out)
+		}
+	})
+}
+
+// record.Load returns an empty map and NO error for a store that does not hold the run, so a
+// report rendered off nothing is not an empty report: it is a GENUINE one reading `0 cycle(s)
+// · 0 agent(s)`, which is exactly what push-check's required fingerprint collapses to. The
+// two halves refuse together, by the same measurement.
+func TestPrReportRefusesARunItCannotRead(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	for _, c := range []struct{ name, id, store string }{
+		{"a mistyped run id", "pr2", store},
+		{"a store that does not exist", "pr1", filepath.Join(t.TempDir(), "absent.jsonl")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errOut := doRun(t, "pr-report", "-run-id", c.id, "-store", c.store)
+			if code == 0 {
+				t.Errorf("exit 0 — a report was rendered from no record:\n%s", out)
+			}
+			if out != "" {
+				t.Errorf("stdout should be empty on a refusal: %q", out)
+			}
+			// Both halves named: the id is usually not the wrong one.
+			if !strings.Contains(errOut, c.id) || !strings.Contains(errOut, c.store) {
+				t.Errorf("the refusal names neither the run nor the store: %q", errOut)
+			}
+		})
+	}
+}
+
+func TestPrReportRequiresARunID(t *testing.T) {
+	code, out, errOut := doRun(t, "pr-report")
+	if code == 0 {
+		t.Errorf("exit 0 with no -run-id:\n%s", out)
+	}
+	if !strings.Contains(errOut, "-run-id is required") {
+		t.Errorf("stderr does not say what is missing: %q", errOut)
+	}
+}
+
+// Without -post, stdout is the report BODY — so a usage banner or a parse error landing there
+// would be posted as the review disclosure on the next run.
+func TestPrReportFlagOutputNeverTouchesStdout(t *testing.T) {
+	t.Run("help", func(t *testing.T) {
+		code, out, errOut := doRun(t, "pr-report", "-h")
+		if code != 0 {
+			t.Errorf("exit = %d for -h, which is a request that was served", code)
+		}
+		if out != "" {
+			t.Errorf("the usage banner landed on stdout: %q", out)
+		}
+		if !strings.Contains(errOut, "-run-id") {
+			t.Errorf("stderr has no usage text: %q", errOut)
+		}
+	})
+	t.Run("a mistyped flag", func(t *testing.T) {
+		code, out, _ := doRun(t, "pr-report", "-run-ids", "x")
+		if code == 0 {
+			t.Error("a mistyped flag exited 0")
+		}
+		if out != "" {
+			t.Errorf("the parse error landed on stdout: %q", out)
+		}
+	})
+}
+
+// The wiring -post depends on: the body reaching report.Post, and its notes reaching stderr
+// rather than stdout. Shimmed gh answers "no PR", the ordinary case for a fresh branch.
+func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	dir := fixture(t, map[string]string{"README.md": "x\n"})
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post")
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	if out != "" {
+		t.Errorf("-post must not print the body to stdout: %q", out)
+	}
+	if !strings.Contains(errOut, "deferred to") || !strings.Contains(errOut, "no PR for this branch yet") {
+		t.Errorf("stderr does not say where the report went: %q", errOut)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".git", "info", "review-loop-pending-report.pr1.md"))
+	if err != nil {
+		t.Fatalf("the report was not kept: %v", err)
+	}
+	if !strings.Contains(string(b), "1 cycle(s) · 9 agent(s)") {
+		t.Errorf("the kept report is not the rendered one:\n%s", b)
+	}
+	// The derived convergence, not a flag: the label the pending note owes and the
+	// disclosure in the body cannot disagree, because both come off the same read.
+	if !strings.Contains(string(b), "label review:capped still owed") {
+		t.Errorf("the label-owed note does not carry the derived convergence:\n%s", b)
+	}
+}
+
+func TestPrReportDefaultsTheStoreFromTheEnvironment(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	// No -store. If the default wiring is gone this reads the real store, finds no `pr1`, and
+	// refuses — which is how this failure now shows up rather than rendering from nothing.
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1")
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	if !strings.Contains(out, "1 cycle(s) · 9 agent(s)") {
+		t.Errorf("the store named by $REVIEW_LOOP_RUNS was not read:\n%s", out)
 	}
 }

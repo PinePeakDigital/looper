@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestWritePending'
+expect: --- FAIL:
+why:    the run id arrives from -run-id and is interpolated into a PATH under the git common dir, so `../../../../tmp/evil` writes outside the repo. The guard travels with the interpolation rather than with one caller, which is the lesson push.reportProbe learned when the same check sat in Check() only and every direct caller bypassed it.
+--- old
+	if !validRunID(runID) {
+--- new
+	if false && !validRunID(runID) {

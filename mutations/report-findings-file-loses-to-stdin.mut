@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportTakesTheNarrativeFromStdinAndFromAFile'
+expect: --- FAIL:
+why:    -findings-file is the explicit channel and stdin is the fallback. Reversed, whatever the shell happened to hand the process wins over the file the caller named, and the narrative — the one half of the report the record cannot derive — is silently replaced. A hang is the other half of the same bug: reading stdin unconditionally blocks an interactive run that nobody is going to feed.
+--- old
+	if path != "" && path != "-" {
+--- new
+	if false && path != "" && path != "-" {

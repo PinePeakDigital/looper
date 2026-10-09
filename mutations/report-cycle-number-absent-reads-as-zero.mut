@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the Python interpolates `{c.get('n')}` with no `or`, so a cycle row with no number prints "None". Reading it as 0 hides a defect in the record behind a plausible value — and a table reading `| 0 |` says a cycle zero happened, where "None" says the row is malformed. Same distinction as `applied`, which is the one the convergence derivation turns on.
+--- old
+				raw(c.N), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),
+--- new
+				fmt.Sprintf("%d", orZero(c.N)), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),

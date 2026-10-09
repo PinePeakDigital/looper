@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestFindPRDistinguishesTheThreeCauses'
+expect: --- FAIL:
+why:    this is the defect the whole slice exists to fix, reintroduced. pr-report.py branches on `rc != 0 or not num` and prints "no PR yet", which asserts the first of three causes and discards the only stream that says which. On this machine gh has already failed with a keychain TLS error while `git push` worked, so the unfixable branch is the reachable one and its advice ("make a PR") cannot help. Folding a non-zero exit back into NoPR restores exactly that conflation.
+--- old
+	case r.Code != 0:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
+--- new
+	case r.Code != 0:
+		return Probe{State: NoPR, Detail: firstLine(r.Err)}

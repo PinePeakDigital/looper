@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    GateStatus exists only to separate an executed entry with NO status key from one holding null or "". Drop the presence flag and the two collapse, which is what a *string did: a gate that reported `{"reason": "..."}` and said nothing about its status renders as blank where the Python renders **unreported** — the single thing the gate table exists to surface, in the direction that hides a gate nobody ran. Assigned false rather than deleted so the field stays written and the struct still compiles.
+--- old
+	s.Present = true
+--- new
+	s.Present = false

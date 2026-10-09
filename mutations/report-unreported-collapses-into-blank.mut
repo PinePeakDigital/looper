@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the consumer half of the same defect. `e.get("status", "**unreported**")` defaults on an ABSENT key only; reading the presence flag as "has a non-empty value" restores the two-state collapse at the reader even with GateStatus keeping three. A planned gate that reported nothing then looks like a gate with a blank status rather than one nobody ran.
+--- old
+					if res.Status.Present {
+--- new
+					if res.Status.Present && res.Status.Value != "" {
