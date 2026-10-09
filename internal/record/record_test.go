@@ -610,6 +610,25 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		}
 	})
 
+	t.Run("no gate is blamed for a failure elsewhere in the row", func(t *testing.T) {
+		// nameBadGates wrapped unconditionally when written, so this row rendered as
+		// `executed gate(s) "g": <an error about unresolved_asks>`. The "X: Y" form asserts
+		// Y is why X, and it is not: the operator is told to fix a gate while the field they
+		// must edit sits elsewhere in the same sentence. Both fields really are bad here,
+		// which is why this is a false RELATION rather than over-firing, and why removing
+		// the guard broke no other test.
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"status":0}}}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		if strings.Contains(got, "unresolved_asks") && strings.Contains(got, `gate(s) "g":`) {
+			t.Errorf("the message names a gate as the cause of an unresolved_asks failure, which sends the operator to the wrong field; got %v", got)
+		}
+	})
+
 	t.Run("one row's gate names are bounded too", func(t *testing.T) {
 		// The row cap below bounds how many ROWS contribute; these bound what ONE row can
 		// contribute. Removing either cap left the suite green: the 200-row case covers
@@ -645,7 +664,7 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		// verbatim. Measured at 1.3 MB for 10,000 bad rows and 13 MB for 200 rows of 64 KiB
 		// names, on a channel whose whole purpose is to be read by a person.
 		rows := []string{plan40}
-		for i := 0; i < 200; i++ {
+		for i := 0; i < 2000; i++ {
 			rows = append(rows, fmt.Sprintf(
 				`{"run_id":"r","phase":"cycle","n":%d,"applied":"%s","agents":2}`, i, strings.Repeat("x", 4096)))
 		}
