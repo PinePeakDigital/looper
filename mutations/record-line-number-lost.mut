@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: must name line 3, the file line holding the bad row
+why:    the line number is the operator's whole next action on an append-only store with no repair tooling — it turns "somewhere in this run" into `sed -n 3p`. Replacing it with 0 survived the entire suite when the message was first written, as did the `dropped` term that makes it a FILE line rather than an index into the tail window.
+--- old
+		lineNo := dropped + i + 1
+--- new
+		_, _ = dropped, i
+		lineNo := 0

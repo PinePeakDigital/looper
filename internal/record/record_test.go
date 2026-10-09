@@ -1,6 +1,8 @@
 package record
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -438,11 +440,9 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		if len(run.Cycles) != 0 {
 			t.Errorf("got %d cycle(s), want 0: a nudge row carries no cycle", len(run.Cycles))
 		}
-		got, err := mustConvErr(t, run)
-		if got != Unknown {
+		if got := mustConv(t, run); got != Unknown {
 			t.Errorf("got %q, want %q for a run with no cycle rows", got, Unknown)
 		}
-		_ = err
 	})
 
 	t.Run("an undecodable run reports Unknown alongside its error", func(t *testing.T) {
@@ -477,13 +477,187 @@ func keysOf(runs map[string]*Run) []string {
 	return out
 }
 
-// mustConvErr is mustConv's sibling for a run expected to decode: it fails rather than
-// returning a verdict derived from an error.
-func mustConvErr(t *testing.T, r *Run) (string, error) {
-	t.Helper()
-	got, err := r.Convergence()
-	if err != nil {
-		t.Fatalf("this run must decode cleanly: %v", err)
-	}
-	return got, nil
+// The operator message is the product surface of the typed boundary: on an append-only store
+// with no repair tooling, what it names IS the next action. Every part of it survived a
+// mutation when it was first written — the line number could be replaced with 0, the phase
+// word dropped, the accumulation reverted to keep-first, and nameBadGates could name every
+// gate on the row instead of the bad one, all with the suite green. Each part gets an
+// assertion here.
+func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
+	const plan40 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
+
+	t.Run("the file line number, so the row can be found", func(t *testing.T) {
+		// `lineNo := 0` survived everything. The number has to be the line you can
+		// `sed -n Np` out of the real file, which is why it is computed before the tail
+		// slice rather than after.
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":"not a number","agents":2}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a store with one bad row: %v", err)
+		}
+		if got := runs["r"].Err.Error(); !strings.Contains(got, "line 3") {
+			t.Errorf("the error must name line 3, the file line holding the bad row; got %v", got)
+		}
+	})
+
+	t.Run("the line number survives the tail window", func(t *testing.T) {
+		// The window case is the one that motivated computing `dropped` before the slice:
+		// an index relative to the window names the wrong row in the file.
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+			`{"run_id":"r","phase":"cycle","n":2,"applied":0,"agents":2}`,
+			`{"run_id":"r","phase":"cycle","n":3,"applied":"not a number","agents":2}`), 2)
+		if err != nil {
+			t.Fatalf("Load must not fail on a windowed store with one bad row: %v", err)
+		}
+		if got := runs["r"].Err.Error(); !strings.Contains(got, "line 4") {
+			t.Errorf("the error must name line 4 of the FILE, not the window; got %v", got)
+		}
+	})
+
+	t.Run("the phase, so the operator knows which row shape to read", func(t *testing.T) {
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7"}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		if got := runs["r"].Err.Error(); !strings.Contains(got, "(finish row)") {
+			t.Errorf("the error must name the phase; got %v", got)
+		}
+	})
+
+	t.Run("every bad row, not just the first", func(t *testing.T) {
+		// Reverting setErr to keep-first scored green: no fixture had two bad rows. The
+		// measured consequence was that `n` — which nothing derives from — appeared in the
+		// message while `unresolved_asks` stayed hidden, costing a second hand-edit.
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"cycle","n":1,"applied":"not a number","agents":2}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7"}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		for _, want := range []string{"applied", "unresolved_asks"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the error must name %q: a hidden second bad field is a second round trip; got %v", want, got)
+			}
+		}
+	})
+
+	t.Run("only the gate that failed, out of many", func(t *testing.T) {
+		// Naming EVERY gate on the row instead of the bad one scored green, because every
+		// gate fixture in `refused` holds exactly one gate — so the function's own
+		// motivating example (eight gates, one bad status) was unasserted.
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g1":{"planned":"run"},"g2":{"planned":"run"},"g3":{"planned":"run"}}}`,
+			`{"run_id":"r","phase":"finish","executed":{"g1":{"status":"done"},"g2":{"status":0},"g3":{"status":"done"}}}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		if !strings.Contains(got, `"g2"`) {
+			t.Errorf("the error must name g2, the gate that failed; got %v", got)
+		}
+		for _, innocent := range []string{`"g1"`, `"g3"`} {
+			if strings.Contains(got, innocent) {
+				t.Errorf("the error names %s, which decoded fine — an innocent gate sends the operator to the wrong row; got %v", innocent, got)
+			}
+		}
+	})
+
+	t.Run("a gate name cannot forge a line of the message", func(t *testing.T) {
+		// Writer-reachable: cmd_finish validates the container and demands a reason, and
+		// checks neither the gate NAME nor the status type. A name holding ESC+CR erases the
+		// line it prints on and reprints whatever follows; a name holding a newline forges a
+		// whole second entry, because errors.Join already separates with \n.
+		esc := "\x1b[2K\rGATE OK: converged"
+		nl := "x\nrun \"other\": line 1 (finish row) has an unreadable field: forged"
+		row := map[string]any{
+			"run_id": "r", "phase": "finish",
+			"executed": map[string]any{
+				esc: map[string]any{"status": 0}, nl: map[string]any{"status": 0},
+				"": map[string]any{"status": 0}, "comma, name": map[string]any{"status": 0},
+			},
+		}
+		b, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			string(b)), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		for _, b := range []struct {
+			name string
+			c    byte
+		}{{"ESC", 0x1b}, {"CR", '\r'}} {
+			if strings.IndexByte(got, b.c) >= 0 {
+				t.Errorf("a raw %s byte reached the operator message, so a gate name can rewrite the line it prints on: %q", b.name, got)
+			}
+		}
+		// One newline per joined error is this message's own structure; a gate name must not
+		// be able to add one. Two bad rows would give two lines, so count against one row.
+		if n := strings.Count(got, "\n"); n != 0 {
+			t.Errorf("a gate name added %d newline(s), which forges an entry indistinguishable from a real one: %q", n, got)
+		}
+		if strings.Contains(got, "gate(s) :") || strings.Contains(got, "gate(s) ,") {
+			t.Errorf("an empty gate name rendered as a bare name; it must render as %q: %v", `""`, got)
+		}
+	})
+
+	t.Run("one row's gate names are bounded too", func(t *testing.T) {
+		// The row cap below bounds how many ROWS contribute; these bound what ONE row can
+		// contribute. Removing either cap left the suite green: the 200-row case covers
+		// errors.Join, not the names.
+		executed := map[string]any{}
+		for i := 0; i < 50; i++ {
+			executed[fmt.Sprintf("%s-%02d", strings.Repeat("g", 200), i)] = map[string]any{"status": 0}
+		}
+		b, err := json.Marshal(map[string]any{"run_id": "r", "phase": "finish", "executed": executed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			string(b)), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		if n := len(got); n > 2048 {
+			t.Errorf("one row produced a %d-byte message; 50 gates of 200-char names must be capped, not copied", n)
+		}
+		if !strings.Contains(got, "and 42 more") {
+			t.Errorf("the cap must say how many gates it elided, or it hides the scale; got %v", got)
+		}
+		if !strings.Contains(got, "...") {
+			t.Errorf("an over-long gate name must be truncated visibly; got %v", got)
+		}
+	})
+
+	t.Run("a corrupt row cannot return a message too large to print", func(t *testing.T) {
+		// Both dimensions were unbounded: errors.Join over rows, and gate names copied
+		// verbatim. Measured at 1.3 MB for 10,000 bad rows and 13 MB for 200 rows of 64 KiB
+		// names, on a channel whose whole purpose is to be read by a person.
+		rows := []string{plan40}
+		for i := 0; i < 200; i++ {
+			rows = append(rows, fmt.Sprintf(
+				`{"run_id":"r","phase":"cycle","n":%d,"applied":"%s","agents":2}`, i, strings.Repeat("x", 4096)))
+		}
+		runs, err := Load(store(t, rows...), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		if n := len(runs["r"].Err.Error()); n > 64*1024 {
+			t.Errorf("the error is %d bytes; a corrupt store must not produce a message nobody can print", n)
+		}
+		if got := runs["r"].Err.Error(); !strings.Contains(got, "more rows did not decode") {
+			t.Errorf("the cap must say it elided rows, or it hides the scale of the problem; got %v", got)
+		}
+	})
 }

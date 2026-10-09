@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTypedDecodeRefusesTheShapesThePythonCoerced'
+expect: a_bool_where_a_count_belongs
+why:    nameBadGates wrapped unconditionally when first written, so a row whose `unresolved_asks` was unreadable rendered as `executed gate(s) "g": <error about unresolved_asks>`. The `X: Y` form asserts that Y is why X, and it was not — the operator is told to fix a gate and the field they must actually edit is elsewhere in the sentence. The UnmarshalTypeError's own Field is the check. Removing it also makes the gate prefix appear on cycle-row errors that have no gates at all.
+--- old
+	var ute *json.UnmarshalTypeError
+	if !errors.As(err, &ute) || (ute.Field != field && !strings.HasPrefix(ute.Field, field+".")) {
+		return err
+	}
+--- new

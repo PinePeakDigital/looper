@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: the cap must say how many gates it elided
+why:    2,000 bad gates on one row produced a 14 KB message. The cap has to ELIDE and say so: silently printing the first eight would hide the scale, which is the same failure as printing all of them in the other direction.
+--- old
+	if len(bad) > maxNamedGates {
+		extra, bad = len(bad)-maxNamedGates, bad[:maxNamedGates]
+	}
+--- new
+	_ = maxNamedGates

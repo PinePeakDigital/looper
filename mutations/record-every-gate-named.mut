@@ -1,0 +1,11 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: which decoded fine — an innocent gate sends the operator to the wrong row
+why:    nameBadGates exists to say WHICH gate failed out of eight. Naming every gate on the row instead of only the undecodable one survived the whole suite, because every gate fixture in `refused` holds exactly one gate — so the function's own motivating example was unasserted and the fix was indistinguishable from the defect.
+--- old
+		if decode(v) != nil {
+			bad = append(bad, name)
+		}
+--- new
+		_ = v
+		bad = append(bad, name)

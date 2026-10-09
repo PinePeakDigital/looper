@@ -1,0 +1,11 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: a hidden second bad field is a second round trip
+why:    restores the exact keep-first behaviour the accumulation replaced, which the paragraph above setErr argues against at length and which no test covered — no fixture had two bad rows in one run. encoding/json reports whichever bad field comes first in the WRITER's key order, and across rows the first bad row in file order, so keep-first measurably put `n` (which nothing derives from) in the message while hiding `unresolved_asks`, the one field whose misreading motivated this whole layer.
+--- old
+	r.errN++
+--- new
+	if r.Err != nil {
+		return
+	}
+	r.errN++

@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: so a gate name can rewrite the line it prints on
+why:    SECURITY. Gate names come from the same unvalidated writer as run_id — cmd_finish checks the container and demands a reason, and validates neither the gate NAME nor the status type — and this message is read by a human deciding whether a push is safe. Reproduced through the real writer: a gate named with ESC+CR exits 0, lands in the store, and erases the line it is printed on; a name containing a newline forges a whole second entry, because errors.Join already separates with a newline. This is the injection %q was added to setErr to close, reopened two format verbs below it by the commit that closed it.
+--- old
+		quoted = append(quoted, strconv.Quote(name))
+--- new
+		_ = strconv.Quote
+		quoted = append(quoted, name)

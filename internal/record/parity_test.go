@@ -451,12 +451,19 @@ var refusedNames = map[string][]string{
 	// The gate cases must name the GATE as well as the field. encoding/json never names a map
 	// key, so without nameBadGates these said only `executed.status` on a row that can hold
 	// eight gates.
-	"executed entry is not a dict":                {"executed", "gate(s) g:"},
-	"gate false status is unreported":             {"status", "gate(s) g:"},
-	"gate small-integer status renders as itself": {"status", "gate(s) g:"},
-	"gate spec is not a dict":                     {"gates", "gate(s) g:"},
-	"gate true status renders as True":            {"status", "gate(s) g:"},
-	"gate zero status is unreported":              {"status", "gate(s) g:"},
+	//
+	// Two of them want `Finish.executed` / `Plan.gates` rather than the bare field name, and
+	// that is not cosmetic. nameBadGates' message BEGINS with the field — `executed gate(s)
+	// "g": …` — so for these two fixtures the field name is a substring of our own wrapper,
+	// and wanting it asserted nothing at all. Both subtests stayed GREEN when the json error
+	// was stripped of every field name, which is the same vacuity this map was added to fix,
+	// one wrapper further down. The struct-qualified path is text only encoding/json emits.
+	"executed entry is not a dict":                {"executed", `gate(s) "g":`},
+	"gate false status is unreported":             {"status", `gate(s) "g":`},
+	"gate small-integer status renders as itself": {"status", `gate(s) "g":`},
+	"gate spec is not a dict":                     {"gates", `gate(s) "g":`},
+	"gate true status renders as True":            {"status", `gate(s) "g":`},
+	"gate zero status is unreported":              {"status", `gate(s) "g":`},
 }
 
 // The typed boundary, asserted from the other side. Every fixture in `refused` must fail to

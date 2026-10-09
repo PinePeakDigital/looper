@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -38,7 +39,8 @@ import (
 // a verdict. Measured against the real store before choosing this: across 153 rows every
 // numeric field is a number in every row, so the shapes the old coercion helpers guarded
 // against never actually occur — while ABSENCE and null are everywhere (`subagent_tokens`
-// null in 46 of 57 cycles, `agent_cap` absent in 18 of 38 plans). So the real work is
+// null in 46 of 57 cycles, `agent_cap` absent in 18 of 38 plans (measured at 8c07d63;
+// the store is append-only, so these only drift upward)). So the real work is
 // telling ABSENT-OR-NULL from zero, which is what the pointers below do and is the
 // distinction `converged` turns on. Not three states: a *int is nil for absent and for
 // null alike, and no reader here wants them apart. `disclosure()` is the first function
@@ -96,7 +98,8 @@ type Finish struct {
 // type=int, `gates` is always written), as does cmd_finish, so repeated rows always carry
 // identical key sets. Verified on the real store — the two runs that do have duplicate finish
 // rows carry the same keys in each, so merge and last-wins give the same answer — and a
-// differential over 18,041 synthetic stores finds it in exactly 2, both hand-built. Cycle rows
+// differential run during review found it in 2 synthetic stores, both hand-built (that run
+// is not reproducible from this repo; what is checkable here is the real-store half above). Cycle rows
 // are not affected: load() appends those and merges nothing, which is what Cycles below does.
 type Run struct {
 	ID     string
@@ -137,6 +140,8 @@ type Run struct {
 	// retires the rule rather than restating it, but it is not rescuing that defect from the
 	// code it deletes, and saying so would be the flattering version.
 	Err error
+	// errN counts every failed row, including those past maxRunErrs that Err does not list.
+	errN int
 }
 
 // DefaultTail matches runlog.TAIL_LINES. Reading the whole store is the right default for
@@ -270,11 +275,35 @@ func Load(path string, limit int) (map[string]*Run, error) {
 // combination is the one place the typed boundary is less diagnosable than the coercion it
 // replaced, and the gate name is what closes it.
 //
-// Runs on the error path only, so a healthy row pays nothing. Returns `err` untouched when
-// the bad field is not one of these maps, when the map's own type is wrong (json's message
-// already covers that case), or when nothing in it individually fails — never a bare
-// "gate : " with an empty name.
+// Runs on the error path only, so a healthy row pays nothing.
+//
+// Three things here were wrong when this function was first written, all found by review of
+// the commit that added it, and all of them things it had itself just fixed elsewhere:
+//
+//   - The names were interpolated with %s. Gate names come from the same unvalidated writer
+//     as `run_id` — `cmd_finish` checks the container and demands a reason, and validates
+//     neither the gate NAME nor the status type — so the injection %q was added to setErr to
+//     close was reopened two format verbs below it. Reproduced through the real writer: a
+//     gate named "\x1b[2K\rGATE OK: converged" exits 0, lands in the store, and erases the
+//     line it is printed on; a gate name containing a newline forges a whole second entry,
+//     because errors.Join already uses \n as its separator. Every name is %q now, which
+//     also disambiguates a name containing a comma from two names and renders an empty name
+//     as "" rather than as the bare `gate(s) :` the old comment promised was impossible.
+//   - It wrapped unconditionally, so a row whose `unresolved_asks` was bad and whose gates
+//     were merely also bad rendered `executed gate(s) "g": <error about unresolved_asks>`.
+//     The `X: Y` form asserts Y is why X; it was not. The UnmarshalTypeError's own Field is
+//     the check, and the bail-out below means a gate is named only when the row really did
+//     fail on this map.
+//   - Nothing bounded it. A store with many bad rows, or one 1 MiB gate name, produced a
+//     multi-megabyte "message" — measured at 13 MB for 200 rows of 64 KiB names. The caps
+//     below bound a single row's contribution; setErr bounds the number of rows.
 func nameBadGates(line, field string, err error, decode func(json.RawMessage) error) error {
+	// Only this field's failure may name this field's gates. Anything else — a different
+	// field, or an error that is not a type error at all — goes back untouched.
+	var ute *json.UnmarshalTypeError
+	if !errors.As(err, &ute) || (ute.Field != field && !strings.HasPrefix(ute.Field, field+".")) {
+		return err
+	}
 	var top map[string]json.RawMessage
 	if json.Unmarshal([]byte(line), &top) != nil {
 		return err
@@ -285,7 +314,7 @@ func nameBadGates(line, field string, err error, decode func(json.RawMessage) er
 	}
 	var entries map[string]json.RawMessage
 	if json.Unmarshal(raw, &entries) != nil {
-		return err
+		return err // the map's own type is wrong; json's message already covers that
 	}
 	var bad []string
 	for name, v := range entries {
@@ -297,8 +326,35 @@ func nameBadGates(line, field string, err error, decode func(json.RawMessage) er
 		return err
 	}
 	sort.Strings(bad) // map order is random; an error message must not be
-	return fmt.Errorf("%s gate(s) %s: %w", field, strings.Join(bad, ", "), err)
+
+	extra := 0
+	if len(bad) > maxNamedGates {
+		extra, bad = len(bad)-maxNamedGates, bad[:maxNamedGates]
+	}
+	quoted := make([]string, 0, len(bad)+1)
+	for _, name := range bad {
+		if len(name) > maxGateNameLen {
+			name = name[:maxGateNameLen] + "..."
+		}
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	if extra > 0 {
+		quoted = append(quoted, fmt.Sprintf("and %d more", extra))
+	}
+	return fmt.Errorf("%s gate(s) %s: %w", field, strings.Join(quoted, ", "), err)
 }
+
+const (
+	// Caps on one row's contribution to an operator message. A real plan has 14 gates, so
+	// naming more than this is already a corrupt row rather than a thing to read, and a gate
+	// name longer than this is not a gate name.
+	maxNamedGates  = 8
+	maxGateNameLen = 60
+	// And on the number of rows a single run may contribute. Accumulating is right — the
+	// first error alone hid `unresolved_asks` behind `n` — but a store with 10,000 bad rows
+	// for one run produced a 1.3 MB error, and nothing downstream is prepared to print that.
+	maxRunErrs = 20
+)
 
 // setErr accumulates every decode failure on the run. It used to keep only the first, on
 // the stated ground that "later ones are usually the same row read again by another phase's
@@ -317,6 +373,17 @@ func nameBadGates(line, field string, err error, decode func(json.RawMessage) er
 // escapes the control bytes instead. The phase needs no quoting — only the three literals
 // below reach here.
 func (r *Run) setErr(lineNo int, phase string, err error) {
+	r.errN++
+	if r.errN > maxRunErrs {
+		// Bounded, because accumulating without a cap turned a store with 10,000 bad rows
+		// for one run into a 1.3 MB error. The count still says how many there were, so the
+		// cap cannot hide the scale of the problem — only the repetition.
+		if r.errN == maxRunErrs+1 {
+			r.Err = errors.Join(r.Err, fmt.Errorf(
+				"run %q: more rows did not decode; only the first %d are listed", r.ID, maxRunErrs))
+		}
+		return
+	}
 	r.Err = errors.Join(r.Err, fmt.Errorf(
 		"run %q: line %d (%s row) has an unreadable field: %w", r.ID, lineNo, phase, err))
 }
