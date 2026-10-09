@@ -13,11 +13,17 @@ import (
 
 // The parity gate. Until runlog.py is retired, the two implementations must not be able to
 // disagree: this runs the Python against the same fixture and requires the same answer —
-// except where a divergence is recorded as deliberate at the code that causes it. Today that
-// is four places, not one: pyStr's number, container, nil and false gaps; num() and
-// asksOutstanding() degrading where the Python raises TypeError and dies; and DroppedGates'
-// two type assertions degrading where it raises AttributeError. A gap with a written reason
-// is a different thing from one nobody noticed, and only the second kind is what this forbids.
+// except where a divergence is recorded as deliberate at the code that causes it.
+//
+// The typed decode moved every divergence into one place. It used to be four: pyStr's number,
+// container, nil and false gaps; num() and asksOutstanding() degrading where the Python raises
+// TypeError and dies; and DroppedGates' two type assertions degrading where it raises
+// AttributeError. All four helpers are gone, and with them the per-helper reasoning about what
+// a wrong-typed value should coerce to. What replaced them is `refused` below: a shape the
+// Python coerced into a verdict now fails to decode, and Run.Err carries that to the caller
+// instead of an answer. A gap with a written reason is a different thing from one nobody
+// noticed, and only the second kind is what this forbids — so the enumeration IS the gate, and
+// `refused` has to stay complete or this comment is the lie it used to be.
 //
 // A port is the one refactor with a free oracle — the thing being replaced still runs — and
 // not using it is how a port ships a behaviour change nobody intended. Every fixture below
@@ -127,6 +133,162 @@ func pyOracle(t *testing.T, script, store, body string) string {
 		t.Fatalf("Python side found no run %q in the fixture", "r")
 	}
 	return got
+}
+
+// refused are the fixtures the TYPED port will not decode, and that is the deliberate
+// divergence this port buys. The Python coerces almost every one of them into a verdict: a
+// bool or a number where a status string belongs, a bare string where a gate spec or an
+// executed entry belongs, a bool, a list or an empty string where a count belongs.
+//
+// WRITER-REACHABILITY IS SPLIT, and the earlier claim here — "each is a shape no writer
+// produces" — was false for four of them. Checked by running the writer, not by reading it:
+//
+//	runlog.py finish --executed '{"g":{"status":5,"reason":"measured"}}'  -> exits 0, row written
+//
+// cmd_finish validates the CONTAINER and demands a reason for any status but `done`; it never
+// checks the status's type. So `gate false/zero/true/small-integer status` are all rows the
+// live writer creates, and the typed port refuses to decode a run containing one. That is a
+// real tightening, not just a prose error, and the supporting measurement cited for it was a
+// non-sequitur: "every numeric field is a number in every row" says nothing about gate specs,
+// executed entries or statuses. What IS true today is that all 302 statuses in the store are
+// strings, so nothing is broken yet — and that the remaining ten shapes are unreachable,
+// each by its own mechanism rather than by one blanket rule: --applied/--asked/--asks are
+// argparse type=int; --analysis-changed is store_true and cmd_cycle writes bool(), so a
+// number cannot land there; a bare-string executed entry is refused by cmd_finish's guard
+// and a bare-string gate spec by cmd_plan's. The direction is safe for the four reachable
+// ones: Python reports the gate dropped (with the raw 5 or True, not a stringified one) and
+// Go refuses the run, so neither buys a clean sweep. That is NOT true of all fourteen —
+// for a whole-map `gates: {"g":"run"}` the Python returns {} and a clean sweep is exactly
+// what it buys, which is why TestACorruptGateRecordCannotReportACleanSweep exists.
+//
+// `an unreadable asks count` is also not a shape the Python "derived an answer anyway" from:
+// `("7" or 0) > 0` raises TypeError and the Python dies. Refusing beats reproducing a crash.
+//
+// They are out of the parity map because parity is no longer the claim for them. The claim
+// is below: the decode fails, and the error names the run and the field so the operator can
+// go fix the row instead of acting on a verdict read from it.
+var refused = map[string][]string{
+	// `asked: {}` and `unresolved_asks: "7"`. Both had unit tests of their own asserting
+	// the Python's coercion: an empty dict is falsy so it converged, and an unreadable
+	// count was treated as outstanding BECAUSE it could not be read — the Go's OWN policy,
+	// not the Python's coercion: on that input the Python raises TypeError and dies. That
+	// second rule was
+	// the most careful thing in the old port — it is the one guard where a falsy reading
+	// waves a run through, so it had to answer "outstanding" whenever it could not tell.
+	// Typing retires the rule rather than restating it: there is no unreadable value left
+	// to have a policy about.
+	"an empty asked dict": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":{},"agents":2}`,
+	},
+	"an unreadable asks count": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":"7"}`,
+	},
+	// Python's bool and float arithmetic in the converged test, which `Convergence`'s own
+	// comment used to claim exactness over. `False == 0` is True and `0.0 == 0` is True, so
+	// each of these derives `converged` on the Python — quiet, push with no disclosure —
+	// while the typed port returns a decode error. The retired isZero handled them and said
+	// so; this is where that documented behaviour went. None is writer-reachable: --applied,
+	// --asked and --analysis-changed are all argparse type=int or a yes/no choice.
+	"a bool where a count belongs": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":false,"asked":0,"agents":2}`,
+	},
+	"a bool where the ask count belongs": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":false,"agents":2}`,
+	},
+	"a number where the analysis flag belongs": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"analysis_changed":0,"agents":2}`,
+	},
+	// A JSON number that is not an integer literal. The whole class — `0.0`, `2e1`, `2.5`,
+	// and any integer past int64 — and `applied` is only the cheapest place to stand it up;
+	// the same holds for every *int field and for agent_cap. This was the refusal class
+	// `refused` did not name, which matters precisely because the comment above claims to be
+	// the enumeration: a class missing from it is indistinguishable from one nobody noticed.
+	//
+	// It belongs here rather than in the parity map because `0.0` is the one member where the
+	// Python is QUIET and the Go is loud. Python's `0.0 == 0` is True, so it reports converged
+	// and push-check pushes with no disclosure at all; `2e1` and `2.5` only reach halted, which
+	// discloses anyway. So the entry is pinned to the member with a real cost, not a lateral one.
+	//
+	// Reachability: zero of the 154 rows in the live store hold a non-integer numeric literal —
+	// every numeric field in every row is an integer — and runlog.py's cmd_cycle types
+	// `--applied` as int, so argparse rejects `0.0` before it can be written.
+	"a numeric field that is not an integer literal": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0.0,"asked":0,"agents":2}`,
+	},
+	// An empty list is falsy in Python, so `asked: []` does not block the converged branch.
+	"empty-asked-list-is-falsy": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":[],"agents":2}`,
+	},
+	// An empty `unresolved_asks` is none, exactly as absent is — Python's `"" or 0`. The
+	// non-empty-string case cannot live here: the Python raises TypeError on it, so there
+	// is no answer to compare. record_test.go states the Go answer directly instead.
+	"empty-asks-value-is-not-outstanding": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":""}`,
+	},
+	// The mirror case on the other side: an executed entry that is a bare string. The
+	// isinstance guard means no status is read, so the gate is unreported — NOT "done".
+	"executed entry is not a dict": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":"done"}}`,
+	},
+	// `false` is the same collapse spelled as a boolean, and the direct mirror of the
+	// `true` fixture below, which does NOT collapse and so prints its rendering.
+	"gate false status is unreported": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":false,"reason":"r"}}}`,
+	},
+	// A SMALL INTEGER status. This was the one numeric class where the Go's rendering agreed
+	// with the Python's, which is why it alone had a parity fixture while 5.0, 1000000 and any
+	// JSON integer past 2^53 had only a prose note at pyStr saying a fixture for them would
+	// fail. The typed decode makes that distinction moot: a status is a *string or the row does
+	// not decode, so every numeric class including this one is refused on the same ground and
+	// none of them needs a rendering to agree about. The narrow name is kept because it still
+	// says what the row holds.
+	//
+	// Reachability: runlog.py's cmd_finish does not validate the status VOCABULARY, though it
+	// does refuse a non-dict executed value and require a non-empty reason for any status but
+	// done — hence the reason on every row here.
+	"gate small-integer status renders as itself": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":5,"reason":"r"}}}`,
+	},
+	// A gate spec that is a bare string, not a dict. The Python guards with isinstance,
+	// so this is not planned at all; reading `v["planned"]` would raise, and treating
+	// the string itself as the plan would make it planned.
+	"gate spec is not a dict": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":"run"}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
+	},
+	// `status: true` is the mirror of the false fixture above, and the one case where
+	// Python's rendering and Go's are not the same word: str(True) is "True" and
+	// fmt.Sprint(true) is "true". Reachable the same way false is — cmd_finish never
+	// validates the status — and it is the alarm line's text that differs.
+	"gate true status renders as True": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
+	},
+	// `0` is the same collapse spelled as a number. Defaulting only on absence reported
+	// "0" here, which names nothing about the gate.
+	"gate zero status is unreported": {
+		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
+		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
+		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":0,"reason":"r"}}}`,
+	},
 }
 
 // The vacuity guards above are tripwires no fixture can trip: every fixture holds run "r",
@@ -267,6 +429,153 @@ func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
 	}
 }
 
+// refusedNames is what each refused fixture's error must actually NAME. It is a separate map
+// keyed identically to `refused`, and the test asserts the two key sets are equal, so adding a
+// refusal without saying what its error names fails rather than passing silently.
+//
+// This exists because the assertions it replaces were vacuous. They were:
+//
+//	strings.Contains(run.Err.Error(), "run r:")
+//	strings.Contains(run.Err.Error(), "unreadable field")
+//
+// Both are literal substrings of setErr's own format string, so both held for ANY error — the
+// %w could be dropped entirely and the test stayed green. The one guard on the product surface
+// this commit elevates ("the error must name the run and the field") asserted only that the
+// wrapper we wrote was the wrapper we wrote. Naming the field per fixture is the whole point:
+// the operator's next action is to go edit that field on that row.
+var refusedNames = map[string][]string{
+	"an empty asked dict":                            {"asked"},
+	"an unreadable asks count":                       {"unresolved_asks"},
+	"a bool where a count belongs":                   {"applied"},
+	"a bool where the ask count belongs":             {"asked"},
+	"a number where the analysis flag belongs":       {"analysis_changed"},
+	"a numeric field that is not an integer literal": {"applied"},
+	"empty-asked-list-is-falsy":                      {"asked"},
+	"empty-asks-value-is-not-outstanding":            {"unresolved_asks"},
+	// The gate cases must name the GATE as well as the field. encoding/json never names a map
+	// key, so without nameBadGates these said only `executed.status` on a row that can hold
+	// eight gates.
+	//
+	// Two of them want `Finish.executed` / `Plan.gates` rather than the bare field name, and
+	// that is not cosmetic. nameBadGates' message BEGINS with the field — `executed gate(s)
+	// "g": …` — so for these two fixtures the field name is a substring of our own wrapper,
+	// and wanting it asserted nothing at all. Both subtests stayed GREEN when the json error
+	// was stripped of every field name, which is the same vacuity this map was added to fix,
+	// one wrapper further down. The struct-qualified path is text only encoding/json emits.
+	"executed entry is not a dict":                {"Finish.executed", `gate(s) "g":`},
+	"gate false status is unreported":             {"status", `gate(s) "g":`},
+	"gate small-integer status renders as itself": {"status", `gate(s) "g":`},
+	"gate spec is not a dict":                     {"Plan.gates", `gate(s) "g":`},
+	"gate true status renders as True":            {"status", `gate(s) "g":`},
+	"gate zero status is unreported":              {"status", `gate(s) "g":`},
+}
+
+// The typed boundary, asserted from the other side. Every fixture in `refused` must fail to
+// decode, and the error must name the run and the offending field — an error that says only
+// "bad input" leaves the operator with a 153-row append-only store and nowhere to look.
+//
+// This is the test the parity gate cannot be: the oracle's answer for these inputs is a
+// coerced verdict, so agreeing with it is the defect. Enumerated here rather than left as an
+// absence, because a fixture quietly dropped from the parity map looks identical to one that
+// was never written.
+func TestTypedDecodeRefusesTheShapesThePythonCoerced(t *testing.T) {
+	for name, rows := range refused {
+		t.Run(name, func(t *testing.T) {
+			runs, err := Load(store(t, rows...), 0)
+			if err != nil {
+				t.Fatalf("Load should not fail on a decodable store: %v", err)
+			}
+			run := runs["r"]
+			if run == nil {
+				t.Fatal("the run must still exist: a bad field is not a missing run")
+			}
+			if run.Err == nil {
+				t.Fatalf("this shape must not decode, but it did\nfixture:\n%s",
+					strings.Join(rows, "\n"))
+			}
+			// The run id, quoted, so an operator with one store and many repos knows which
+			// run — and so a crafted id cannot forge a line with control bytes.
+			if !strings.Contains(run.Err.Error(), `run "r":`) {
+				t.Errorf("the error must name the run as %s; got %v", `run "r":`, run.Err)
+			}
+			// And what they actually have to go edit. Asserted against the json error's own
+			// text, not against our wrapper, which is the part the old assertion could not do.
+			wants, ok := refusedNames[name]
+			if !ok {
+				t.Fatalf("no entry in refusedNames for %q: say what this refusal's error names", name)
+			}
+			for _, want := range wants {
+				if !strings.Contains(run.Err.Error(), want) {
+					t.Errorf("the error must name %q, so the operator knows what to fix; got %v", want, run.Err)
+				}
+			}
+			// Both derivations must refuse rather than answer.
+			if _, err := run.Convergence(); err == nil {
+				t.Error("Convergence returned a verdict for a run it could not decode")
+			}
+			if _, err := run.DroppedGates(); err == nil {
+				t.Error("DroppedGates returned a map for a run it could not decode")
+			}
+		})
+	}
+}
+
+// The two maps must describe the same set. A refusal with no expectation would otherwise skip
+// the only assertion that is not tautological, and an expectation with no refusal would sit
+// there asserting nothing — the shape the repo's own learning warns about, where a test that
+// ranges over the list under test deletes its own case when the list shrinks.
+func TestEveryRefusalSaysWhatItsErrorNames(t *testing.T) {
+	for name := range refused {
+		if _, ok := refusedNames[name]; !ok {
+			t.Errorf("refused[%q] has no refusedNames entry", name)
+		}
+	}
+	for name := range refusedNames {
+		if _, ok := refused[name]; !ok {
+			t.Errorf("refusedNames[%q] names a refusal that no longer exists", name)
+		}
+	}
+	if len(refused) < 14 {
+		t.Errorf("refused has %d entries, expected at least 14 — was one deleted?", len(refused))
+	}
+}
+
+// One bad run must not block the others. The store is append-only and shared by every repo
+// on the machine, so a row written months ago for some other run has to stay harmless —
+// which is the whole reason the error lives on the Run and not on Load.
+func TestABadRowDoesNotPoisonOtherRuns(t *testing.T) {
+	path := store(t,
+		`{"run_id":"bad","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"bad","phase":"cycle","n":1,"applied":"not a number","agents":2}`,
+		`{"run_id":"good","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"good","phase":"cycle","n":1,"applied":0,"agents":2}`,
+	)
+	runs, err := Load(path, 0)
+	if err != nil {
+		// Not a bare t.Fatal(err): this is the regression the catalog's
+		// record-decode-error-blocks-the-whole-store entry exists to catch, and a raw json
+		// error with no statement of the expectation leaves a reader unable to tell whether
+		// the error was expected.
+		t.Fatalf("Load must not fail on a store that contains one bad row: %v", err)
+	}
+	// Two distinct regressions, which one message used to collapse: the run being dropped
+	// outright, and the run existing with its error swallowed. The old sentence printed
+	// neither, so a failure did not say which had happened.
+	if runs["bad"] == nil {
+		t.Fatalf("the bad run was dropped entirely; runs present: %v", keysOf(runs))
+	}
+	if runs["bad"].Err == nil {
+		t.Fatal("the bad run exists but its error was swallowed, so a verdict could be derived from a row that did not decode")
+	}
+	if runs["good"] == nil || runs["good"].Err != nil {
+		t.Fatalf("the good run must be unaffected; got err %v", runs["good"].Err)
+	}
+	got, err := runs["good"].Convergence()
+	if err != nil || got != Converged {
+		t.Errorf("good run: got %q, %v; want %q, nil", got, err, Converged)
+	}
+}
+
 // fixtures are stores to compare on. Each is a list of JSONL rows.
 var fixtures = map[string][]string{
 	// A cycle row with NO `applied` field. The Python compares `last.get("applied") == 0`,
@@ -289,11 +598,6 @@ var fixtures = map[string][]string{
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":5}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":5}`,
 	},
-	// An empty list is falsy in Python, so `asked: []` does not block the converged branch.
-	"empty-asked-list-is-falsy": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":[],"agents":2}`,
-	},
 	// A negative cap is truthy in Python's bare `if cap`, so any spend clears it.
 	// cmd_plan refuses to write one, but the store is append-only and never rewritten.
 	"negative-cap-is-still-a-cap": {
@@ -304,14 +608,6 @@ var fixtures = map[string][]string{
 	"one-short-of-the-cap": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":1,"agents":7}`,
-	},
-	// An empty `unresolved_asks` is none, exactly as absent is — Python's `"" or 0`. The
-	// non-empty-string case cannot live here: the Python raises TypeError on it, so there
-	// is no answer to compare. record_test.go states the Go answer directly instead.
-	"empty-asks-value-is-not-outstanding": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":3}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":""}`,
 	},
 	// A final zero-fix cycle: the only shape that converges.
 	"converged": {
@@ -424,49 +720,12 @@ var fixtures = map[string][]string{
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
 		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"","reason":"r"}}}`,
 	},
-	// `false` is the same collapse spelled as a boolean, and the direct mirror of the
-	// `true` fixture below, which does NOT collapse and so prints its rendering.
-	"gate false status is unreported": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":false,"reason":"r"}}}`,
-	},
-	// `0` is the same collapse spelled as a number. Defaulting only on absence reported
-	// "0" here, which names nothing about the gate.
-	"gate zero status is unreported": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":0,"reason":"r"}}}`,
-	},
 	// An explicit JSON null, as distinct from the key being absent above: four different
 	// Python routes to the same answer, which is the thing worth pinning.
 	"gate null status is unreported": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
 		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":null,"reason":"r"}}}`,
-	},
-	// A SMALL INTEGER status, which is the only numeric class where the two renderings agree.
-	// Named narrowly on purpose: this fixture passing says nothing about numbers in general,
-	// and when it was called "reported as itself" it read as proof of a claim that is false
-	// for 5.0, for 1000000, and for any JSON integer past 2^53. Those gaps are recorded at
-	// pyStr and carry no fixture, because a fixture for them would fail.
-	//
-	// Reachability: runlog.py's cmd_finish does not validate the status VOCABULARY, though it
-	// does refuse a non-dict executed value and require a non-empty reason for any status but
-	// done — hence the reason on every row here.
-	"gate small-integer status renders as itself": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":5,"reason":"r"}}}`,
-	},
-	// `status: true` is the mirror of the false fixture above, and the one case where
-	// Python's rendering and Go's are not the same word: str(True) is "True" and
-	// fmt.Sprint(true) is "true". Reachable the same way false is — cmd_finish never
-	// validates the status — and it is the alarm line's text that differs.
-	"gate true status renders as True": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":true,"reason":"r"}}}`,
 	},
 	// `passed` and `blocked` are the two statuses most likely to be quietly accounted, and
 	// both are deliberately absent from the accounted vocabularies — but for different
@@ -494,21 +753,6 @@ var fixtures = map[string][]string{
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"skip"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
 		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":{"status":"failed","reason":"r"}}}`,
-	},
-	// A gate spec that is a bare string, not a dict. The Python guards with isinstance,
-	// so this is not planned at all; reading `v["planned"]` would raise, and treating
-	// the string itself as the plan would make it planned.
-	"gate spec is not a dict": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":"run"}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{}}`,
-	},
-	// The mirror case on the other side: an executed entry that is a bare string. The
-	// isinstance guard means no status is read, so the gate is unreported — NOT "done".
-	"executed entry is not a dict": {
-		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
-		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
-		`{"run_id":"r","phase":"finish","outcome":"clean","executed":{"g":"done"}}`,
 	},
 	// `executed` absent entirely, which is what a run that never reached finish looks
 	// like once a later row merges in.
@@ -539,7 +783,12 @@ func TestConvergenceMatchesThePython(t *testing.T) {
 			if run == nil {
 				t.Fatalf("Go side found no run %q in the fixture", "r")
 			}
-			got := run.Convergence()
+			got, err := run.Convergence()
+			if err != nil {
+				// A decode error here means the fixture belongs in the Go-only set, not in
+				// the parity map: the typed port refuses shapes the Python coerced.
+				t.Fatalf("Go side could not decode the fixture: %v", err)
+			}
 
 			// The CLI, not pyOracle: convergence has a subcommand, and its exit code is
 			// non-zero for anything but converged by design, so the error is not a signal.
@@ -657,7 +906,11 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 				// sibling test above has always had this guard; this one shipped without it.
 				t.Fatalf("Go side found no run %q in the fixture", "r")
 			}
-			gotJSON, err := json.Marshal(run.DroppedGates()) // encoding/json sorts map keys
+			dropped, err := run.DroppedGates()
+			if err != nil {
+				t.Fatalf("Go side could not decode the fixture: %v", err)
+			}
+			gotJSON, err := json.Marshal(dropped) // encoding/json sorts map keys
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestACorruptGateRecordCannotReportACleanSweep'
+expect: instead of an error; an empty map is the clean sweep
+why:    one entry per defect, so this is the sibling of the Convergence check rather than the same entry twice: a run whose gate record will not decode must not report a gate map. The direction that matters is the quiet one — the old port returned an EMPTY map for a non-dict `gates` value, so a run with a corrupt gate record reported a clean sweep and the alarm that exists to notice a missing gate saw nothing to say.
+--- old
+	if r.Err != nil {
+		return nil, r.Err
+	}
+--- new
+	if false {
+		return nil, r.Err
+	}

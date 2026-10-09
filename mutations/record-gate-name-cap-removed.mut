@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: an over-long gate name must be truncated visibly
+why:    a gate name is copied into the operator message verbatim, so one 1 MiB name produced a 1 MiB "message" — measured. The row cap in setErr bounds how many ROWS contribute and does not bound this, which is why removing this cap left the suite green.
+--- old
+		if len(name) > maxGateNameLen {
+			name = name[:maxGateNameLen] + "..."
+		}
+--- new
+		_ = maxGateNameLen

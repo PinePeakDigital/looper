@@ -1,0 +1,12 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a key Go folds onto a field and the Python never reads is unreadable
+why:    the fifth distinct mechanism for the same forgery, and the one four review cycles missed — found by CodeRabbit on the PR. encoding/json matches struct tags CASE-INSENSITIVELY and Go has no case-sensitive mode, so `{"Applied":0}` decodes into Cycle.Applied while the Python's exact `rec.get("applied")` reads nothing. Measured on a store whose earlier cycle applied 5: python=halted, go=CONVERGED. Same for a duplicate differing only in case (`applied` beside `APPLIED`, last key wins in Go), and for the envelope's own `Run_ID` and `PHASE`. misplacedRunField cannot see any of it, because these keys fold onto fields the row's phase legitimately owns.
+--- old
+		case "cycle":
+			if err := foldedKeys([]byte(line), "applied", "asked", "agents", "analysis_changed"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
+--- new
+		case "cycle":

@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by filing a run-level field under the wrong phase
+why:    a DUPLICATE run_id whose first occurrence is wrong-typed makes the envelope decode return an error AND populate RunID from the last occurrence. Bailing on the error alone skipped a row Go could already attribute, while the Python's last-wins merged its body: `{"run_id":7,"run_id":"r","phase":"nudge","unresolved_asks":7}` gives python=halted and used to give go=converged — four bytes prepended to a row the suite already covered, and the field guard never ran. Skip only when there is nobody to attribute the row to, which is what the comment at that site always claimed.
+--- old
+		if err := json.Unmarshal([]byte(line), &env); err != nil && env.RunID == "" {
+--- new
+		if err := json.Unmarshal([]byte(line), &env); err != nil {

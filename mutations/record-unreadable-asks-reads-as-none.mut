@@ -1,8 +1,0 @@
-target: internal/record/record.go
-verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
-expect: an_unreadable_asks_count_is_still_outstanding
-why:    the unresolved_asks guard is the ONE place in Convergence() where a falsy reading waves the run through to the converged branch, so degrading an unreadable value to 0 there grants a clean push instead of denying one. Measured: `unresolved_asks: "7"` with a zero-fix last cycle derived `converged` with no disclosure while seven findings sat outstanding, which is this guard's own hole reopened through a type confusion. `asked` and `analysis_changed` are safe from the same mistake only by polarity — they are tested with `!truthy(...)`, so an unreadable value blocks convergence.
---- old
-	if asksOutstanding(r.Fields["unresolved_asks"]) {
---- new
-	if num(r.Fields["unresolved_asks"]) > 0 {

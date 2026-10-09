@@ -1,8 +1,0 @@
-target: internal/record/record.go
-verify: go test ./internal/record/ -count=1 -run 'TestPyStrRendersATrueStatusLikePython'
-expect: a true status renders the way Python renders it
-why:    review-stats.py:197 calls str() on a gate status explicitly, so the Python's rendering is str() and str(True) is "True" where fmt.Sprint(true) is "true". `status: true` is reachable for the reason `status: false` is — cmd_finish does not validate the status vocabulary — and this is the only observable branch of pyStr: the falsy collapse in DroppedGates overwrites nil and false before anything reads them, so the anchor is the one line, not the whole bool arm. Nothing in looper renders this yet (DroppedGates has no non-test caller and cmd/looper does not import the package), so the cost today is that the port diverges from its oracle at cutover, silently, in the text that names which gate failed.
---- old
-		return "True"
---- new
-		return "true"

@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestRestartsRepeatedCycleNumberIsKept'
+expect: a repeated n was collapsed
+why:    a Step 13 restart resets the cycle counter, so two rows legitimately share n=1. Collapsing cycles deletes the first pass of every restart from the spend: rows n=1/20, n=2/15, n=1/5 counted 20 of the 40 agents actually used, and the cap read as not reached. This replaces record-cycles-deduped-by-n, whose mutation deduped on `ex.N == c.N` and no longer COMPILES because the typed port stopped modelling `n` — nothing derived from it, and a field that only exists so a mutation can be written is a field the catalog is holding up rather than guarding. Dedupe-by-n is now impossible by construction, which is the stronger outcome; the defect it protected against is not, so this expresses the same collapse in the way that remains reachable. A non-compiling mutation tests nothing and scores broken, so the swap is the fix rather than the field coming back.
+--- old
+			r.Cycles = append(r.Cycles, c)
+--- new
+			r.Cycles = []Cycle{c}

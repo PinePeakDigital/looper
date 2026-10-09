@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: a clean verdict forged by filing a run-level field under the wrong phase
+why:    the sharpest form of the misplaced-field class, and the fourth incarnation of this forgery. `cycles` belongs to NO phase: load() builds it with setdefault+append for cycle rows and merges it like any other key for every other row, so a non-cycle row carrying a top-level `cycles` key OVERWRITES the whole cycle list, and cycles_of reads it back at runlog.py:180 to feed both convergence() and disclosure(). Measured on a store whose one real cycle converged: `{"run_id":"r","phase":"nudge","cycles":[]}` gives python=unknown ("Treat as unreviewed") and used to give go=converged — a silent clean push. Works on all 14 phase spellings. The owner sentinel cannot be "" because a row with an absent or wrong-typed phase decodes to "" and would be exempted.
+--- old
+	"cycles":          synthesized,
+--- new

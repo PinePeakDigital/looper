@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTypedDecodeRefusesTheShapesThePythonCoerced'
+expect: a_bool_where_a_count_belongs
+why:    the operator-facing error must name the FIELD, not just say a field was unreadable — that name is the whole of their next action on an append-only store with no repair tooling. The assertion that used to guard this was vacuous: it matched "unreadable field" and "run r:", both literal substrings of this very format string, so dropping %w entirely left the suite green. refusedNames now spells the expected field per fixture and the assertion reads the json error instead of our wrapper.
+--- old
+	r.Err = errors.Join(r.Err, fmt.Errorf(
+		"run %q: line %d (%s row) has an unreadable field: %w", r.ID, lineNo, phase, err))
+--- new
+	r.Err = errors.Join(r.Err, fmt.Errorf(
+		"run %q: line %d (%s row) has an unreadable field", r.ID, lineNo, phase))

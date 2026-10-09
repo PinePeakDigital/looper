@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: rows_with_no_run_id_do_not_collect_under_a_phantom_empty_key
+why:    Python's `if not rid: continue` drops a row with no run_id. Without the guard the rows still decode, so no verdict changes and every other test passes — they just land in a Go-only run keyed "". Nothing counted the runs map, which is the only place a phantom run is visible.
+--- old
+		if env.RunID == "" {
+			continue // `if not rid: continue`; without it these collect under a phantom ""
+		}
+--- new

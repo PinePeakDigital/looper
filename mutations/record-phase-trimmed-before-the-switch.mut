@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: was treated as a cycle row and appended
+why:    the whitespace sibling of the case-folding entry. ` cycle` is not `cycle` to the Python, which merges it instead of appending it, so trimming here appends a row the oracle does not and forges the same converged verdict. Separate entry because the two are separate edits and a reader fixing one would not see the other.
+--- old
+		if phase != "cycle" {
+--- new
+		phase = strings.TrimSpace(phase)
+		if phase != "cycle" {

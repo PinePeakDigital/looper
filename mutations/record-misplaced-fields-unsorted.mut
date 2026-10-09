@@ -1,0 +1,7 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix'
+expect: the fields are not in a fixed order
+why:    Go map iteration order is random, so without the sort the same corrupt row prints a different message on every run — which makes an operator-facing message unquotable in a bug report and an `expect:` string unpinnable. Survived the suite until this case existed, because every fixture carried exactly one misplaced field. Then it survived in CI while being caught locally: the first version of the case compared two field positions, and with four fields a random permutation is already sorted about 4% of the time. A guard that fires 96% of the time reads as a flaky catalog entry rather than the unguarded rule it is, so the case now asserts the whole expected sequence over ten loads. Anchored on wording unique to this function: nameBadGates sorts its own list with an identically-worded comment, and an ambiguous anchor scores stale rather than mutating anything.
+--- old
+	sort.Strings(bad) // field order must not vary with Go map iteration order
+--- new

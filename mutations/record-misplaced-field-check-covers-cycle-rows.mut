@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: must be ignored, as the Python's merge effectively does
+why:    the OTHER direction of the same guard. load() does not merge cycle rows at all — it appends them — so a run-level field on a cycle row is ignored by both implementations and must not error here. Dropping the `phase != "cycle"` condition makes the check fire on cycle rows and refuses a run the Python answers, which is the over-firing half of this guard: a healthy run turned red for a non-reason.
+--- old
+		if phase != "cycle" {
+--- new
+		if true {

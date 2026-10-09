@@ -1,12 +1,12 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: convergence = "converged", want "unknown"
-why:    a run with no cycle rows must never read as converged, or omitting the rows buys a silent clean push — which is the whole reason convergence is derived rather than asserted
+why:    a run with no cycle rows must never read as converged, or omitting the rows buys a silent clean push — which is the whole reason convergence is derived rather than asserted. Re-anchored for the typed port.
 --- old
 	if len(r.Cycles) == 0 {
-		return Unknown
+		return Unknown, nil
 	}
 --- new
 	if len(r.Cycles) == 0 {
-		return Converged
+		return Converged, nil
 	}

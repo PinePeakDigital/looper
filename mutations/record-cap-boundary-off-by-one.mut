@@ -1,8 +1,8 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
 expect: spend_exactly_at_the_cap_is_capped
-why:    spend exactly at the cap is capped, not halted — a run that used its whole budget with work outstanding must not read as a run that merely stopped
+why:    spend exactly at the cap is capped, not halted — a run that used its whole budget with work outstanding must not read as a run that merely stopped. Re-anchored for the typed port.
 --- old
-	if cap != 0 && spent >= cap {
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent >= *r.Plan.AgentCap {
 --- new
-	if cap != 0 && spent > cap {
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && spent > *r.Plan.AgentCap {

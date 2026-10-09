@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
+expect: an_undecodable_run_reports_Unknown_alongside_its_error
+why:    Unknown is the zero value on purpose, so a caller that reads the verdict string and drops the error still gets "did not converge". Returning Converged alongside the error survived both error-path tests, because each asserted only that err != nil and never looked at the value returned with it.
+--- old
+		return Unknown, r.Err
+--- new
+		return Converged, r.Err

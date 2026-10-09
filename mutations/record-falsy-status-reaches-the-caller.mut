@@ -1,12 +1,8 @@
 target: internal/record/record.go
-verify: go test ./internal/record/ -count=1 -run 'TestDroppedGatesCollapsesEveryFalsyStatus'
-expect: a falsy status must not reach the caller verbatim
-why:    the Python stores `st or "unreported"`, so EVERY falsy status collapses to "unreported" — not only an absent entry but also "", 0 and false. Defaulting only on absence reported "", "0" and "false" to the caller: a parity break, and an alarm line that names nothing where the status is the only thing naming the gate's problem. Not hypothetical — the status vocabulary is open because cmd_finish never validates the string, and a non-string status reaching this path has already happened once.
+verify: go test ./internal/record/ -count=1 -run 'TestDroppedGatesCollapsesTheFalsyStatusesAStringCanHold'
+expect: gate g_empty reported
+why:    RESTORED, narrowed. This entry was retired as "now unreachable", which was wrong: typing turned `false`/`0`/`null` into decode errors, but the EMPTY STRING is still a status a string can hold, the collapse that handles it is still live code (`res.Status != nil && *res.Status != ""`), and after the retirement no catalog entry mutated that collapse at all. Defaulting only on ABSENCE reports "" as the gate's status, and an empty status names nothing about the gate — the status is the whole content of the alarm line. The Python's `st or "unreported"` collapses all of them.
 --- old
-		if !truthy(raw) {
-			status = "unreported"
-		}
+			if res, ok := r.Finish.Executed[name]; ok && res.Status != nil && *res.Status != "" {
 --- new
-		if raw == nil {
-			status = "unreported"
-		}
+			if res, ok := r.Finish.Executed[name]; ok && res.Status != nil {
