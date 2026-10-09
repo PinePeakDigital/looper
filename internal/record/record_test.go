@@ -1299,6 +1299,18 @@ func contains(ss []string, want string) bool {
 // `pwd.getpwnam`) and StorePath short-circuits anything that is not exactly `~` or `~/`-
 // prefixed, so they diverge: measured, `REVIEW_LOOP_RUNS=~root/x` reads `~root/x` here —
 // relative, resolved against the working directory, never exists — and `/var/root/x` there.
+// The bare `~root` and trailing-slash `~root/` forms diverge the same way. Swept 952
+// HOME x REVIEW_LOOP_RUNS pairs: 102 diverge and every one of them is a `~` followed by an
+// EXISTING user name, which is getpwnam's success arm; a nonexistent user agrees, because
+// expanduser returns the path unchanged on KeyError, which is what this function always does.
+//
+// "Nothing configures a `~user` path" is a JUDGEMENT, not a measurement, and the most plausible
+// human spelling is the one it is easiest to overlook: `~narthur/.claude/review-loop/runs.jsonl`
+// names the default store exactly, and diverges — Go reads it relative, the Python resolves it.
+// A shell expands `~narthur` before the program sees it, so the shape needs an env set without
+// one: a quoted export, a JSON `env` block, a plist, a container spec. Weighed and left: the
+// consequence is a gate that derives `unknown` for every run off a path that cannot exist, and
+// the cheap half of the fix (expanding only `~` and `~/`) is what is already here.
 // StorePath's own comment records the exception; nothing configures a `~user` path, and
 // implementing getpwnam lookup would be real code for a shape nobody writes. An earlier
 // version of this comment claimed the ten were "every shape ... the two implementations could
@@ -1342,6 +1354,12 @@ var storePathCases = []struct {
 	{name: "a tilde path in the env value", home: "/x", env: "~/alt/runs.jsonl", want: "/x/alt/runs.jsonl"},
 	{name: "an absolute env value is untouched", home: "/x", env: "/abs/runs.jsonl", want: "/abs/runs.jsonl"},
 	{name: "a relative env value is untouched", home: "/x", env: "rel/runs.jsonl", want: "rel/runs.jsonl"},
+	// Whitespace, which is the shape the parity harness's TrimSuffix fix is FOR. Reverting
+	// that fix to TrimSpace left the whole suite green, because no case carried whitespace —
+	// a guard added to make a comment's claim true, with nothing exercising it. StorePath
+	// returns the env value verbatim, so the Go answer is the space; TrimSpace on the oracle
+	// side alone turned that into a mismatch the code had not caused.
+	{name: "a whitespace env value is untouched", home: "/x", env: " ", want: " "},
 }
 
 func TestStorePathShapes(t *testing.T) {

@@ -84,12 +84,15 @@ jobs:
           # exactly the regression that oracle was added to fix.
           # Each oracle carries its OWN floor, because they are different widths: the three
           # fixture tables run 28 subtests apiece, StorePath runs one per env shape. A shared
-          # floor of 25 would have failed the fourth oracle outright, which is why it was left
-          # out of this loop when it was added — and four agents then measured that it could be
-          # deleted, or storePathCases silently emptied, with every gate here green. The floor
+          # floor of 25 cannot cover the fourth oracle, which runs 11. It was left out of this
+          # loop when it was added, and deleting it — or emptying storePathCases — then left
+          # every gate here green, measured. (Why it was left out is recorded nowhere, so this
+          # comment no longer guesses at it, and the agent count that was here belongs in a commit
+          # message, not in the tree.) The floor
           # of 10 pins the table's WIDTH as well as the test's existence; the per-case `expect:`
-          # strings in the catalog pin neither (5 of the 10 case names appear in no entry).
-          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:10; do
+          # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
+          # entry, because two of the five store-path entries share one `expect:` string.
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11; do
             t=${spec%:*}; min=${spec#*:}
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
             # Two reasons written here before were wrong, and the third is deliberately
@@ -155,7 +158,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 175 ] || { echo "only $n mutations, expected at least 175 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 178 ] || { echo "only $n mutations, expected at least 178 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

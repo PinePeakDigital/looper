@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore'
+expect: want BOTH notes
+why:    a plausible "do not double-report" tightening — suppress the probe note when the record was already empty — passed the ENTIRE suite and the whole 175-entry catalog before the both-notes subtest existed. The two notes answer different questions: which file was read and found to say nothing, and whether the report could be looked for at all. An operator who gets only the first will fix the store path and still not know the probes never ran. Measured as mutant m6 by a cycle-4 agent, go vet clean, all five packages ok.
+--- old
+		if !attributable && p.Diag != nil {
+--- new
+		if !attributable && p.Diag != nil && r.Plan != nil {

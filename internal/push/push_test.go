@@ -675,8 +675,8 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 // The diagnostic channel. A genuinely unposted report, a missing `gh`/`git`, and a fired
 // timeout all refuse the push identically and correctly — the gate fails closed — but the
 // refusal says "run pr-report.py --post first", which is the wrong instruction for two of the
-// three. The reason string cannot say more, because parity_test.go compares it byte-for-byte
-// against the Python, so the distinction goes to Diag.
+// three. The reason string cannot say more, because parity_test.go compares it for exact
+// equality against the Python's, so the distinction goes to Diag.
 func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	shimGh(t, "exit 1")
 	st := writeStore(t, cappedRun("run1")...)
@@ -724,10 +724,12 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	t.Run("gh could be asked and said no", func(t *testing.T) {
 		// gh ANSWERS — a PR exists and its comments were fetched — but the report is not
 		// among them, and git is unavailable. `attributable` must be true on the strength of
-		// gh alone, so no note is owed. This is the ONLY place the gh branch's
-		// `attributable = true` is observed: TestReportProbeReportsBothAnswers reaches every
-		// other state but this one, and mutations/push-gh-answer-not-counted-as-asked
-		// therefore verifies THIS test rather than that one.
+		// gh alone, so no note is owed. TWO places observe the gh branch's
+		// `attributable = true` — this one and TestReportProbeReportsBothAnswers' seventh
+		// subtest, added by the same commit that claimed this was the only one and that
+		// "no other subtest moves" when the assignment is deleted. Both move.
+		// mutations/push-gh-answer-not-counted-as-asked verifies THIS test because its
+		// `verify:` names it, not because the coverage is unique to it.
 		//
 		// An earlier version of these lines said the assignment was dead to the suite because
 		// "every other test here shims gh to fail", which is false —
@@ -875,7 +877,7 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		if res.Push {
 			t.Errorf("push permitted for a run that is not in the store: %+v", res)
 		}
-		for _, want := range []string{`"absent1"`, st, "empty record"} {
+		for _, want := range []string{`"absent1"`, st, "empty record", "no readable row"} {
 			if !strings.Contains(diag.String(), want) {
 				t.Errorf("Diag = %q, want it to contain %q", diag.String(), want)
 			}
@@ -909,7 +911,12 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag}); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(diag.String(), "not found in") {
+		// Keyed on the note's CURRENT wording. It said "not found in" when this was written
+		// and the note was reworded to "no readable row" in the same cycle, which left this
+		// needle unable to match anything — the over-firing mutation then survived a 177-entry
+		// catalog. Assert on a substring the note actually contains, and let the catalog prove
+		// it: push-missing-run-diagnosed-on-every-check reddens here.
+		if strings.Contains(diag.String(), "no readable row") {
 			t.Errorf("Diag = %q for a run that is in the store; it must stay silent", diag.String())
 		}
 	})
@@ -920,6 +927,53 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		if _, err := Check(CheckParams{Store: st, RunID: "absent2", GateState: "passed",
 			Branch: "feat/x", DefaultBranch: "main", Repo: dir}); err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	t.Run("the note fires on a GRANTED push, which is the case worth saying something about", func(t *testing.T) {
+		// The empty record derives `unknown`, which is a DISCLOSURE and not a block, and its
+		// fingerprint is the two lines pr-report.py renders for a run with no cycles — so a
+		// genuine report satisfies the gate and the push is permitted off a record that said
+		// nothing. Every other subtest here is a refusal, which is how the note shipped
+		// saying "the refusal below" while firing on grants.
+		shimGh(t, "exit 1")
+		var diag strings.Builder
+		dir, gitdir := repo(t)
+		landReport(t, gitdir, "absent3", Fingerprint(&record.Run{ID: "absent3"}))
+		res, err := Check(CheckParams{Store: st, RunID: "absent3", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.Push {
+			t.Fatalf("expected the empty record to GRANT here; got %+v", res)
+		}
+		if !strings.Contains(diag.String(), "no readable row") {
+			t.Errorf("Diag = %q on a granted push; the note must fire here most of all", diag.String())
+		}
+		if strings.Contains(diag.String(), "refusal") {
+			t.Errorf("Diag = %q — it says \"refusal\" on a push it just permitted", diag.String())
+		}
+	})
+
+	t.Run("both notes fire when both are true, missing-run first", func(t *testing.T) {
+		// A run absent from the store AND neither probe runnable. Nothing reached this state,
+		// so a plausible "do not double-report" tightening passed the whole suite and the
+		// catalog. Order matters: the store is the outer cause.
+		t.Setenv("PATH", t.TempDir())
+		var diag strings.Builder
+		if _, err := Check(CheckParams{Store: st, RunID: "absent4", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir(), Diag: &diag}); err != nil {
+			t.Fatal(err)
+		}
+		got := diag.String()
+		iStore := strings.Index(got, "no readable row")
+		iProbe := strings.Index(got, "could not be determined")
+		if iStore < 0 || iProbe < 0 {
+			t.Fatalf("Diag = %q, want BOTH notes", got)
+		}
+		if iStore > iProbe {
+			t.Errorf("Diag = %q, want the store note first — it is the outer cause", got)
 		}
 	})
 }

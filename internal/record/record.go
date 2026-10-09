@@ -197,9 +197,11 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// when the identical store costs the identical amount at limit=0 — a single oversized
 	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
 	//
-	// Not fixed, and the honest reason is not "every caller passes 0": nothing outside this
-	// package's tests calls Load at all, and two tests do pass a limit. It is that 1.1x on a
-	// 143 KiB store buys nothing. The claim worth keeping is the narrow one — `limit` bounds
+	// Not fixed, and the honest reason is not "every caller passes 0": two tests do pass a
+	// limit, and `internal/push.Check` calls Load from the shipped binary. It is that 1.1x on
+	// a 143 KiB store buys nothing. (An earlier version of this sentence said "nothing outside
+	// this package's tests calls Load at all" — false once internal/push existed, which is the
+	// repo's dominant defect class sitting in the comment that argues against fixing this.) The claim worth keeping is the narrow one — `limit` bounds
 	// what is RETURNED, not what is read. Revisit when a caller passes a limit over a store
 	// big enough for the difference to matter.
 	var lines []string

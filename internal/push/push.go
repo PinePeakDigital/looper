@@ -146,7 +146,7 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // could RUN. A genuinely unposted report, a missing or non-executable `gh`/`git`, and a fired
 // timeout all mean "not landed" — correctly, the gate fails closed — but they call for
 // different actions, and the refusal text cannot distinguish them, because parity_test.go
-// compares it byte-for-byte against push-check.py. So the distinction goes to stderr instead,
+// compares it for exact equality against push-check.py's. So the distinction goes to stderr,
 // where neither implementation writes anything and nothing parses.
 //
 // attributable is whether the not-landed answer has a cause the refusal text already covers:
@@ -157,10 +157,11 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // version of this comment said it was. Measured: with a store that does not hold the run — a
 // wrong -store, a missing file, a mistyped -run-id — record.Load returns an empty map and NO
 // error, so Fingerprint asks for `0 cycle(s) · 0 agent(s)`, git answers, `attributable` is
-// true, nothing is written to Diag, and the refusal's stated remedy cannot fix it. Posting the
-// report again renders the same two lines off the same empty record. The store path that was
-// read is printed nowhere. Covering that is a separate change; this names the gap rather than
-// leaving the comment claiming there is none.
+// true, and the refusal's stated remedy cannot fix it: posting the report again renders the
+// same two lines off the same empty record. Check now writes a second Diag note for that
+// state, naming the run and the store it read — see the `r == nil` block below. An earlier
+// version of these lines said "nothing is written to Diag ... covering that is a separate
+// change", which stopped being true one cycle later and one function down.
 //
 // Named for the question it answers rather than for "could a probe be asked", which is what
 // the earlier name `couldAsk` claimed while the refused-run-id path asks nothing.
@@ -303,9 +304,11 @@ type CheckParams struct {
 	DefaultBranch  string
 	// Repo is where the git and gh facts are read from.
 	Repo string
-	// Diag receives a line for each refusal whose stated reason is the wrong instruction for
-	// the actual cause: the report check could not be RUN at all, or the run was not in the
-	// store. Neither can be said in the reason itself, which parity pins byte-for-byte.
+	// Diag receives a line for each DECISION whose stated reason is the wrong instruction for
+	// the actual cause: the report check could not be RUN at all, or no row for the run was
+	// readable in the store. Neither can be said in the reason itself, which parity pins
+	// exactly. "Decision", not "refusal": the empty-record note fires before Decide and
+	// the empty record can GRANT, which is the case most worth saying something about.
 	// Optional: nil writes nothing. It must NOT be the stream the Result is encoded to —
 	// stdout is a machine-readable contract.
 	Diag io.Writer
@@ -334,13 +337,20 @@ func Check(p CheckParams) (Result, error) {
 			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
 			// outcome can block, and the required fingerprint collapses to the two lines
 			// pr-report.py renders for a run with no cycles. On this store that collides
-			// with a real report for 22 of 41 runs, so the refusal below is as likely to be
-			// a wrong -store or a mistyped -run-id as a missing report — and "run
-			// pr-report.py --post first" cannot fix either. The store path is the one fact
-			// that separates them and it appears nowhere else in the output.
-			fmt.Fprintf(p.Diag, "push-check: run %q was not found in %s, so convergence, the "+
-				"outcome and the required report fingerprint are all derived from an empty "+
-				"record; the refusal below may not be about the report at all\n",
+			// with a real report for 22 of 41 runs, so this can GRANT as easily as refuse.
+			//
+			// "No readable row", not "not found": the two causes this reaches are a run that
+			// was never written (a wrong -store, a mistyped -run-id) and a run all of whose
+			// rows were torn — record.Load drops a syntactically torn line with no error and
+			// no map entry, so `grep` can find the id in a store this note names. Saying
+			// "was not found in <store>" sent an operator to check a store that does contain
+			// it. The note states what it has actually checked: nothing readable, and which
+			// file it read.
+			//
+			// "the decision below", not "the refusal below": this fires before Decide.
+			fmt.Fprintf(p.Diag, "push-check: no readable row for run %q in %q, so convergence, "+
+				"the outcome and the required report fingerprint are all derived from an empty "+
+				"record; the decision below rests on nothing the record said\n",
 				p.RunID, p.Store)
 		}
 	}
@@ -381,7 +391,7 @@ func Check(p CheckParams) (Result, error) {
 		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe
-			// ran. Said here rather than in the reason, which parity pins byte-for-byte.
+			// ran. Said here rather than in the reason, which parity pins exactly.
 			fmt.Fprintf(p.Diag, "push-check: neither `gh pr view` nor `git rev-parse` could be "+
 				"run in %s (missing binary, not executable, or killed at the %s budget), so "+
 				"whether the report landed could not be determined; the refusal below fails "+

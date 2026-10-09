@@ -1,0 +1,8 @@
+target: internal/record/parity_test.go
+verify: go test ./internal/record/ -count=1 -run 'TestStorePathMatchesThePython'
+expect: a_whitespace_env_value_is_untouched
+why:    TrimSpace strips print()'s newline AND any legitimate leading or trailing whitespace, on the ORACLE side only — StorePath returns the env value verbatim, so a whitespace-bearing value matched byte-for-byte before the trim and mismatched after it, blaming the code for the harness. TrimSuffix removes exactly the newline print() adds. The fix shipped one cycle with NOTHING exercising it, because no storePathCases entry carried whitespace: reverting it left all five packages green. That is the same shape as the guard this very test was added to be — a correction whose claim nothing could check — so the case and this entry landed together.
+--- old
+			want := strings.TrimSuffix(string(out), "\n")
+--- new
+			want := strings.TrimSpace(string(out))

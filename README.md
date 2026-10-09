@@ -162,15 +162,32 @@ stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. std
 also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
 run at all, because the gate then fails closed with a reason — "run `pr-report.py
 --post` first" — that is the wrong instruction for a missing binary or a killed
-subprocess. The reason itself cannot say so: parity pins it byte-for-byte against the
-Python, which has no second stream. A refusal for a report that is genuinely unposted
-stays silent, so the note's presence is the signal.
+subprocess. The reason itself cannot say so: the parity gate compares the decoded
+reason for exact equality against the Python's, which has no second stream. A refusal
+for a report that is genuinely unposted stays silent, so the note's presence is the
+signal.
 
-One state is not covered by that note and is worth knowing: if the store does not
-hold the run — a wrong `-store`, a missing file, a mistyped `-run-id` — the record
-loads as empty with no error, the required fingerprint collapses to `0 cycle(s) · 0
-agent(s)`, and the refusal reads as an unposted report with nothing on stderr. The
-store path that was read is printed nowhere.
+stderr carries a second note when no row for the run was readable in the store — a
+wrong `-store`, a missing file, a mistyped `-run-id`, or every row for that run torn.
+The record then loads as empty *with no error*, convergence reads `unknown`, no
+recorded outcome can block, and the required fingerprint collapses to `0 cycle(s) · 0
+agent(s)` — which is exactly what `pr-report.py` renders for a run with no cycle rows,
+22 of the 41 runs in the author's own store. So that state can **grant** a push as
+readily as refuse one, and the note names the run and the file it read. It fires
+before the decision, which is why it says "the decision below" and not "the refusal
+below".
+
+What it still cannot tell you is *why* nothing was readable. A run whose rows were all
+torn is absent from the loaded record exactly as a run that was never written is, and
+`record.Load` drops a torn line without counting it, so the note names a store that
+`grep` can find the run id in. Distinguishing the two needs `Load` to report how many
+rows it dropped.
+
+A note on comparing the two implementations by hand: their stdout is **not** byte-
+identical and never has been. `json.dumps` defaults to `ensure_ascii=True`, so the
+Python escapes the em dash in the common refusal reason as `\u2014` where Go emits it
+literally. The parity gate compares the decoded JSON, field by field, which is the
+level at which the two agree.
 
 A port of `push-check.py`, with a parity gate that runs the Python against the same
 store, repo and flags and requires the same JSON — `disclose` wording included,

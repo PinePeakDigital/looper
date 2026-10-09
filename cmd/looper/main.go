@@ -18,7 +18,12 @@ const usage = `usage: looper mutate [-catalog dir] [-root dir]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
-                         [-repo dir] [-store path]`
+                         [-repo dir] [-store path]
+
+push-check writes the decision as JSON to stdout and nothing else. stderr carries a
+note when the report check could not be run at all, or when no row for the run was
+readable in the store — two cases where the decision's own stated reason is the wrong
+instruction. See README.md.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
