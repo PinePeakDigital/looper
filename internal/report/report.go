@@ -57,8 +57,12 @@ var Labels = map[string]Label{
 // Every reason in this report was written by an LLM into a record this package does not own,
 // and the report is posted as a PR comment — so a newline in a reason FORGES document
 // structure: a reason ending "\n\n> **Review converged**" renders as its own blockquote and
-// contradicts the disclosure three lines above it. strings.Fields splits on every Unicode
-// space, which is what Python's bare `.split()` does, so this collapses the same set.
+// contradicts the disclosure three lines above it. strings.Fields splits on every code point
+// unicode.IsSpace accepts, which covers Python's bare `.split()` for every character the store
+// holds. NOT the same set, though: measured, Python strips U+001C-U+001F as whitespace and
+// unicode.IsSpace rejects all four, so those four survive here inside a cell. None of them is
+// a newline or a pipe, so neither can forge structure — the same invisible-character class the
+// threat model's "Watch this spot" entry already records for Unicode Cf.
 func cell(s string) string {
 	return strings.ReplaceAll(strings.Join(strings.Fields(s), " "), "|", `\|`)
 }
@@ -80,12 +84,22 @@ func cell(s string) string {
 // trade record.GateStatus names and refuses.
 func cellJSON(b []byte) string {
 	t := strings.TrimSpace(string(b))
+	// COMPACTED before the switch, so what follows tests the value and not the punctuation.
+	// A json.RawMessage holds the WRITER's bytes verbatim — it is populated by Unmarshal
+	// copying the input subslice, not emitted by encoding/json — so internal whitespace
+	// survives: measured, `{"findings": [ ], "status": {\t}}` decodes to `"[ ]"` and
+	// `"{\t}"`, and TrimSpace only strips the outside. Matching an empty container by
+	// spelling was therefore bypassable with one space, which is the same spelling-instead-of
+	// -value error the zero-number case below was already fixed for. Compact leaves string
+	// contents alone, so it cannot change what a quoted value renders as.
+	var flat bytes.Buffer
+	if json.Compact(&flat, b) == nil {
+		t = flat.String()
+	}
 	switch t {
 	// An empty container is falsy in Python too — `[] or ""` and `{} or ""` are both "" —
 	// which is a PRESENCE divergence, not the punctuation one the comment above enumerates:
 	// measured, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here.
-	// Matched by exact spelling like the other literals, which is sound because these come
-	// from json.RawMessage and encoding/json emits no internal whitespace in one it wrote.
 	case "false", "null", `""`, "[]", "{}":
 		return ""
 	case "true":
@@ -412,9 +426,11 @@ func decodeRoster(r *record.Run) []agentEntry {
 // The obvious expression form is `if n < 0 { return "-" + commas(-n) }` over a recursive
 // tail — review proposed exactly that — and it RECURSES FOREVER on math.MinInt, because
 // -MinInt is MinInt in two's complement. Reproduced: `go run` on the recursive version dies
-// with "stack overflow" at -9223372036854775808, and agreed with this one on every other value
-// tried. The seven that are checkable from the tree are the table in TestTheBranchesNothingReached
-// ("commas carries a sign"), which includes MinInt. Formatting the number FIRST and
+// with "stack overflow" at -9223372036854775808. The eight values checkable from the tree are
+// the table in TestTheBranchesNothingReached ("commas carries a sign"); the recursive form
+// agrees with this one on the seven below MinInt and dies on MinInt itself, which is why the
+// table carries it. (The sentence this replaced said "seven ... which includes MinInt", which
+// is neither count and reads as though MinInt were one of the agreements.) Formatting the number FIRST and
 // stripping the sign off the text has no such value. The style default's own carve-out
 // covers this: take the option that is correct on the edge cases.
 func commas(n int) string {

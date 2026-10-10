@@ -177,13 +177,25 @@ func (e *Escalation) UnmarshalJSON(b []byte) error {
 		e.isNull = true
 		return nil
 	}
-	type plain Escalation // sheds the method, so this does not recurse
-	var p plain
+	var p escalationBody
 	if err := json.Unmarshal(b, &p); err != nil {
 		return err
 	}
-	*e = Escalation(p)
+	e.Gate, e.Reason = p.Gate, p.Reason
 	return nil
+}
+
+// escalationBody is Escalation's fields without the Unmarshaler, so delegating to it does not
+// recurse. A method-local `type plain Escalation` is the usual idiom and was wrong here: the
+// type's NAME reaches the operator. json.UnmarshalTypeError carries it, so an escalation
+// element that is neither null nor an object reported "cannot unmarshal string into Go value
+// of type record.plain" — a type that appears nowhere in the package, against a boundary whose
+// stated contract is that the error names what the operator must go fix. This name is
+// greppable. The field tags must stay in step with Escalation's; nothing but this decode reads
+// them, and TestTheDecodeErrorNamesWhatTheOperatorMustGoFix pins the message.
+type escalationBody struct {
+	Gate   *string `json:"gate"`
+	Reason string  `json:"reason"`
 }
 
 // IsNull reports whether this element was the literal `null`, which the report must skip while

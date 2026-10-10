@@ -1,0 +1,9 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestTheNarrativeReadsARealFile/a_closed_stdin'
+expect: --- FAIL:
+why:    extracting shouldReadStdin made the DECISION observable and left its CALL SITE covered by nothing: two subtests assert the predicate, one mutation flips the predicate's return, and readNarrative could stop consulting it with the whole tree still green — measured by deleting this block. The hang it prevents is the one the function exists for: an interactive `looper pr-report` blocking forever on a terminal read nobody feeds. A closed *os.File is the fixture that distinguishes the two, because the guard answers "do not read" on the Stat error while an unguarded read reports "file already closed"; /dev/null cannot, since reading it yields "" either way, which is how the first version of this test could not fail.
+--- old
+	if !shouldReadStdin(in) {
+		return "", nil
+	}
+--- new

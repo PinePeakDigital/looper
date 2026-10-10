@@ -541,6 +541,27 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
+	t.Run("a budget that expires before the fork still reads as RUNNABLE", func(t *testing.T) {
+		// The other half of the kill, and the half that has no signal to name: `Start` checks
+		// the context before forking and returns `ctx.Err()`, so with a 1ns budget nothing is
+		// ever signalled and the error is a context.deadlineExceededError. Classifying by
+		// "not an ExitError" put that in the never-started arm and answered "install gh" for
+		// a gh the caller's own deadline cancelled. 1ns rather than 1ms so the race is
+		// decided and not merely likely — a test that only USUALLY reaches the branch it
+		// names is the vacuity class this package keeps finding.
+		dir := gitRepo(t)
+		shimGh(t, `echo 1`)
+		r := shTimeout(dir, time.Nanosecond, "gh", "pr", "list")
+		if !r.Runnable {
+			t.Errorf("a budget expiring before the fork reads as NOT RUNNABLE, which advises "+
+				"installing a gh that is installed: %+v", r)
+		}
+		if r.Code == 0 {
+			t.Errorf("a cancelled probe reads as success, so a timeout would look like an "+
+				"answer about whether a PR exists: %+v", r)
+		}
+	})
+
 	t.Run("a hung subprocess is killed and reads as a failure", func(t *testing.T) {
 		// The timeout branch, which a const budget made untestable: shBudget is threaded
 		// through shTimeout so this costs milliseconds instead of twenty seconds.
@@ -559,8 +580,14 @@ func TestTheBranchesNothingReached(t *testing.T) {
 			t.Errorf("a killed subprocess reads as success, so a hung gh would look like an "+
 				"answer about whether a PR exists: %+v", r)
 		}
-		if !strings.Contains(r.Err, "signal") {
-			t.Errorf("the detail does not name the kill, so the diag line cannot say why: %+v", r)
+		// EITHER spelling of the kill, because which one arrives is a race this test cannot
+		// win deterministically: a 1ms budget can expire before `Start` forks, in which case
+		// Start returns the context's own error and nothing is ever signalled. Asserting
+		// "signal" alone made the subtest fail on a loaded machine while naming a defect
+		// that was not there.
+		if !strings.Contains(r.Err, "signal") && !strings.Contains(r.Err, "deadline exceeded") {
+			t.Errorf("the detail names neither the signal nor the deadline, so the diag line "+
+				"cannot say why: %+v", r)
 		}
 	})
 }

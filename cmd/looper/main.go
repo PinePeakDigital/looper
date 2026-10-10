@@ -319,13 +319,14 @@ func readNarrative(path string, in io.Reader) (string, error) {
 // Folded into readNarrative it could not be: the only observable difference between taking the
 // branch and not taking it is whether a read happens, and the obvious fixture — /dev/null —
 // returns the empty string either way, so a test of readNarrative's RESULT passed identically
-// with the whole guard deleted. Measured in cycle 2 of this slice's own review, on a test
-// written in cycle 1 to close exactly that class of defect.
+// with the whole guard deleted. Reproduce it by deleting the guard and running the package.
 //
 // What the guard is for: an interactive `looper pr-report` must not block on a read nobody is
-// going to feed. A character device is a terminal (or /dev/null, or /dev/zero, which would
-// never EOF at all); anything that is not an *os.File — a pipe, a strings.Reader — is
-// something a caller deliberately handed us.
+// going to feed. A character device is a terminal, or /dev/zero, which never EOFs at all;
+// /dev/null is one too and EOFs immediately, which is exactly why it cannot serve as the
+// fixture. The `!ok` arm is for a reader that is not an *os.File at all — a strings.Reader,
+// which the skill's own callers pass — and NOT for a pipe: os.Pipe returns *os.File, so a
+// pipe goes through Stat and is read because its mode is ModeNamedPipe.
 func shouldReadStdin(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {

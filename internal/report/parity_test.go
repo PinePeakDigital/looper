@@ -247,8 +247,11 @@ func TestParityWithPrReport(t *testing.T) {
 		{"an escalation with a null gate", []string{plan(""),
 			finishRow(`,"escalations":[{"gate":null,"reason":"nulled"}]`)}},
 		// `null` decodes into a struct WITHOUT error, the same trap the roster had one list
-		// over. record.Escalations drops it at the decode, where the Python's
-		// `isinstance(e, dict)` effectively sits.
+		// over. (*record.Escalation).UnmarshalJSON KEEPS such an element and marks it
+		// `isNull`; the skip is in Render's loop, where the Python's per-entry
+		// `isinstance(e, dict)` sits. Dropping it at the decode instead loses the raw count,
+		// and with it the heading the Python emits from `if esc:` — which the second case
+		// below is exactly the fixture for.
 		{"an escalation list with a null entry", []string{plan(""),
 			finishRow(`,"escalations":[{"gate":"a","reason":"b"},null]`)}},
 		{"an escalation list of nothing but null", []string{plan(""),
@@ -293,6 +296,18 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":{}}]`)}},
 		{"a roster status that is an empty object", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"m","status":{},"findings":1}]`)}},
+		// The three above all hold the COMPACT spelling, which is the only one runlog.py can
+		// write (`separators=(",", ":")`), so none of them could see that the fix tested the
+		// punctuation rather than the value. A json.RawMessage keeps the writer's bytes
+		// verbatim, so one space from a hand-edited store walked straight past the match and
+		// rendered "[ ]" where the oracle renders nothing. A tab, because TrimSpace would
+		// have made a leading or trailing one agree by accident.
+		{"a roster findings count that is an empty list with a space in it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[ ]}]`)}},
+		{"a roster findings count that is an empty object with a tab in it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":{` + "\t" + `}}]`)}},
+		{"a roster status that is an empty object with a space in it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":{ },"findings":1}]`)}},
 		{"a roster entry with a string findings count", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":"many"}]`)}},
 		// `null` decodes into a struct WITHOUT error, so it slipped past the error check and
@@ -399,7 +414,7 @@ func TestTheEnumeratedRenderDivergences(t *testing.T) {
 			go_:  "| `g` | — | **unreported** |  |",
 			// `(gates[g] or {}).get("planned", "—")` returns the empty string it found;
 			// GateSpec.Planned is a plain string, so "" is indistinguishable from absent and
-			// falls to the em-dash default. Both读 as "nothing was planned" to a reader, and
+			// falls to the em-dash default. Both read as "nothing was planned" to a reader, and
 			// the alternative is three-state decoding on the field record.DroppedGates
 			// turns on. plan.py is the only writer and writes "run" or "skip": 421 of 421
 			// specs in the real store hold one of those two words.
@@ -732,7 +747,7 @@ func TestRealStoreParity(t *testing.T) {
 	t.Logf("compared %d real runs against the oracle; %d diverged", len(runs), diverged)
 }
 
-// The HARDENING divergence: five record-derived values this side collapses with cell() and the
+// The HARDENING divergence: six record-derived values this side collapses with cell() and the
 // Python interpolates raw. Separate from TestTheEnumeratedRenderDivergences above because those
 // are gaps this port could not close; these are holes it closed ON PURPOSE, and the direction
 // matters — a reader comparing the two should see which way each divergence runs.

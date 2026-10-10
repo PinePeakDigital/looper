@@ -52,26 +52,49 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	switch {
 	case err == nil:
 		return r
-	// Anything that is not an ExitError never STARTED. Enumerating sentinels — ErrNotFound,
+	// OUR OWN budget ran out. Asked first because it is the one cause that is true whichever
+	// side of the fork it lands on: `Start` checks the context BEFORE forking and returns
+	// `ctx.Err()`, while a kill after the fork surfaces as an ExitError carrying "signal:
+	// killed". Measured — budget 1ns gives `context deadline exceeded`, a
+	// context.deadlineExceededError and not an ExitError; budget 1ms gives `signal: killed`,
+	// which is one. Without this arm the pre-fork half fell to the "never started" test below
+	// and answered "install gh" for a gh the caller's own deadline cancelled, which is the
+	// advice the default arm's comment says must never be given for a gh that was killed. It
+	// also made the 1ms test below depend on winning a race against LookPath plus fork.
+	case ctx.Err() != nil:
+		r.Code = 1
+		if r.Err == "" {
+			r.Err = err.Error()
+		}
+		return r
+	// Never STARTED. `Cmd.Process` is the underlying process "once started", so a nil one
+	// after Run is exactly that and nothing else. Enumerating sentinels — ErrNotFound,
 	// ErrNotExist, ErrPermission — missed the binary that exists, is executable, and is the
 	// wrong format: measured, a chmod +x text file gives a *fs.PathError ("exec format
-	// error") matching none of the three and not an ExitError either, so it fell to the
-	// default and reported "gh ran and failed" for a gh that never ran. That is the wrong
-	// remedy twice over — it tells the operator to wait for GitHub when the fix is to
-	// reinstall. Wait can only report an ExitError, so the inverse test is the complete one.
-	case !errors.As(err, new(*exec.ExitError)):
+	// error") matching none of the three, so it fell to the default and reported "gh ran and
+	// failed" for a gh that never ran. That is the wrong remedy twice over — it tells the
+	// operator to wait for GitHub when the fix is to reinstall. The inverse test
+	// `!errors.As(err, new(*exec.ExitError))` replaced the enumeration and was wrong in the
+	// other direction: os/exec documents "other error types may be returned for I/O
+	// problems", and these sinks are strings.Builders, so os/exec allocates pipes and copy
+	// goroutines and Wait reports a copy failure — for a process that DID run. ErrWaitDelay
+	// is a second such error. Asking the Cmd whether it started answers the question the
+	// branch is actually about.
+	case cmd.Process == nil:
 		r.Runnable, r.Code = false, 127
 		if r.Err == "" {
 			r.Err = err.Error()
 		}
 		return r
 	default:
-		// Everything else RAN. Including a signalled process — the context's own kill looks
-		// like this — which is deliberately not folded in with "not installed": the two call
-		// for opposite actions, and "install gh" is the wrong advice for a gh that was
-		// killed mid-call. Go reports -1 for a signal-terminated process, which is not a
-		// value any caller here could read as "cannot tell", so it becomes 1 with the signal
-		// named in Err.
+		// Everything else RAN. Including a signalled process killed by something other than
+		// this function's own budget, which is deliberately not folded in with "not
+		// installed": the two call for opposite actions, and "install gh" is the wrong
+		// advice for a gh that was killed mid-call. Go reports -1 for a signal-terminated
+		// process, which is not a value any caller here could read as "cannot tell", so it
+		// becomes 1 with the signal named in Err. Also everything the inverse test used to
+		// misfile here — an I/O error from the output copy, ErrWaitDelay — since those name
+		// a process that started.
 		r.Code = 1
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

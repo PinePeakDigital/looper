@@ -639,7 +639,7 @@ func TestTheNarrativeReadsARealFile(t *testing.T) {
 	// The DECISION, not the result. Asserting readNarrative's return value for /dev/null
 	// could not fail: reading /dev/null yields "" too, so the subtest passed with the entire
 	// guard deleted — the same vacuous-assertion class cycle 1 had just fixed elsewhere,
-	// reproduced by a cycle-2 agent that removed the guard and watched this stay green.
+	// reproducible by removing the guard and watching this stay green.
 	// shouldReadStdin exists so the branch itself is observable.
 	t.Run("stdin is not read when it is a character device", func(t *testing.T) {
 		f, err := os.Open(os.DevNull)
@@ -657,6 +657,39 @@ func TestTheNarrativeReadsARealFile(t *testing.T) {
 		if shouldReadStdin(f) {
 			t.Error("a character device would be read, so an interactive run can hang on a " +
 				"read nobody is going to feed")
+		}
+	})
+
+	// The CALL SITE, which the two subtests around it do not reach: they assert the predicate,
+	// and readNarrative can stop consulting it with every one of them still green — measured,
+	// the whole tree stays green with the `if !shouldReadStdin(in)` line deleted. Extracting
+	// the predicate so the decision was observable moved the vacuity up one level instead of
+	// closing it.
+	//
+	// A CLOSED *os.File is what distinguishes the two: Stat fails, so the guard answers "do
+	// not read" and readNarrative returns empty with no error, while an unguarded read reports
+	// "file already closed". /dev/null cannot do this job — reading it succeeds and yields ""
+	// either way, which is how the first version of this test could not fail. The same fixture
+	// is the only thing that reaches shouldReadStdin's own Stat-error arm.
+	t.Run("a closed stdin is not read, so the guard is still consulted", func(t *testing.T) {
+		f, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if shouldReadStdin(f) {
+			t.Error("a reader whose Stat fails would be read, so an unreadable stdin can hang " +
+				"the command instead of being skipped")
+		}
+		got, err := readNarrative("", f)
+		if err != nil {
+			t.Errorf("readNarrative read a stdin the guard rejects, so the guard is no longer "+
+				"consulted: %v", err)
+		}
+		if got != "" {
+			t.Errorf("a rejected stdin produced a narrative: %q", got)
 		}
 	})
 
