@@ -12,6 +12,7 @@ import (
 	"github.com/pinepeakdigital/looper/internal/mutate"
 	"github.com/pinepeakdigital/looper/internal/push"
 	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/pinepeakdigital/looper/internal/report"
 )
 
 const usage = `usage: looper mutate [-catalog dir] [-root dir]
@@ -19,21 +20,28 @@ const usage = `usage: looper mutate [-catalog dir] [-root dir]
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
                          [-repo dir] [-store path]
+       looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+                        [-repo dir] [-branch b] [-store path]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
 readable in the store — two cases where the decision's own stated reason is the wrong
-instruction. See README.md.`
+instruction.
+
+pr-report renders the Step 14 disclosure from the record. Without -post it writes the
+body to stdout. With -post it comments on this branch's PR, and otherwise keeps the
+body in .git/info for Step 0c to flush — stderr says which, and names the cause when
+gh could not answer rather than asserting there is no PR. See README.md.`
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 // run is where the work lives, so it can be tested. main() is only the os.Exit
 // wrapper around it: everything this binary decides — which subcommand, what to
 // print, which exit code — used to sit behind an os.Exit call and had no test at
 // all, while being the exact surface CI gates on.
-func run(args []string, out, errOut io.Writer) int {
+func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) < 1 {
 		fmt.Fprintln(errOut, usage)
 		return 2
@@ -46,6 +54,8 @@ func run(args []string, out, errOut io.Writer) int {
 		err = runDocs(args[1:], out)
 	case "push-check":
 		err = runPushCheck(args[1:], out, errOut)
+	case "pr-report":
+		err = runPrReport(args[1:], in, out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
@@ -83,7 +93,7 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	// results meant a run that died on mutation 17 of 19 printed no score and named no
 	// survivors — the one thing the tool exists to produce — because the error path
 	// returned before the summary.
-	report(out, results, len(muts))
+	printScore(out, results, len(muts))
 
 	if runErr != nil {
 		return fmt.Errorf("aborted after %d of %d mutation(s): %w", len(results), len(muts), runErr)
@@ -95,9 +105,13 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	return nil
 }
 
-// report prints the score and names every result that is not a catch. A score alone
+// printScore prints the score and names every result that is not a catch. A score alone
 // says the suite has holes; the names say which defect could ship through one.
-func report(out io.Writer, results []mutate.Result, planned int) {
+//
+// Named printScore rather than report since internal/report arrived: a local identifier that
+// shadows an imported package name makes every later use of the package a compile error at
+// the USE site, which reads as a problem with the new code rather than with the old name.
+func printScore(out io.Writer, results []mutate.Result, planned int) {
 	if len(results) == 0 {
 		return
 	}
@@ -202,4 +216,127 @@ func runPushCheck(args []string, out, errOut io.Writer) error {
 	}
 	_, err = out.Write(b)
 	return err
+}
+
+// runPrReport renders the Step 14 disclosure and, with -post, publishes it.
+//
+// The summary is the single most-dropped step in this skill — it is in the friction log, and
+// one run's report had to be volunteered by its author because nothing produced it. A script
+// that reads the record cannot skip a gate, cannot misstate convergence, and cannot quietly
+// leave out the fourth cycle.
+func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
+	fs := flag.NewFlagSet("pr-report", flag.ContinueOnError)
+	// STDERR for usage and parse errors: with -post off, stdout is the report BODY, and a
+	// usage banner mixed into it would be posted as the review disclosure on the next run.
+	fs.SetOutput(errOut)
+	runID := fs.String("run-id", "", "the run to render from the record (required)")
+	findingsFile := fs.String("findings-file", "", "the orchestrator's narrative; \"-\" or omitted reads stdin")
+	post := fs.Bool("post", false, "comment on this branch's PR, or keep the report for Step 0c")
+	label := fs.Bool("label", false, "also apply the review:<convergence> label")
+	repo := fs.String("repo", ".", "the repo to run git and gh in")
+	branch := fs.String("branch", "", "the branch to find the PR for (default: git's current branch)")
+	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *runID == "" {
+		return errors.New("pr-report: -run-id is required — the report's facts all come from " +
+			"that row, and there is no sensible default run to render")
+	}
+	if *store == "" {
+		*store = record.StorePath()
+	}
+
+	runs, err := record.Load(*store, 0)
+	if err != nil {
+		return err
+	}
+	r := runs[*runID]
+	// record.Load returns an empty map and NO error for a store that does not hold the run —
+	// a wrong -store, a missing file, a mistyped id — and a report rendered off nothing is
+	// not an empty report: it is a GENUINE one reading `0 cycle(s) · 0 agent(s)`, which is
+	// exactly what the push gate's required fingerprint collapses to. So the two halves
+	// refuse together. The store is named because the id is usually not the wrong half.
+	// record.Run.Empty, not `r == nil`: the narrower test shipped here and misses a run that
+	// is PRESENT and says nothing — a row filed under a phase the typed decode does not own,
+	// such as `{"run_id":"x","phase":"nudge"}`. Measured: that store rendered a complete,
+	// plausible report reading `0 cycle(s) · 0 agent(s)` and exited 0, which is exactly the
+	// fingerprint push-check accepts. One definition, in internal/record, so the two halves of
+	// the gate cannot drift — which is the same mistake PR #4 caught in internal/push.
+	if r.Empty() {
+		return fmt.Errorf("pr-report: no readable record for run %q in %s — check -store and "+
+			"-run-id; a report rendered from no record would read as a reviewed run that "+
+			"spawned no agents", *runID, *store)
+	}
+	conv, err := r.Convergence()
+	if err != nil {
+		return err
+	}
+
+	narrative, err := readNarrative(*findingsFile, in)
+	if err != nil {
+		return err
+	}
+	body, err := report.Render(r, *runID, conv, narrative)
+	if err != nil {
+		return err
+	}
+	if !*post {
+		_, err = io.WriteString(out, body)
+		return err
+	}
+	_, err = report.Post(report.PostParams{
+		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
+		Body: body, Label: *label, Diag: errOut,
+	})
+	return err
+}
+
+// readNarrative resolves the narrative the same way the Python does: a named file, else stdin
+// when stdin is not a terminal.
+func readNarrative(path string, in io.Reader) (string, error) {
+	if path != "" && path != "-" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	if !shouldReadStdin(in) {
+		return "", nil
+	}
+	b, err := io.ReadAll(in)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// shouldReadStdin is the tty test, split out as its own function so it can be ASSERTED.
+// Folded into readNarrative it could not be: the only observable difference between taking the
+// branch and not taking it is whether a read happens, and the obvious fixture — /dev/null —
+// returns the empty string either way, so a test of readNarrative's RESULT passed identically
+// with the whole guard deleted. Reproduce it by deleting the guard and running the package.
+//
+// What the guard is for: an interactive `looper pr-report` must not block on a read nobody is
+// going to feed. A character device is a terminal, or /dev/zero, which never EOFs at all;
+// /dev/null is one too and EOFs immediately, which is exactly why it cannot serve as the
+// fixture. The `!ok` arm is for a reader that is not an *os.File at all — a strings.Reader —
+// and NOT for a pipe: os.Pipe returns *os.File, so a pipe goes through Stat and is read
+// because its mode is ModeNamedPipe. In production `in` is always os.Stdin, so that arm is
+// reached only by this package's tests; it exists because run() takes an io.Reader, and a
+// caller that hands one over has already decided to supply a narrative.
+func shouldReadStdin(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return true
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return false // cannot tell, so do not risk hanging
+	}
+	return st.Mode()&os.ModeCharDevice == 0
 }

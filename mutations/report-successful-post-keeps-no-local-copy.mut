@@ -1,0 +1,17 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestPostCommentsAndStillKeepsALocalCopy'
+expect: --- FAIL:
+why:    the local copy after a SUCCESSFUL post is not redundant: push-check's report probe asks gh a second time, and a post that succeeded while the read-back failed refused the push forever and posted a duplicate on every retry. It reads as belt-and-braces, which is why it is the line a cleanup deletes.
+--- old
+	path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Body)
+	if werr != nil {
+		// The report is POSTED; the local copy is belt-and-braces. Say so and carry on.
+		diag("posted, but the local copy could not be written: %v", werr)
+	} else {
+		pending = path
+	}
+--- new
+	var werr error
+	if werr != nil {
+		diag("posted, but the local copy could not be written: %v", werr)
+	}

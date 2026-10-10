@@ -1,8 +1,14 @@
 target: cmd/looper/main.go
 verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckDefaultsTheStoreFromTheEnvironment'
 expect: was not read
-why:    the one wiring between the subcommand and record.StorePath. Every other test passes `-store` explicitly, so deleting these two lines changed nothing anywhere — and in production it means the gate reads whatever the zero value names rather than the record, so every run derives `unknown` and discloses instead of deciding. Disabled rather than deleted so the `record` import stays used and the mutation compiles.
+why:    the one wiring between the subcommand and record.StorePath. Every other test passes `-store` explicitly, so deleting these two lines changed nothing anywhere — and in production it means the gate reads whatever the zero value names rather than the record, so every run derives `unknown` and discloses instead of deciding. Disabled rather than deleted so the `record` import stays used and the mutation compiles. (Anchored through the push.Check call below it: the three-line default block alone now occurs twice, since pr-report defaults its store the same way.)
 --- old
 	if *store == "" {
+		*store = record.StorePath()
+	}
+	res, err := push.Check(push.CheckParams{
 --- new
 	if false {
+		*store = record.StorePath()
+	}
+	res, err := push.Check(push.CheckParams{

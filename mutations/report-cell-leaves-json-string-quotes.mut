@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    a roster field arrives as raw JSON, so a string value arrives WITH its quotes. str() in the Python renders the decoded value, so skipping the unquote prints `"sonnet"` where the report should read `sonnet` — and the same in every id and status. Rendering the JSON text verbatim is the obvious shortcut and it is wrong for exactly the type that is present in 137 of 137 real roster ids.
+--- old
+	if len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {
+--- new
+	if false && len(t) >= 2 && t[0] == '"' && t[len(t)-1] == '"' {

@@ -1,0 +1,12 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport/a_roster_findings_list_spelled'
+expect: --- FAIL:
+why:    the first fix for the empty-container case rewrote `t` with json.Compact, and that is a net wash rather than a fix: Python's `str()` normalises a container to `, ` and `: ` while Compact normalises to neither, so it closed the three whitespace spellings and BROKE three that already agreed. Measured against the oracle, `[1, 2]` rendered `[1, 2]` before and `[1,2]` after. Nothing caught it because the three cases added alongside the fix all covered the half it improved. Testing emptiness and leaving every other value's bytes untouched is what makes this a test of the VALUE; rewriting the text substitutes Go's spelling for the writer's, which is a different thing wearing the same description.
+--- old
+	if isEmptyContainer(b, t) {
+--- new
+	var flat bytes.Buffer
+	if json.Compact(&flat, b) == nil {
+		t = flat.String()
+	}
+	if isEmptyContainer(b, t) {

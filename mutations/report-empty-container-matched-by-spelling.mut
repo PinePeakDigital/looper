@@ -1,0 +1,13 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport/a_roster_findings_count_that_is_an_empty_list_with_a_space'
+expect: --- FAIL:
+why:    the empty-container case was matched by exact spelling, defended by a comment claiming json.RawMessage can hold no internal whitespace because "encoding/json emits none in one it wrote". A RawMessage is populated by Unmarshal COPYING the input subslice, not written by encoding/json: measured, `{"findings": [ ], "status": {\t}}` decodes to `"[ ]"` and `"{\t}"`, and TrimSpace only strips the outside. So one space from a hand-edited store walked past the match and rendered "[ ]" into the PR comment where the oracle renders nothing — invisible to the three fixtures that all used the compact form runlog.py writes. Decoding answers it for every spelling at once.
+--- old
+	if isEmptyContainer(b, t) {
+		return ""
+	}
+--- new
+	switch t {
+	case "[]", "{}":
+		return ""
+	}

@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestTheNarrativeReadsARealFile'
+expect: --- FAIL:
+why:    an interactive `looper pr-report` must not block on a read nobody is going to feed, which is what the character-device test prevents. The guard lives in its own function for a reason worth keeping: folded into readNarrative it could not be asserted, because the only observable difference between taking the branch and not taking it is whether a read happens, and the obvious fixture — /dev/null — returns the empty string either way. The earlier test was proved vacuous by deleting the whole guard and watching it stay green. The condition is DISABLED rather than the line deleted, because dropping it orphans `st` and a mutation that does not compile scores broken and tests nothing.
+--- old
+	return st.Mode()&os.ModeCharDevice == 0
+--- new
+	return st.Mode()&os.ModeCharDevice == 0 || true

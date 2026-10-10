@@ -360,7 +360,7 @@ func Check(p CheckParams) (Result, error) {
 	// instance — and the question the block asks is whether anything was readable, not
 	// whether a key existed. Measured against the live store: all 41 real runs carry a plan
 	// row, so this cannot fire on a legitimately zero-cycle run, which is 22 of them.
-	noRecord := r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
+	noRecord := r.Empty()
 	if r == nil {
 		r = &record.Run{ID: p.RunID}
 		if p.Diag != nil {

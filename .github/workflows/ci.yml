@@ -146,6 +146,50 @@ jobs:
           done
           echo "$c push parity subtests compared against the Python, plus 2 enumerated divergences"
 
+      # internal/report is the third in the same situation: its parity gate renders the whole
+      # report body against pr-report.py. Same oracle checkout, same skip-is-success problem.
+      - name: go test (report, with the oracle)
+        env:
+          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v ./internal/report/ > report.log 2>&1 || { cat report.log; exit 1; }
+          tail -5 report.log
+
+      - name: the report parity gate actually ran
+        run: |
+          [ -r report.log ] || { echo "report.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          # ONE skip is expected here and nowhere else: TestRealStoreParity renders every run
+          # in the author's live store, which CI does not have and must not be given. Checked
+          # as an allowlist of exactly one name rather than by relaxing the grep, so a second
+          # test going inert still fails — which is the whole point of this step.
+          unexpected=$(grep -- '--- SKIP' report.log | grep -v 'TestRealStoreParity' || true)
+          if [ -n "$unexpected" ]; then
+            echo "the report parity gate SKIPPED — pr-report.py was not reachable:"; cat report.log; exit 1
+          fi
+          grep -q -- '--- SKIP: TestRealStoreParity' report.log || \
+            echo "note: TestRealStoreParity did not skip — CI appears to have a run store"
+          # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
+          # table and the narrative table are different widths and measure different halves,
+          # and one aggregate would let the narrative table vanish under a table that grew.
+          for spec in TestParityWithPrReport:89 TestParityOnTheNarrative:5 \
+                      TestTheEnumeratedRenderDivergences:5 \
+                      TestTheHardeningDivergence:7 \
+                      TestWrongTypedFieldsAreRefusedAtTheLoad:13 \
+                      TestThreeShapesCrashTheOracleAndAreRefusedHere:3; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' report.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
+            echo "$c $t subtests compared against the Python"
+          done
+          # The two divergences with no subtests of their own. Each is the only thing
+          # asserting which side owns which answer, so neither can be left to an aggregate.
+          for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
+                   TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
+            grep -q -- "--- PASS: $d" report.log || {
+              echo "enumerated divergence $d was not compared against the Python"; cat report.log; exit 1; }
+          done
+
       - name: go test (everything else)
         # mapfile, not a bare $(...): the two packages above are excluded because they need the
         # oracle, and the word splitting that reassembles the rest is the mechanism, not an
@@ -153,7 +197,7 @@ jobs:
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$')
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$')
           go test -count=1 "${pkgs[@]}"
 
       # A deleted catalog entry is silently accepted: the score is computed against
@@ -178,7 +222,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 181 ] || { echo "only $n mutations, expected at least 181 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 222 ] || { echo "only $n mutations, expected at least 222 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
@@ -195,5 +239,6 @@ jobs:
       - name: mutation score
         env:
           REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
+          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
           REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
         run: go run ./cmd/looper mutate

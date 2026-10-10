@@ -596,8 +596,15 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 			// actually decodes. `Agents` on a PLAN row folds onto nothing Plan reads, and
 			// the Python ignores it too, so refusing it would be over-firing.
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","Agents":99}`,
-			// Unmodelled keys that merely resemble record fields are not folded names.
-			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"Finished_At":"x","TIER_EXECUTED":"full"}`,
+			// Unmodelled keys that merely resemble record fields are not folded names. Both
+			// of these are run-level keys runlog WRITES and nothing here decodes — see the
+			// `runLevelFields` deferral, which lists the five still outstanding. This case
+			// previously used `TIER_EXECUTED`, and it stopped being valid the moment the
+			// report slice taught Finish to read `tier_executed`: the guard then refused it,
+			// correctly, and the FIXTURE was what had gone stale. Any key chosen here is
+			// one slice away from the same fate, which is the cost of asserting a negative
+			// over a field list that grows.
+			`{"run_id":"r","phase":"finish","outcome":"clean","unresolved_asks":0,"Finished_At":"x","SESSION_ID":"s1"}`,
 		} {
 			runs, err := Load(store(t, plan40,
 				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`,
@@ -696,6 +703,31 @@ func keysOf(runs map[string]*Run) []string {
 const plan40 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
 
 func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
+	t.Run("a type the operator can actually grep for", func(t *testing.T) {
+		// The ONLY reason Escalation's decode delegates to a named `escalationBody` rather
+		// than a method-local `type plain Escalation`: json.UnmarshalTypeError carries the
+		// type's name, so the message said "of type record.plain" — a type absent from the
+		// package. Nothing asserted that, and a comment claimed this test did; renaming the
+		// type left all six packages green. The assertion is on the NAME because the name is
+		// the whole fix.
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"finish","outcome":"converged","escalations":["a string"]}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a store with one bad row: %v", err)
+		}
+		if runs["r"].Err == nil {
+			t.Fatal("a non-object escalation element decoded without error")
+		}
+		// One assertion, not two: a "does not say record.plain" check passes for any other
+		// wrong name AND matches record.plainBody by prefix, so it is both too weak and
+		// accidentally strong. Naming the type that must be there covers every wrong name.
+		got := runs["r"].Err.Error()
+		if !strings.Contains(got, "record.escalationBody") {
+			t.Errorf("the error does not name the type the operator must go read, so the one "+
+				"reason this type is named instead of method-local is unguarded: %v", got)
+		}
+	})
+
 	t.Run("the file line number, so the row can be found", func(t *testing.T) {
 		// `lineNo := 0` survived everything. The number has to be the line you can
 		// `sed -n Np` out of the real file, which is why it is computed before the tail
@@ -820,6 +852,32 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		}
 	})
 
+	// The cost of GateStatus being an Unmarshaler, pinned so it is a known limit and not a
+	// surprise. encoding/json returns an Unmarshaler's error immediately instead of saving it
+	// and carrying on, so within ONE row a bad gate status now MASKS every other bad field —
+	// including `unresolved_asks`, which decides the verdict. Across rows nothing is masked:
+	// setErr accumulates, which is what "every bad row, not just the first" above asserts.
+	//
+	// Accepted rather than fixed: the alternative is moving `executed` out of the typed
+	// boundary so the status's presence can be read without an Unmarshaler, and the cost here
+	// is one extra round trip on a row that is bad in two places at once.
+	t.Run("a bad gate status masks the rest of its own row", func(t *testing.T) {
+		runs, err := Load(store(t,
+			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"status":0}}}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		got := runs["r"].Err.Error()
+		if !strings.Contains(got, "status") {
+			t.Errorf("the message must name the status, which is the error json returns; got %v", got)
+		}
+		if strings.Contains(got, "unresolved_asks") {
+			t.Errorf("unresolved_asks is no longer masked — the decode order changed, and the "+
+				"relation subtest below can go back to breaking the gate through `status`; got %v", got)
+		}
+	})
+
 	t.Run("no gate is blamed for a failure elsewhere in the row", func(t *testing.T) {
 		// nameBadGates wrapped unconditionally when written, so this row rendered as
 		// `executed gate(s) "g": <an error about unresolved_asks>`. The "X: Y" form asserts
@@ -827,9 +885,18 @@ func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
 		// must edit sits elsewhere in the same sentence. Both fields really are bad here,
 		// which is why this is a false RELATION rather than over-firing, and why removing
 		// the guard broke no other test.
+		//
+		// The gate is broken through `reason`, not `status`, and that is load-bearing. Since
+		// GateStatus became an Unmarshaler, a bad `status` returns from UnmarshalJSON, and
+		// encoding/json returns an Unmarshaler's error IMMEDIATELY rather than saving it and
+		// decoding on — so it wins over the earlier `unresolved_asks` failure, the row's
+		// error becomes `executed.status`, and naming the gate is then CORRECT. With
+		// `status: 0` here the fixture stopped exercising the relation and the catalog entry
+		// guarding it SURVIVED, measured. `reason` is a plain string, so its failure is
+		// saved and document order decides: unresolved_asks first.
 		runs, err := Load(store(t,
 			`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","gates":{"g":{"planned":"run"}}}`,
-			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"status":0}}}`), 0)
+			`{"run_id":"r","phase":"finish","unresolved_asks":"7","executed":{"g":{"reason":0}}}`), 0)
 		if err != nil {
 			t.Fatalf("Load must not fail: %v", err)
 		}
@@ -1512,5 +1579,48 @@ func TestAnUnresolvableHomeLeavesTheTildeInPlace(t *testing.T) {
 	t.Setenv("REVIEW_LOOP_RUNS", "~")
 	if got := StorePath(); got != "~" {
 		t.Errorf("StorePath = %q for a bare tilde with no resolvable home, want %q", got, "~")
+	}
+}
+
+// `escalations` was the one new entry-shaped field in the report slice with no folded-key
+// guard, and foldedEntryKeys could not have been it: that function decodes the field into a
+// MAP and returns nil when that fails, so pointing it at a JSON array checks nothing while
+// reading as a guard. Measured before the fix: `{"Gate":"x"}` decoded into Escalation.Gate as
+// "x" (encoding/json folds struct tags case-insensitively) where the Python's exact
+// `e.get('gate')` reads nothing and prints the literal "None" — the forgery every other
+// folded-key guard in this file exists for.
+func TestAFoldedEscalationKeyIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name, row string
+		refuse    bool
+	}{
+		{"a capitalised gate", `{"run_id":"r","phase":"finish","escalations":[{"Gate":"x","reason":"y"}]}`, true},
+		{"a capitalised reason", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","Reason":"y"}]}`, true},
+		{"a folded key on the second entry", `{"run_id":"r","phase":"finish","escalations":[{"gate":"a","reason":"b"},{"GATE":"x"}]}`, true},
+		// The exact keys are what this build reads; they must not be refused.
+		{"the exact keys", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","reason":"y"}]}`, false},
+		// A key the build does not model at all is ignored by both implementations.
+		{"an unmodelled key", `{"run_id":"r","phase":"finish","escalations":[{"gate":"x","note":"y"}]}`, false},
+		// Shapes the guard must pass through to the caller's own decode rather than swallow.
+		{"an empty list", `{"run_id":"r","phase":"finish","escalations":[]}`, false},
+		{"no escalations key", `{"run_id":"r","phase":"finish","outcome":"converged"}`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			runs, err := Load(store(t, plan40, c.row), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail on a store with one bad row: %v", err)
+			}
+			got := runs["r"].Err
+			if c.refuse {
+				if got == nil {
+					t.Fatalf("the row was accepted; a folded key reads a value the Python never sees")
+				}
+				if !strings.Contains(got.Error(), "escalations entry") {
+					t.Errorf("the error does not name the field and index: %v", got)
+				}
+			} else if got != nil {
+				t.Errorf("a legitimate row was refused: %v", got)
+			}
+		})
 	}
 }
