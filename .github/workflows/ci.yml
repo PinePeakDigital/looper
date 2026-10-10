@@ -210,6 +210,21 @@ jobs:
       # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
       # not left to score `survived` forever.
       # (The same gap was found and closed in the skills repo's workflow first.)
+      # Anchors before behaviour. The mutation score below takes about fifteen minutes, so a
+      # stale anchor — an entry whose `--- old` block no longer appears in its target, after a
+      # rename or a control-flow edit — costs a whole CI cycle to discover. This finds it in a
+      # second. Three commits on the report slice shipped one, every time from an edit that had
+      # nothing to do with the entry.
+      #
+      # It is a script and not inline bash because getting the match right needs catalog.go's
+      # exact rule: the markers are found with Index(text, "--- old\n") anywhere in the file,
+      # NOT anchored to a line start, and exactly one trailing newline is stripped — ten entries
+      # here have an anchor that legitimately ends mid-line with `--- new` appended onto it. A
+      # `grep -cF` cannot express that at all: with a multi-line anchor it counts matching LINES
+      # rather than occurrences of the block.
+      - name: every catalog anchor still matches exactly once
+        run: python3 mutations/anchorcheck.py
+
       - name: no catalog entry has gone missing
         run: |
           # A glob array, not `ls | wc -l`: wc counts LINES, so one filename containing a
