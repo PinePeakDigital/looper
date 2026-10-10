@@ -199,7 +199,10 @@ func (e *Escalation) UnmarshalJSON(b []byte) error {
 // of type record.plain" — a type that appears nowhere in the package, against a boundary whose
 // stated contract is that the error names what the operator must go fix. This name is
 // greppable. The field tags must stay in step with Escalation's; nothing but this decode reads
-// them, and TestTheDecodeErrorNamesWhatTheOperatorMustGoFix pins the message.
+// them, and TestTheDecodeErrorNamesWhatTheOperatorMustGoFix's "a type the operator can
+// actually grep for" asserts this type's name appears in the error. That subtest was written
+// because the sentence claiming it existed was false when first written: renaming the type
+// left all six packages green.
 type escalationBody struct {
 	Gate   *string `json:"gate"`
 	Reason string  `json:"reason"`

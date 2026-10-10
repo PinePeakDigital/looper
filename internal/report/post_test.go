@@ -593,7 +593,14 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// through shTimeout so this costs milliseconds instead of twenty seconds.
 		dir := gitRepo(t)
 		shimGh(t, `sleep 5`)
-		r := shTimeout(dir, time.Millisecond, "gh", "pr", "list")
+		// 50ms, not 1ms: the kill must land AFTER the fork for this subtest to be about the
+		// signal at all, and a 1ms budget is a race against LookPath plus fork — measured
+		// under load, 3 of 400 runs expired first and reported the deadline instead. The
+		// assertion below was relaxed to accept either spelling to cope with that, which made
+		// the subtest's own name unenforceable: it could no longer tell a killed gh from one
+		// that never started. A budget the fork comfortably wins is the deterministic fixture,
+		// and it costs 50ms against the 5s the shim would otherwise sleep.
+		r := shTimeout(dir, 50*time.Millisecond, "gh", "pr", "list")
 		// It RAN, and it failed. Runnable stays true on purpose: folding a kill in with
 		// not-installed would answer "install gh", which is the one action that cannot help
 		// a gh that hung. Code is normalised to 1 because Go reports -1 for a
@@ -606,14 +613,12 @@ func TestTheBranchesNothingReached(t *testing.T) {
 			t.Errorf("a killed subprocess reads as success, so a hung gh would look like an "+
 				"answer about whether a PR exists: %+v", r)
 		}
-		// EITHER spelling of the kill, because which one arrives is a race this test cannot
-		// win deterministically: a 1ms budget can expire before `Start` forks, in which case
-		// Start returns the context's own error and nothing is ever signalled. Asserting
-		// "signal" alone made the subtest fail on a loaded machine while naming a defect
-		// that was not there.
-		if !strings.Contains(r.Err, "signal") && !strings.Contains(r.Err, "deadline exceeded") {
-			t.Errorf("the detail names neither the signal nor the deadline, so the diag line "+
-				"cannot say why: %+v", r)
+		// The SIGNAL by name, which is what distinguishes this subtest from the two around
+		// it. A disjunction over "signal" or "deadline exceeded" passes for a probe that was
+		// never forked, so it could not enforce the sentence above it about code -1.
+		if !strings.Contains(r.Err, "signal") {
+			t.Errorf("the detail does not name the signal, so this cannot tell a killed gh "+
+				"from one that never started: %+v", r)
 		}
 	})
 }

@@ -81,9 +81,10 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	// `!errors.As(err, new(*exec.ExitError))` replaced the enumeration and was wrong in the
 	// other direction: os/exec documents "other error types may be returned for I/O
 	// problems", and these sinks are strings.Builders, so os/exec allocates pipes and copy
-	// goroutines and Wait reports a copy failure — for a process that DID run. ErrWaitDelay
-	// is a second such error. Asking the Cmd whether it started answers the question the
-	// branch is actually about.
+	// goroutines and Wait reports a copy failure — for a process that DID run. (An earlier
+	// wording cited ErrWaitDelay as a second such error; `cmd.WaitDelay` is never set here, so
+	// that one cannot arise and the copy error carries the argument alone.) Asking the Cmd
+	// whether it started answers the question the branch is actually about.
 	case cmd.Process == nil:
 		r.Runnable, r.Code = false, 127
 		if r.Err == "" {
@@ -96,9 +97,8 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 		// installed": the two call for opposite actions, and "install gh" is the wrong
 		// advice for a gh that was killed mid-call. Go reports -1 for a signal-terminated
 		// process, which is not a value any caller here could read as "cannot tell", so it
-		// becomes 1 with the signal named in Err. Also everything the inverse test used to
-		// misfile here — an I/O error from the output copy, ErrWaitDelay — since those name
-		// a process that started.
+		// becomes 1 with the signal named in Err. Also the I/O copy error the inverse test used to
+		// misfile as never-started, which names a process that did run.
 		r.Code = 1
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

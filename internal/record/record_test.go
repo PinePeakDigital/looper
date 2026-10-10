@@ -703,6 +703,31 @@ func keysOf(runs map[string]*Run) []string {
 const plan40 = `{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`
 
 func TestTheDecodeErrorNamesWhatTheOperatorMustGoFix(t *testing.T) {
+	t.Run("a type the operator can actually grep for", func(t *testing.T) {
+		// The ONLY reason Escalation's decode delegates to a named `escalationBody` rather
+		// than a method-local `type plain Escalation`: json.UnmarshalTypeError carries the
+		// type's name, so the message said "of type record.plain" — a type absent from the
+		// package. Nothing asserted that, and a comment claimed this test did; renaming the
+		// type left all six packages green. The assertion is on the NAME because the name is
+		// the whole fix.
+		runs, err := Load(store(t, plan40,
+			`{"run_id":"r","phase":"finish","outcome":"converged","escalations":["a string"]}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail on a store with one bad row: %v", err)
+		}
+		if runs["r"].Err == nil {
+			t.Fatal("a non-object escalation element decoded without error")
+		}
+		// One assertion, not two: a "does not say record.plain" check passes for any other
+		// wrong name AND matches record.plainBody by prefix, so it is both too weak and
+		// accidentally strong. Naming the type that must be there covers every wrong name.
+		got := runs["r"].Err.Error()
+		if !strings.Contains(got, "record.escalationBody") {
+			t.Errorf("the error does not name the type the operator must go read, so the one "+
+				"reason this type is named instead of method-local is unguarded: %v", got)
+		}
+	})
+
 	t.Run("the file line number, so the row can be found", func(t *testing.T) {
 		// `lineNo := 0` survived everything. The number has to be the line you can
 		// `sed -n Np` out of the real file, which is why it is computed before the tail

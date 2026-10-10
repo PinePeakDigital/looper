@@ -309,8 +309,10 @@ func TestParityWithPrReport(t *testing.T) {
 		// write (`separators=(",", ":")`), so none of them could see that the fix tested the
 		// punctuation rather than the value. A json.RawMessage keeps the writer's bytes
 		// verbatim, so one space from a hand-edited store walked straight past the match and
-		// rendered "[ ]" where the oracle renders nothing. A tab, because TrimSpace would
-		// have made a leading or trailing one agree by accident.
+		// rendered "[ ]" where the oracle renders nothing. A tab in the second case, and an
+		// object rather than a list, so the two differ in the thing that matters: BOTH
+		// whitespace characters are internal, which is what makes TrimSpace irrelevant to
+		// either of them, and the tab never reaches the output because cell() collapses it.
 		{"a roster findings count that is an empty list with a space in it", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[ ]}]`)}},
 		{"a roster findings count that is an empty object with a tab in it", []string{plan(""),

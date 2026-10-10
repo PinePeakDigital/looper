@@ -62,7 +62,10 @@ var Labels = map[string]Label{
 // holds. NOT the same set, though: measured, Python strips U+001C-U+001F as whitespace and
 // unicode.IsSpace rejects all four, so those four survive here inside a cell. None of them is
 // a newline or a pipe, so neither can forge structure — the same invisible-character class the
-// threat model's "Watch this spot" entry already records for Unicode Cf.
+// threat model's "Watch this spot" entry already records for Unicode Cf. That file is
+// `.git/info/review-loop-threat-model.md` — named by path because it is untracked and inside
+// .git, so `grep -r` from the worktree does not reach it and a reader checking this citation
+// concludes it points at nothing.
 func cell(s string) string {
 	return strings.ReplaceAll(strings.Join(strings.Fields(s), " "), "|", `\|`)
 }
@@ -448,10 +451,10 @@ func decodeRoster(r *record.Run) []agentEntry {
 // tail — review proposed exactly that — and it RECURSES FOREVER on math.MinInt, because
 // -MinInt is MinInt in two's complement. Reproduced: `go run` on the recursive version dies
 // with "stack overflow" at -9223372036854775808. The eight values checkable from the tree are
-// the table in TestTheBranchesNothingReached ("commas carries a sign"); the recursive form
-// agrees with this one on the seven below MinInt and dies on MinInt itself, which is why the
-// table carries it. (The sentence this replaced said "seven ... which includes MinInt", which
-// is neither count and reads as though MinInt were one of the agreements.) Formatting the number FIRST and
+// the table in TestTheBranchesNothingReached ("commas carries a sign"): the recursive form
+// agrees with this one on the other seven and dies on MinInt, which is why the table carries
+// it. MinInt is the smallest int, so "the seven below MinInt" — an earlier wording here — named
+// no values at all. Formatting the number FIRST and
 // stripping the sign off the text has no such value. The style default's own carve-out
 // covers this: take the option that is correct on the edge cases.
 func commas(n int) string {

@@ -1,8 +1,8 @@
 target: internal/report/post.go
 verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_budget_that_expires'
 expect: --- FAIL:
-why:    `Start` checks the context BEFORE forking and returns ctx.Err(), which is not an *exec.ExitError, so a budget that expires in the LookPath-plus-fork window produced an error naming no process. Classifying by "not an ExitError" filed that as never-started and answered "gh could not be run … install gh or post the report by hand" for a gh the caller's own deadline cancelled — the one remedy that cannot help, and the advice the default arm's comment says must never be given for a killed gh. Measured: budget 1ns gives `context deadline exceeded` (context.deadlineExceededError), budget 1ms gives `signal: killed` (an ExitError), so the two halves of one cause arrived on opposite sides of the test. Asking the context first is what makes them one arm. The arm is DISABLED rather than deleted so `ctx` stays referenced in this switch; deleting the case leaves the rest of the function compiling and would score this entry broken.
+why:    with NO deadline arm at all, a budget that expires in the LookPath-plus-fork window answers "gh could not be run … install gh or post the report by hand" for a gh the caller's own deadline cancelled — the one remedy that cannot help, and the advice the default arm's comment says must never be given for a killed gh. `Start` checks the context after LookPath and returns ctx.Err(), which is not an *exec.ExitError and names no process, so it falls to the never-started test below. Measured: budget 1ns gives `context deadline exceeded` (a context.deadlineExceededError), budget 1ms gives `signal: killed` (an ExitError the default arm already handles) — the two halves of one cause arriving on opposite sides of the test. This entry removes the arm; report-cancelled-probe-asks-the-clock guards the weaker form, where the arm is present but tests the clock instead of the error. `case false:` rather than a deletion only so the arm's body stays attached to a case; `ctx`, `errors` and `context` are all still referenced by the rest of the function either way.
 --- old
-	case ctx.Err() != nil:
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 --- new
-	case ctx.Err() != nil && false:
+	case false:

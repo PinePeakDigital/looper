@@ -1,8 +1,9 @@
 target: internal/report/report.go
-verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport/a_roster_findings_count_that_is_an_empty_list$'
 expect: --- FAIL:
-why:    an empty container is FALSY in Python, so `[] or ""` and `{} or ""` are both "", and the report renders nothing. This is a PRESENCE divergence rather than the punctuation one the enumerated list already covers for non-empty containers: measured against the oracle, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here, and `"status": {}` the same. The function immediately below tests falsiness by VALUE rather than by spelling for numbers; the container cases were left matched by spelling, which is the same defect one type over — and matched by spelling they were bypassable, since a json.RawMessage keeps the writer's internal whitespace. The switch now runs on json.Compact's output, so `[ ]` and `{\t}` reach it as `[]` and `{}`.
+why:    an empty container is FALSY in Python, so `[] or ""` and `{} or ""` are both "", and the report renders nothing. This is a PRESENCE divergence rather than the punctuation one the enumerated list already covers for non-empty containers: measured against the oracle, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here, and `"status": {}` the same. This entry removes the test ENTIRELY, so it guards the divergence existing at all; report-empty-container-matched-by-spelling guards the weaker form, where the test is present but matches a spelling and so misses `[ ]`. Two entries because they are two defects: one renders the text for every empty container, the other only for the ones a writer spelled with whitespace. `isEmptyContainer` goes unreferenced here, which compiles — Go rejects an unused local, not an unused function.
 --- old
-	case "false", "null", `""`, "[]", "{}":
+	if isEmptyContainer(b, t) {
+		return ""
+	}
 --- new
-	case "false", "null", `""`:
