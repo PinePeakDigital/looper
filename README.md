@@ -254,12 +254,15 @@ landed. Every local copy carries a note saying the label is still owed, the succ
 copy included; that is what the Python writes and Step 0c reads, and narrowing it to the
 deferred case would be a divergence rather than a fix.
 
-Parity with `pr-report.py` is gated two ways: every run in the author's live store is
-rendered by both and compared byte for byte, and a fixture table covers the shapes no
-real row happens to hold — an executed gate with no `status` key, a roster entry whose
+Parity with `pr-report.py` is gated two ways, and they do not run in the same places. The
+fixture table is the gate CI enforces: it covers the shapes no real row happens to hold — an executed gate with no `status` key, a roster entry whose
 `id` is a number, a `findings: 0` that renders as *nothing* because `cell()` is
-`str(text or "")`. Where the two cannot agree, the divergence is a test rather than a
-comment: `TestTheEnumeratedRenderDivergences` names each one with both renderings, and
+`str(text or "")`. The second is `TestRealStoreParity`, which renders every run in the
+author's live store through both and diffs them — it runs only where that store exists and
+SKIPS in CI, which has no run record, so it is a local gate and not a claim about CI
+coverage. (CI's `the report parity gate actually ran` step allowlists exactly that one
+name, because a skip reports as success and would otherwise hide a whole table going
+inert.) Where the two cannot agree, the divergence is a test rather than a comment: `TestTheEnumeratedRenderDivergences` names each one with both renderings, and
 `TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three record shapes on which the
 Python tracebacks — dropping the whole report — and this refuses at the typed boundary
 with the offending field named.

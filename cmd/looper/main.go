@@ -246,6 +246,23 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		return errors.New("pr-report: -run-id is required — the report's facts all come from " +
 			"that row, and there is no sensible default run to render")
 	}
+	// A DELIBERATE DIVERGENCE, in the hardening direction: the Python interpolates the run id
+	// raw into both the marker and the summary line, so a newline in it forges markdown in a
+	// PUBLIC PR comment — the marker `<!-- review-loop:run=%s -->` can be closed early and a
+	// blockquote contradicting the disclosure written under it. `record.Load` does not
+	// constrain `run_id`, so a store row can carry one and this flag can name it.
+	//
+	// Refused HERE and not inside Render, for two reasons. Render stays pure, so the 89
+	// fixture cases and the 42 real runs still compare byte for byte against the oracle. And
+	// cell()ing the id instead would rewrite the MARKER, which push.Fingerprint matches
+	// exactly — hardening one gate by breaking the other. push.ValidRunID refuses the same
+	// strings, so a run id this rejects could never have cleared the push gate anyway.
+	if !report.ValidRunID(*runID) {
+		return fmt.Errorf("pr-report: %q is not a usable run id — the id is interpolated raw "+
+			"into a public PR comment, so it is limited to letters, digits, - and _ (max 64). "+
+			"push-check refuses the same ids, so this one could not have cleared the gate",
+			*runID)
+	}
 	if *store == "" {
 		*store = record.StorePath()
 	}

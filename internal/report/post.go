@@ -45,6 +45,22 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	defer cancel()
 	cmd := exec.CommandContext(ctx, prog, args...)
 	cmd.Dir = repo
+	// WaitDelay, or the budget above bounds NOTHING. CommandContext kills the direct child
+	// only, and because these sinks are strings.Builders os/exec drains them through pipes a
+	// GRANDCHILD inherits — a credential helper gh starts, a git subprocess, a shell wrapper's
+	// background job. With WaitDelay zero, Wait blocks until every holder closes its end.
+	// Measured against a shim whose last line is `sleep 10 &`: a 300ms budget returned after
+	// 10.15s, and returned code 0 — a success verdict for a call that blew its deadline by 34x.
+	// The hung-subprocess subtest below could not see it either, because it asserted the error
+	// text and never the elapsed time; it does now.
+	//
+	// After the delay fires Wait reports exec.ErrWaitDelay when the child itself exited
+	// cleanly — measured, NOT an ExitError, so it lands in the default arm and reads as
+	// ran-and-failed, which is the honest verdict for a call that could not be drained. When
+	// the child was also killed, the ExitError wins and nothing changes. One second rather
+	// than something tighter: it bounds the DRAIN, not the deadline, and a healthy gh never
+	// reaches it.
+	cmd.WaitDelay = time.Second
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
@@ -81,10 +97,14 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	// `!errors.As(err, new(*exec.ExitError))` replaced the enumeration and was wrong in the
 	// other direction: os/exec documents "other error types may be returned for I/O
 	// problems", and these sinks are strings.Builders, so os/exec allocates pipes and copy
-	// goroutines and Wait reports a copy failure — for a process that DID run. (An earlier
-	// wording cited ErrWaitDelay as a second such error; `cmd.WaitDelay` is never set here, so
-	// that one cannot arise and the copy error carries the argument alone.) Asking the Cmd
-	// whether it started answers the question the branch is actually about.
+	// goroutines and Wait reports a copy failure — for a process that DID run. ErrWaitDelay is
+	// the second such error and now the one that actually fires: setting WaitDelay above made
+	// it reachable, and it is what a grandchild holding the pipes produces. (An earlier wording
+	// here said it "cannot arise because cmd.WaitDelay is never set" — true when written, false
+	// one commit later, which is what a claim resting on the absence of a line is worth.)
+	// Measured: it is NOT an ExitError, so it falls to the default arm and reads as ran-and-
+	// failed, which is the honest verdict for a call that could not be drained. Asking the Cmd
+	// whether it started answers the question this branch is actually about.
 	case cmd.Process == nil:
 		r.Runnable, r.Code = false, 127
 		if r.Err == "" {
@@ -139,6 +159,15 @@ const (
 	// limit, TLS, a network error, a repo it cannot see, a hang. Its stderr is the only thing
 	// that says which, so it is carried, not dropped.
 	GhFailed
+	// NoBranch: there was no branch to look a PR up by — a detached HEAD, an unborn branch, or
+	// a `git branch --show-current` that could not run. GH WAS NEVER ASKED. This state exists
+	// because folding it into GhFailed made Note() say "gh ran and failed … Step 0c can flush
+	// it once gh works" for a gh that was never invoked and a condition no amount of gh
+	// working will fix — the operator has to check out a branch or pass -branch. That is this
+	// file's own defect class, inside the file written to remove it, and the test for the path
+	// asserted GhFailed, so it pinned the wrong answer. Reported by a PR bot after five review
+	// cycles and a security review had all walked past it.
+	NoBranch
 )
 
 // Probe is the answer plus what it rests on.
@@ -160,6 +189,10 @@ func (p Probe) Note() string {
 	case GhUnrunnable:
 		return "gh could not be run (" + p.Detail + ") — whether a PR exists is UNKNOWN, " +
 			"not answered; install gh or post the report by hand"
+	case NoBranch:
+		return "no branch to look a PR up by (" + p.Detail + ") — gh was NOT asked, so " +
+			"whether a PR exists is unknown; check out a branch or pass -branch. The report " +
+			"is kept"
 	default:
 		return "gh ran and failed (" + p.Detail + ") — whether a PR exists is UNKNOWN, not " +
 			"answered; the report is kept, and Step 0c can flush it once gh works"
@@ -172,6 +205,9 @@ func (p Probe) Note() string {
 // after it merges, which is what `gh pr view` does and what Step 0c's backfill needs when the
 // PR was merged between the loop finishing and the flush.
 func FindPR(repo, branch string) Probe {
+	// Why there is no branch, in git's own words when git is what failed. Defaults to the
+	// answer for the case where git worked and simply reported no branch.
+	gitDetail := "detached HEAD or an unborn branch"
 	if branch == "" {
 		// `git branch --show-current`, not `rev-parse --abbrev-ref HEAD`. Measured: on an
 		// UNBORN branch — a repo with no commits yet — rev-parse exits 128 and prints the
@@ -179,14 +215,21 @@ func FindPR(repo, branch string) Probe {
 		// so the caller needs a magic-string check to tell a branch named HEAD from no
 		// branch at all. --show-current answers the question asked: the branch name, or
 		// empty when there is none, exit 0 either way.
-		if r := sh(repo, "git", "branch", "--show-current"); r.Runnable && r.Code == 0 {
+		switch r := sh(repo, "git", "branch", "--show-current"); {
+		case !r.Runnable:
+			gitDetail = "git could not be run: " + firstLine(r.Err)
+		case r.Code != 0:
+			gitDetail = "git branch --show-current failed: " + firstLine(r.Err)
+		default:
 			branch = r.Out
 		}
 	}
 	if branch == "" {
 		// No branch to ask about. Not an error: a detached HEAD has no PR by this route, and
-		// the report still has to survive.
-		return Probe{State: GhFailed, Detail: "no branch name to look a PR up by (detached HEAD?)"}
+		// the report still has to survive. NoBranch rather than GhFailed because gh has not
+		// been invoked at this point, and `detail` carries git's own words when git is what
+		// failed — the old single detail guessed "detached HEAD?" for an unrunnable git too.
+		return Probe{State: NoBranch, Detail: gitDetail}
 	}
 	r := sh(repo, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number", "-q", ".[0].number")
 	switch {
@@ -346,7 +389,7 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	// id would write outside the repo: filepath.Join(gitdir, "info/...-report.../../../x.md")
 	// resolves wherever the dots lead. The record's own validator is the gate; this is the
 	// guard travelling with the interpolation, the way push.reportProbe's does.
-	if !validRunID(runID) {
+	if !ValidRunID(runID) {
 		return "", fmt.Errorf("run id %q is not a plain id — refusing to build a path from it", runID)
 	}
 	path := filepath.Join(r.Out, fmt.Sprintf(PendingName, runID))
@@ -367,10 +410,15 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	return path, nil
 }
 
-// validRunID mirrors push.ValidRunID. Duplicated rather than imported: internal/push imports
+// ValidRunID mirrors push.ValidRunID. Duplicated rather than imported: internal/push imports
 // nothing from here and must not start, or the two halves of the gate become one package that
 // can agree with itself by accident.
-func validRunID(s string) bool {
+//
+// Exported because the COMMAND needs it too: the run id reaches a public PR comment raw, in
+// the marker and the summary line, and `record.Load` places no constraint on `run_id`. Checked
+// at the command rather than in Render so Render stays byte-comparable with the oracle, and
+// because cell()ing the id would rewrite the marker push.Fingerprint matches exactly.
+func ValidRunID(s string) bool {
 	if s == "" || len(s) > 64 {
 		return false
 	}

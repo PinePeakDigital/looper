@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinepeakdigital/looper/internal/report"
 )
 
 // fixture builds a committed throwaway repo with a catalog, and returns its path.
@@ -505,6 +508,47 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 				t.Errorf("the refusal names neither the run nor the store: %q", errOut)
 			}
 		})
+	}
+}
+
+// A DELIBERATE DIVERGENCE from pr-report.py, in the hardening direction. The Python
+// interpolates the run id RAW into the marker and the summary line, so a newline in it forges
+// markdown in a public PR comment. Measured against the oracle with `run_id` = "a\nb": it
+// emits
+//
+//	<!-- review-loop:run=a
+//	b -->
+//
+// so the HTML comment closes on the SECOND line, swallowing the first line of the body with
+// it, and the needle push.Fingerprint matches exactly is gone. `record.Load` places no
+// constraint on `run_id`, so a store row can carry one and -run-id can name it.
+//
+// Refused at the command rather than cell()ed in Render: cell() would rewrite the marker that
+// the push gate matches, hardening one gate by breaking the other, and Render has to stay
+// byte-comparable with the oracle for the 89 fixture cases and the 42 real runs.
+func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	for _, id := range []string{"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
+		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
+			code, out, errOut := doRun(t, "pr-report", "-run-id", id, "-store", store)
+			if code == 0 {
+				t.Errorf("exit 0 for a run id that reaches a public comment raw:\n%s", out)
+			}
+			if !strings.Contains(errOut, "not a usable run id") {
+				t.Errorf("the refusal does not say why: %q", errOut)
+			}
+			// The body must not be on stdout: with -post off stdout IS the report, so a
+			// rendered body here would be posted by a caller that only checks for output.
+			if strings.Contains(out, "## review-loop") {
+				t.Errorf("a report was rendered for a refused run id:\n%s", out)
+			}
+		})
+	}
+	// And the ids the gate accepts still work, or the guard is just a denial of service.
+	for _, id := range []string{"pr1", "6a0fe216ade0", "a-b_c"} {
+		if !report.ValidRunID(id) {
+			t.Errorf("%q is refused, but it is the shape runlog.py writes", id)
+		}
 	}
 }
 

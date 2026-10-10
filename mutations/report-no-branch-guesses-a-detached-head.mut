@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestNoBranchCarriesGitsOwnReason'
+expect: --- FAIL:
+why:    an empty branch has THREE causes — a detached HEAD, an unborn branch, and a `git branch --show-current` that could not run at all — and a single hardcoded detail reported the first for all three. So an unrunnable git produced "no branch name to look a PR up by (detached HEAD?)", which is the same asserting-an-unchecked-cause defect one level down from the one this file exists to fix. git's own words are carried instead, and the default is only used when git ran and genuinely reported no branch.
+--- old
+			gitDetail = "git could not be run: " + firstLine(r.Err)
+--- new
+			gitDetail = "detached HEAD or an unborn branch"

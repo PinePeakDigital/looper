@@ -130,11 +130,42 @@ func TestFindPRWithNoBranchToAskAbout(t *testing.T) {
 	mustGit(t, dir, "checkout", "-q", "--detach")
 	log := shimGh(t, `echo 7`)
 	got := FindPR(dir, "")
-	if got.State != GhFailed {
-		t.Fatalf("state %v number %q detail %q, want GhFailed", got.State, got.Number, got.Detail)
+	// NoBranch, not GhFailed. This asserted GhFailed and so pinned the wrong answer: with gh
+	// never invoked — the very next assertion proves that — Note() read "gh ran and failed …
+	// Step 0c can flush it once gh works", which names a cause that was never checked and a
+	// remedy that cannot work. The two assertions contradicted each other and the suite was
+	// green for five review cycles.
+	if got.State != NoBranch {
+		t.Fatalf("state %v number %q detail %q, want NoBranch", got.State, got.Number, got.Detail)
 	}
 	if calls(t, log) != "" {
 		t.Errorf("gh was asked about a PR with no branch to ask about: %s", calls(t, log))
+	}
+	if strings.Contains(got.Note(), "gh ran and failed") {
+		t.Errorf("the note blames gh for a condition gh was never asked about: %q", got.Note())
+	}
+	if !strings.Contains(got.Note(), "-branch") {
+		t.Errorf("the note does not name a remedy that can work: %q", got.Note())
+	}
+}
+
+// git itself failing is a THIRD cause of an empty branch, and the note must not report it as a
+// detached HEAD. The single hardcoded detail did exactly that — it guessed "detached HEAD?" for
+// an unrunnable git, which is the same asserting-an-unchecked-cause defect one level down.
+func TestNoBranchCarriesGitsOwnReason(t *testing.T) {
+	dir := gitRepo(t)
+	// A PATH with neither git nor gh: git is what FindPR asks first.
+	t.Setenv("PATH", t.TempDir())
+	got := FindPR(dir, "")
+	if got.State != NoBranch {
+		t.Fatalf("state %v detail %q, want NoBranch", got.State, got.Detail)
+	}
+	if !strings.Contains(got.Detail, "git could not be run") {
+		t.Errorf("the detail does not say git was the thing that failed: %q", got.Detail)
+	}
+	if strings.Contains(got.Detail, "detached") {
+		t.Errorf("an unrunnable git is reported as a detached HEAD, which was never "+
+			"established: %q", got.Detail)
 	}
 }
 
@@ -336,7 +367,7 @@ func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
 		"", "abc123", "A-b_9", "../../etc/passwd", "a/b", "a.b", "a b", "a\x00b", "ab;rm -rf /",
 		strings.Repeat("a", 64), strings.Repeat("a", 65), "é", "-",
 	} {
-		if got, want := validRunID(id), push.ValidRunID(id); got != want {
+		if got, want := ValidRunID(id), push.ValidRunID(id); got != want {
 			t.Errorf("%q: this package says %v, the push gate says %v — the writer and the "+
 				"reader of the pending path now disagree about what a run id is", id, got, want)
 		}
@@ -619,6 +650,36 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		if !strings.Contains(r.Err, "signal") {
 			t.Errorf("the detail does not name the signal, so this cannot tell a killed gh "+
 				"from one that never started: %+v", r)
+		}
+		// No elapsed-time assertion HERE, deliberately: it could not fail. A review proposed
+		// one, reasoning that `sleep` is a child of the shim's /bin/sh and would keep the
+		// pipes open past the kill. Measured, it does not — /bin/sh tail-execs a lone final
+		// command instead of forking, so there is no grandchild and this returns in 0.07s with
+		// cmd.WaitDelay removed. The drain bound is asserted by the next subtest, which has to
+		// background the sleep explicitly to produce a grandchild at all.
+	})
+
+	t.Run("a grandchild holding the pipes cannot outlive the budget", func(t *testing.T) {
+		// The case `sleep 5` above cannot reach, and the `&` is what makes the difference:
+		// /bin/sh tail-execs a lone final command, so `sleep 5` BECOMES the shim and dies with
+		// it, while `sleep 30 &` forks a real grandchild that inherits stdout and outlives its
+		// parent. The context then has nothing left to kill, so with WaitDelay unset Wait
+		// simply waits for the grandchild. Measured before the fix: a
+		// 300ms budget returned after 10.15s AND with code 0 — a SUCCESS verdict for a call
+		// that blew its deadline by 34x, which is worse than a slow failure because every
+		// caller here tests `Code != 0`. This is the shape a real gh produces too, via a
+		// credential helper or a git subprocess it leaves running.
+		dir := t.TempDir()
+		shimGh(t, "sleep 30 &")
+		start := time.Now()
+		r := shTimeout(dir, 300*time.Millisecond, "gh", "pr", "list")
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Errorf("a grandchild kept the call alive for %v on a 300ms budget: %+v",
+				elapsed.Round(time.Millisecond), r)
+		}
+		if r.Code == 0 {
+			t.Errorf("an undrainable call reads as SUCCESS, so a caller testing Code != 0 "+
+				"treats a blown deadline as an answer: %+v", r)
 		}
 	})
 }
