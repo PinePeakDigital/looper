@@ -525,7 +525,9 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 //
 // Refused at the command rather than cell()ed in Render: cell() would rewrite the marker that
 // the push gate matches, hardening one gate by breaking the other, and Render has to stay
-// byte-comparable with the oracle for the 89 fixture cases and the 42 real runs.
+// byte-comparable with the oracle for the 89 fixture cases and every run in the author's live
+// store. (No count here on purpose: that number grows every time the loop runs — it was 42
+// when first written and is 44 now — so TestRealStoreParity logs its own total instead.)
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	store := prReportStore(t, "pr1")
 	for _, id := range []string{"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {

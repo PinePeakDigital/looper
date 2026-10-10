@@ -238,9 +238,12 @@ the same measurement.
 which discarded into `_`. The advice it gives cannot fix the other two, and on the
 author's machine `gh` has already failed with a keychain TLS error while `git push`
 worked. This port asks `gh pr list --head <branch>`, which exits 0 with empty output for
-"there are none" and non-zero only when gh itself failed, and reports four states
+"there are none" and non-zero only when gh itself failed, and reports five states
 distinctly: a PR was found, gh answered that there is none, gh could not be run at all,
-or gh ran and failed — carrying gh's own stderr in the last two. Every one of them still
+gh ran and failed, or there was no branch to ask about at all — a detached HEAD, an
+unborn branch, or a git that could not answer, in which case gh is never invoked and
+saying so is the whole point. gh's own stderr is carried for the two that are gh's, and
+git's for the one that is git's. Every one of them still
 keeps the body. Asserted by `TestThePostDiagnosisDivergence`, which also pins that the
 Python still conflates them.
 

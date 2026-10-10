@@ -133,8 +133,8 @@ func TestFindPRWithNoBranchToAskAbout(t *testing.T) {
 	// NoBranch, not GhFailed. This asserted GhFailed and so pinned the wrong answer: with gh
 	// never invoked — the very next assertion proves that — Note() read "gh ran and failed …
 	// Step 0c can flush it once gh works", which names a cause that was never checked and a
-	// remedy that cannot work. The two assertions contradicted each other and the suite was
-	// green for five review cycles.
+	// remedy that cannot work. The two assertions contradicted each other and the suite stayed
+	// green, which is the checkable part: restore `GhFailed` here and nothing else reddens.
 	if got.State != NoBranch {
 		t.Fatalf("state %v number %q detail %q, want NoBranch", got.State, got.Number, got.Detail)
 	}
@@ -651,12 +651,21 @@ func TestTheBranchesNothingReached(t *testing.T) {
 			t.Errorf("the detail does not name the signal, so this cannot tell a killed gh "+
 				"from one that never started: %+v", r)
 		}
-		// No elapsed-time assertion HERE, deliberately: it could not fail. A review proposed
-		// one, reasoning that `sleep` is a child of the shim's /bin/sh and would keep the
-		// pipes open past the kill. Measured, it does not — /bin/sh tail-execs a lone final
-		// command instead of forking, so there is no grandchild and this returns in 0.07s with
-		// cmd.WaitDelay removed. The drain bound is asserted by the next subtest, which has to
-		// background the sleep explicitly to produce a grandchild at all.
+		// No elapsed-time assertion HERE, but NOT for the reason first recorded. That comment
+		// claimed the proposal "could not fail" because /bin/sh tail-execs a lone final command,
+		// so `sleep 5` left no grandchild. That is FALSE: this platform's /bin/sh (bash 3.2)
+		// forks the last command of a script FILE — fork suppression is the `bash -c` path — and
+		// the sleep is reparented to PID 1 and keeps the pipes open. Measured at the commit
+		// before WaitDelay landed: budget 50ms returns in 50ms, budget 300ms in 300ms, budget 1s
+		// in 5.17s; over 20 runs at 50ms, 17 blew past a second. The 0.07s figure that was
+		// offered as the refutation had been measured WITH WaitDelay in place — the one
+		// configuration in which the assertion cannot fire. The reviewer who proposed it was
+		// right.
+		//
+		// It is omitted because at this budget it is a RACE the kill usually wins, and the
+		// sibling subtest below asserts the same property deterministically by backgrounding
+		// the sleep explicitly. A 17-in-20 assertion here would add flake for coverage that is
+		// already held.
 	})
 
 	t.Run("a grandchild holding the pipes cannot outlive the budget", func(t *testing.T) {
@@ -683,6 +692,31 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 		if !strings.Contains(r.Err, "outlived the drain bound") {
 			t.Errorf("the detail does not name the drain as the cause: %+v", r)
+		}
+	})
+
+	t.Run("a clean exit whose pipe is held is a SUCCESS, not a failure", func(t *testing.T) {
+		// WaitDelay bounds the drain even when the context never expired, so without an arm
+		// for this, adding it traded one defect for a worse one. Measured under the PRODUCTION
+		// 20s budget with a shim that prints "7", exits 0, and leaves `sleep 5 &` behind:
+		// before WaitDelay, Code=0 and the report was POSTED; after, Code=1 with Out="7"
+		// sitting right there, FindPR read GhFailed, and on the Post path a `gh pr comment`
+		// that had already landed read as failed and deferred — after which Step 0c posts a
+		// SECOND public disclosure. 19 of the 20 seconds were unused.
+		dir := t.TempDir()
+		shimGh(t, "sleep 5 &\nprintf '7\\n'")
+		r := shTimeout(dir, 20*time.Second, "gh", "pr", "list")
+		if r.Code != 0 {
+			t.Errorf("a child that exited 0 inside its budget reads as a failure, so a "+
+				"comment that landed is reported as failed and posted twice: %+v", r)
+		}
+		if r.Out != "7" {
+			t.Errorf("the output is not whole, so the drain bound truncated an answer the "+
+				"caller reads: %+v", r)
+		}
+		if got := FindPR(dir, "feature"); got.State != PRFound || got.Number != "7" {
+			t.Errorf("FindPR = %v/%q, want PRFound/\"7\" — the probe had the answer and "+
+				"threw it away", got.State, got.Number)
 		}
 	})
 

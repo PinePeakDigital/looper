@@ -51,8 +51,10 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	// background job. With WaitDelay zero, Wait blocks until every holder closes its end.
 	// Measured against a shim whose last line is `sleep 10 &`: a 300ms budget returned after
 	// 10.15s, and returned code 0 — a success verdict for a call that blew its deadline by 34x.
-	// The hung-subprocess subtest below could not see it either, because it asserted the error
-	// text and never the elapsed time; it does now.
+	// The hung-subprocess subtest cannot see it: it asserts the error text and not the elapsed
+	// time, and at its budget the kill usually wins the race against the shell's fork. The
+	// subtest after it asserts the bound deterministically, by backgrounding the sleep so a
+	// grandchild exists for certain.
 	//
 	// After the delay fires Wait reports exec.ErrWaitDelay when the child itself exited
 	// cleanly — measured, NOT an ExitError, so it lands in the default arm and reads as
@@ -67,6 +69,25 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	r := result{Runnable: true, Out: strings.TrimSpace(out.String()), Err: strings.TrimSpace(errOut.String())}
 	switch {
 	case err == nil:
+		return r
+	// The child exited CLEANLY inside its budget and only the DRAIN timed out. That is a
+	// SUCCESS whose output is whole, not a failure: gh had already written and exited, so
+	// everything it produced is in `Out` (measured: 8 MiB survives intact), and the only thing
+	// still holding the pipe is a descendant we do not care about.
+	//
+	// Without this arm, adding WaitDelay traded one defect for a worse one. Measured: a shim
+	// that prints "7", exits 0, and leaves `sleep 5 &` behind, under the PRODUCTION 20s budget
+	// — before WaitDelay it returned `Code=0 Out="7"` and the report was posted; after, it
+	// returned `Code=1` with `Out="7"` sitting right there, FindPR read GhFailed, and on the
+	// Post path a `gh pr comment` that had already landed read as failed, deferred, and Step
+	// 0c then posted a SECOND public disclosure. 19 of the 20 seconds were unused.
+	//
+	// `ctx.Err() == nil` is what distinguishes it from the kill: if our own deadline fired, the
+	// child was signalled and Wait reports an ExitError, which the default arm handles.
+	case ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) &&
+		!errors.As(err, new(*exec.ExitError)):
+		r.Err = "note: the subprocess exited cleanly but a descendant held its output pipe " +
+			"past the drain bound (" + err.Error() + "); the output above is complete"
 		return r
 	// OUR OWN budget cancelled the probe before the fork. `Start` checks the context after
 	// LookPath and returns `ctx.Err()`, which is not an ExitError, so without this arm it fell
@@ -179,8 +200,7 @@ const (
 	// it once gh works" for a gh that was never invoked and a condition no amount of gh
 	// working will fix — the operator has to check out a branch or pass -branch. That is this
 	// file's own defect class, inside the file written to remove it, and the test for the path
-	// asserted GhFailed, so it pinned the wrong answer. Reported by a PR bot after five review
-	// cycles and a security review had all walked past it.
+	// asserted GhFailed, so it pinned the wrong answer.
 	NoBranch
 )
 

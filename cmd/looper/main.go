@@ -253,7 +253,8 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	// constrain `run_id`, so a store row can carry one and this flag can name it.
 	//
 	// Refused HERE and not inside Render, for two reasons. Render stays pure, so the 89
-	// fixture cases and the 42 real runs still compare byte for byte against the oracle. And
+	// fixture cases and every run in the author's live store still compare byte for byte
+	// against the oracle. And
 	// cell()ing the id instead would rewrite the MARKER, which push.Fingerprint matches
 	// exactly — hardening one gate by breaking the other. push.ValidRunID refuses the same
 	// strings, so a run id this rejects could never have cleared the push gate anyway.
