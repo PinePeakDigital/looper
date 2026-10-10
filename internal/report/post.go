@@ -126,6 +126,20 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 				r.Code = code
 			}
 		}
+		// The DRAIN cause has to be stated even when gh wrote to stderr, or the guard below
+		// lets gh's own words stand as the cause of a failure they had nothing to do with.
+		// Adding cmd.WaitDelay made this arm reachable for a call that otherwise SUCCEEDED, so
+		// a deprecation warning on a working `gh pr comment` rendered as "gh ran and failed
+		// (warning: ...) — Step 0c can flush it once gh works": a cause nothing checked, the
+		// very class this file exists to remove, introduced by the fix for the budget. The
+		// drain reason goes first and gh's stderr is labelled as possibly unrelated.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			drain := "the subprocess outlived the drain bound (" + err.Error() + ")"
+			if r.Err != "" {
+				drain += "; gh's own stderr, which may be unrelated: " + r.Err
+			}
+			r.Err = drain
+		}
 		if r.Err == "" {
 			r.Err = err.Error()
 		}

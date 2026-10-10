@@ -681,6 +681,30 @@ func TestTheBranchesNothingReached(t *testing.T) {
 			t.Errorf("an undrainable call reads as SUCCESS, so a caller testing Code != 0 "+
 				"treats a blown deadline as an answer: %+v", r)
 		}
+		if !strings.Contains(r.Err, "outlived the drain bound") {
+			t.Errorf("the detail does not name the drain as the cause: %+v", r)
+		}
+	})
+
+	t.Run("a drain failure does not let gh's stderr stand as the cause", func(t *testing.T) {
+		// Adding cmd.WaitDelay made this arm reachable for a call that SUCCEEDED, and the
+		// `if r.Err == ""` guard then let whatever gh wrote to stderr be the asserted cause:
+		// a benign warning on a working call rendered as "gh ran and failed (warning: ...) —
+		// Step 0c can flush it once gh works". A cause nothing checked, introduced by the fix
+		// for the budget, in the file written to remove that class.
+		dir := t.TempDir()
+		shimGh(t, "echo 'warning: this is unrelated' >&2\nsleep 30 &")
+		r := shTimeout(dir, 300*time.Millisecond, "gh", "pr", "list")
+		if !strings.Contains(r.Err, "outlived the drain bound") {
+			t.Errorf("the drain cause is missing, so gh's stderr is the asserted cause: %+v", r)
+		}
+		if !strings.Contains(r.Err, "may be unrelated") {
+			t.Errorf("gh's stderr is carried without saying it may be unrelated: %+v", r)
+		}
+		if !strings.Contains(r.Err, "warning: this is unrelated") {
+			t.Errorf("gh's stderr was dropped entirely, which loses the one stream that "+
+				"says what gh thought: %+v", r)
+		}
 	})
 }
 

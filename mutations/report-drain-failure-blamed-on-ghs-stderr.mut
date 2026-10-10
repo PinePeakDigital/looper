@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_drain'
+expect: --- FAIL:
+why:    adding cmd.WaitDelay made the default arm reachable for a call that otherwise SUCCEEDED, and the `if r.Err == ""` guard below then let whatever gh wrote to stderr stand as the asserted cause. Measured: a shim that prints "warning: this is unrelated" to stderr and leaves a grandchild holding the pipes produced Note() = "gh ran and failed (warning: this is unrelated) — Step 0c can flush it once gh works", which names a cause nothing checked, blames gh for the drain bound, and advises waiting for gh when nothing is wrong with gh. On `gh pr comment` that path posts a comment, reads it as failed, defers, and Step 0c then posts a SECOND public disclosure. The class this file exists to remove, introduced by the fix for the budget one commit earlier.
+--- old
+		if errors.Is(err, exec.ErrWaitDelay) {
+--- new
+		if errors.Is(err, exec.ErrWaitDelay) && false {
