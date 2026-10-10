@@ -1,0 +1,9 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the consumer half of the same defect. record.Escalation records which elements were `null`; the renderer has to skip them while still counting them toward whether the section appears, which is the Python's two steps — `if esc:` on the raw list, then `isinstance(e, dict)` per entry. Skip the skip and the fabricated bullet is back even though the boundary knows better, which is the shape a symmetric guard takes when only one side is checked.
+--- old
+			if e.IsNull() {
+				continue
+			}
+--- new

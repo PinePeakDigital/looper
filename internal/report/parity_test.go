@@ -246,6 +246,13 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"escalations":[{"reason":"nameless"}]`)}},
 		{"an escalation with a null gate", []string{plan(""),
 			finishRow(`,"escalations":[{"gate":null,"reason":"nulled"}]`)}},
+		// `null` decodes into a struct WITHOUT error, the same trap the roster had one list
+		// over. record.Escalations drops it at the decode, where the Python's
+		// `isinstance(e, dict)` effectively sits.
+		{"an escalation list with a null entry", []string{plan(""),
+			finishRow(`,"escalations":[{"gate":"a","reason":"b"},null]`)}},
+		{"an escalation list of nothing but null", []string{plan(""),
+			finishRow(`,"escalations":[null]`)}},
 		{"an escalation with no reason", []string{plan(""),
 			finishRow(`,"escalations":[{"gate":"evidence"}]`)}},
 		{"an escalation reason with a newline", []string{plan(""),
@@ -278,6 +285,14 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":false,"findings":1}]`)}},
 		{"a roster entry with a decimal findings count", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":1.5}]`)}},
+		// An empty container is FALSY in Python — `[] or ""` is "" — which is a presence
+		// divergence, not the punctuation one the enumerated list covers.
+		{"a roster findings count that is an empty list", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[]}]`)}},
+		{"a roster findings count that is an empty object", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":{}}]`)}},
+		{"a roster status that is an empty object", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":{},"findings":1}]`)}},
 		{"a roster entry with a string findings count", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":"many"}]`)}},
 		// `null` decodes into a struct WITHOUT error, so it slipped past the error check and
@@ -722,14 +737,15 @@ func TestRealStoreParity(t *testing.T) {
 // are gaps this port could not close; these are holes it closed ON PURPOSE, and the direction
 // matters — a reader comparing the two should see which way each divergence runs.
 //
-// Found by the security review at Stage-2 confidence 9, reported as three findings that are one
-// defect: of the four values on the gate row, two already went through cell() and two did not,
-// and the same inconsistency ran through the summary line and the escalation bullet. cell() is
-// in this file precisely because "a newline in a reason FORGES document structure", and the
-// report is posted to a PUBLIC PR comment that a human reads to decide whether the review
-// passed. Measured before the fix: a record with forged newlines in the gate name, `planned`,
-// `outcome`, `tier_executed`, `tier_floor` and an escalation gate rendered FIVE forged
-// blockquotes, byte-identically in both implementations.
+// The shape, which is what made it worth diverging over: of the four values on the gate row,
+// two already went through cell() and two did not, and the same inconsistency ran through the
+// summary line and the escalation bullet. cell() is in this file precisely because "a newline
+// in a reason FORGES document structure", and the report is posted to a PUBLIC PR comment that
+// a human reads to decide whether the review passed. Measured before the fix: one record with
+// forged newlines in the gate name, `planned`, `outcome`, `tier_executed`, `tier_floor` and an
+// escalation gate rendered SIX forged blockquote lines — one per field — byte-identically in
+// both implementations. Reproduce by counting lines starting "> **Review converged" in the
+// oracle's output for such a record.
 //
 // What it does not buy, stated so the severity is not overread: push-check requires the marker
 // and the `N cycle(s) · M agent(s)` fingerprint, and a forged blockquote changes neither and

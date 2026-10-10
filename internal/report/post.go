@@ -52,7 +52,14 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	switch {
 	case err == nil:
 		return r
-	case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission):
+	// Anything that is not an ExitError never STARTED. Enumerating sentinels — ErrNotFound,
+	// ErrNotExist, ErrPermission — missed the binary that exists, is executable, and is the
+	// wrong format: measured, a chmod +x text file gives a *fs.PathError ("exec format
+	// error") matching none of the three and not an ExitError either, so it fell to the
+	// default and reported "gh ran and failed" for a gh that never ran. That is the wrong
+	// remedy twice over — it tells the operator to wait for GitHub when the fix is to
+	// reinstall. Wait can only report an ExitError, so the inverse test is the complete one.
+	case !errors.As(err, new(*exec.ExitError)):
 		r.Runnable, r.Code = false, 127
 		if r.Err == "" {
 			r.Err = err.Error()
@@ -223,7 +230,7 @@ func Post(p PostParams) (pending string, err error) {
 		// about labelling depends on the comment having landed: it is a separate `gh pr edit`
 		// against a PR this probe already found. Returning here instead dropped the
 		// at-a-glance signal for exactly the runs whose report is hardest to find — the ones
-		// whose comment failed. Three agents in separate contexts found this independently.
+		// whose comment failed.
 		if p.Label {
 			applyLabel(p, probe.Number, diag)
 		}

@@ -296,8 +296,7 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 }
 
 // readNarrative resolves the narrative the same way the Python does: a named file, else stdin
-// when stdin is not a terminal. The tty test is what keeps an interactive `looper pr-report`
-// from hanging on a read nobody is going to feed.
+// when stdin is not a terminal.
 func readNarrative(path string, in io.Reader) (string, error) {
 	if path != "" && path != "-" {
 		b, err := os.ReadFile(path)
@@ -306,15 +305,35 @@ func readNarrative(path string, in io.Reader) (string, error) {
 		}
 		return string(b), nil
 	}
-	if f, ok := in.(*os.File); ok {
-		st, err := f.Stat()
-		if err != nil || st.Mode()&os.ModeCharDevice != 0 {
-			return "", nil
-		}
+	if !shouldReadStdin(in) {
+		return "", nil
 	}
 	b, err := io.ReadAll(in)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// shouldReadStdin is the tty test, split out as its own function so it can be ASSERTED.
+// Folded into readNarrative it could not be: the only observable difference between taking the
+// branch and not taking it is whether a read happens, and the obvious fixture — /dev/null —
+// returns the empty string either way, so a test of readNarrative's RESULT passed identically
+// with the whole guard deleted. Measured in cycle 2 of this slice's own review, on a test
+// written in cycle 1 to close exactly that class of defect.
+//
+// What the guard is for: an interactive `looper pr-report` must not block on a read nobody is
+// going to feed. A character device is a terminal (or /dev/null, or /dev/zero, which would
+// never EOF at all); anything that is not an *os.File — a pipe, a strings.Reader — is
+// something a caller deliberately handed us.
+func shouldReadStdin(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return true
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return false // cannot tell, so do not risk hanging
+	}
+	return st.Mode()&os.ModeCharDevice == 0
 }

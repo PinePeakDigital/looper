@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    an empty container is FALSY in Python, so `[] or ""` and `{} or ""` are both "", and the report renders nothing. This is a PRESENCE divergence rather than the punctuation one the enumerated list already covers for non-empty containers: measured against the oracle, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here, and `"status": {}` the same. Found in cycle 2, in the function cycle 1 had just rewritten to test falsiness by VALUE rather than by spelling — the rewrite closed the numeric spellings and left the container ones, which is the same defect one type over.
+--- old
+	case "false", "null", `""`, "[]", "{}":
+--- new
+	case "false", "null", `""`:

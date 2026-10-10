@@ -81,7 +81,12 @@ func cell(s string) string {
 func cellJSON(b []byte) string {
 	t := strings.TrimSpace(string(b))
 	switch t {
-	case "false", "null", `""`:
+	// An empty container is falsy in Python too — `[] or ""` and `{} or ""` are both "" —
+	// which is a PRESENCE divergence, not the punctuation one the comment above enumerates:
+	// measured, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here.
+	// Matched by exact spelling like the other literals, which is sound because these come
+	// from json.RawMessage and encoding/json emits no internal whitespace in one it wrote.
+	case "false", "null", `""`, "[]", "{}":
 		return ""
 	case "true":
 		return "True" // str(True), not JSON's spelling
@@ -249,7 +254,14 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 
 	if r.Finish != nil && len(r.Finish.Escalations) > 0 {
 		add("### Escalated above the plan", "")
+		// The section is gated on the raw count above and the bullets are filtered here,
+		// which is the Python's two steps: `if esc:` on the list, then `isinstance(e, dict)`
+		// per entry. So a list of nothing but nulls emits a heading and no bullets, the same
+		// way the roster does.
 		for _, e := range r.Finish.Escalations {
+			if e.IsNull() {
+				continue
+			}
 			gate := "None" // interpolated raw by the Python; absent and null both print this
 			if e.Gate != nil {
 				gate = *e.Gate
@@ -360,6 +372,13 @@ func rosterLen(r *record.Run) int {
 }
 
 func decodeRoster(r *record.Run) []agentEntry {
+	// DEFENSIVE AND UNTESTABLE FROM HERE, labelled per this repo's convention rather than
+	// deleted. rosterLen gates the only call site and asks the same two questions first, so
+	// since it was added no test can tell these two checks present from absent — measured by
+	// deleting both and watching the whole package stay green, including the parity tables.
+	// They stay because they are what makes this function safe to call on its own, and
+	// without the first one a caller that skipped the gate gets a nil dereference rather
+	// than an empty roster. Do not read their coverage as a gap to chase.
 	if r.Finish == nil || len(r.Finish.Agents) == 0 {
 		return nil
 	}
@@ -393,8 +412,9 @@ func decodeRoster(r *record.Run) []agentEntry {
 // The obvious expression form is `if n < 0 { return "-" + commas(-n) }` over a recursive
 // tail — review proposed exactly that — and it RECURSES FOREVER on math.MinInt, because
 // -MinInt is MinInt in two's complement. Reproduced: `go run` on the recursive version dies
-// with "stack overflow" at -9223372036854775808 while agreeing with this one on all fifteen
-// other values tested, 0 and -0 and 999 and 1000 included. Formatting the number FIRST and
+// with "stack overflow" at -9223372036854775808, and agreed with this one on every other value
+// tried. The seven that are checkable from the tree are the table in TestTheBranchesNothingReached
+// ("commas carries a sign"), which includes MinInt. Formatting the number FIRST and
 // stripping the sign off the text has no such value. The style default's own carve-out
 // covers this: take the option that is correct on the edge cases.
 func commas(n int) string {

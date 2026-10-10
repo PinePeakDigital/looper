@@ -14,6 +14,7 @@ package record
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -153,7 +154,41 @@ type Escalation struct {
 	// same thing here, and the Python prints "None" for both.
 	Gate   *string `json:"gate"`
 	Reason string  `json:"reason"`
+	// isNull marks an element that was the literal `null`. Kept rather than dropped because
+	// the Python decides the SECTION and the BULLETS separately — `if esc:` on the raw list,
+	// then `if isinstance(e, dict)` per entry — so a list of nothing but nulls emits a heading
+	// with no bullets under it. Dropping nulls at the decode loses the raw count and the
+	// heading with it, measured; the roster needed the same split for the same reason.
+	isNull bool
 }
+
+// UnmarshalJSON records a `null` element instead of silently accepting it as a zero value.
+//
+// encoding/json leaves a non-pointer destination untouched for `null` — but it DOES call
+// UnmarshalJSON when the type implements Unmarshaler, including for null, which is what makes
+// this possible. Without it, `"escalations":[null]` decoded to a zero-value Escalation and the
+// report rendered a fabricated "- `None` — " bullet for an escalation nobody recorded. The
+// exact trap decodeRoster was fixed for one list over, missed there because the roster was the
+// list that had been reported: every sibling of a guarded thing needs looking at.
+//
+// A non-null, non-object element is still a decode ERROR, unchanged — an enumerated divergence.
+func (e *Escalation) UnmarshalJSON(b []byte) error {
+	if string(bytes.TrimSpace(b)) == "null" {
+		e.isNull = true
+		return nil
+	}
+	type plain Escalation // sheds the method, so this does not recurse
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*e = Escalation(p)
+	return nil
+}
+
+// IsNull reports whether this element was the literal `null`, which the report must skip while
+// still counting it toward whether the section appears.
+func (e Escalation) IsNull() bool { return e.isNull }
 
 // Finish is the terminal row. Agents stays raw because `--agents` is a bare json.loads with
 // no shape validation and the store holds 27 lists and 1 object for it (measured 2026-10-09

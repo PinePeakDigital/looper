@@ -636,10 +636,12 @@ func TestTheNarrativeReadsARealFile(t *testing.T) {
 		}
 	})
 
-	t.Run("a character device is not read at all", func(t *testing.T) {
-		// The branch the comment exists for: an interactive run must not block on a read
-		// nobody will feed. /dev/null is a character device, so it takes the same path a
-		// terminal does without needing one.
+	// The DECISION, not the result. Asserting readNarrative's return value for /dev/null
+	// could not fail: reading /dev/null yields "" too, so the subtest passed with the entire
+	// guard deleted — the same vacuous-assertion class cycle 1 had just fixed elsewhere,
+	// reproduced by a cycle-2 agent that removed the guard and watched this stay green.
+	// shouldReadStdin exists so the branch itself is observable.
+	t.Run("stdin is not read when it is a character device", func(t *testing.T) {
 		f, err := os.Open(os.DevNull)
 		if err != nil {
 			t.Fatal(err)
@@ -652,12 +654,24 @@ func TestTheNarrativeReadsARealFile(t *testing.T) {
 		if st.Mode()&os.ModeCharDevice == 0 {
 			t.Skipf("%s is not a character device on this platform", os.DevNull)
 		}
-		got, err := readNarrative("", f)
+		if shouldReadStdin(f) {
+			t.Error("a character device would be read, so an interactive run can hang on a " +
+				"read nobody is going to feed")
+		}
+	})
+
+	t.Run("stdin IS read when it is a pipe or a plain reader", func(t *testing.T) {
+		rd, wr, err := os.Pipe()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != "" {
-			t.Errorf("a character device was read: %q", got)
+		defer rd.Close()
+		defer wr.Close()
+		if !shouldReadStdin(rd) {
+			t.Error("a pipe would not be read, so a piped-in narrative is silently dropped")
+		}
+		if !shouldReadStdin(strings.NewReader("x")) {
+			t.Error("a non-*os.File would not be read, so the skill's own callers are ignored")
 		}
 	})
 }

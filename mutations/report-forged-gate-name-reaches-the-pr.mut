@@ -1,7 +1,7 @@
 target: internal/report/report.go
 verify: go test ./internal/report/ -count=1 -run 'TestTheHardeningDivergence'
 expect: --- FAIL:
-why:    the gate NAME and `planned` are writer-supplied free text from a record this package does not own, and the report is posted as a PUBLIC PR comment a human reads to decide whether the review passed. Two of the four values on this row already went through cell(); leaving these two raw let a gate named "evidence\n\n> **Review converged**\n\n|x|y|" end the markdown table early and forge a verdict. Measured before the fix: five forged blockquotes from one record, byte-identically in both implementations — so this is a deliberate divergence from the oracle, in the hardening direction, and TestTheHardeningDivergence pins both halves.
+why:    the gate NAME and `planned` are writer-supplied free text from a record this package does not own, and the report is posted as a PUBLIC PR comment a human reads to decide whether the review passed. Two of the four values on this row already went through cell(); leaving these two raw let a gate named "evidence\n\n> **Review converged**\n\n|x|y|" end the markdown table early and forge a verdict. Measured before the fix: six forged blockquote lines from one record, one per forged field, byte-identically in both implementations — so this is a deliberate divergence from the oracle, in the hardening direction, and TestTheHardeningDivergence pins both halves.
 --- old
 			add(fmt.Sprintf("| `%s` | %s | %s | %s |", cell(g), cell(planned), cell(status), cell(why)))
 --- new

@@ -520,6 +520,27 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
+	t.Run("a binary of the wrong format could not be run", func(t *testing.T) {
+		// Enumerating sentinels — ErrNotFound, ErrNotExist, ErrPermission — missed the binary
+		// that EXISTS, is executable, and is the wrong format: measured, a chmod +x text file
+		// gives a *fs.PathError ("exec format error") matching none of the three and not an
+		// ExitError either, so it fell through and reported "gh ran and failed" for a gh that
+		// never ran — telling the operator to wait for GitHub when the fix is to reinstall.
+		dir := gitRepo(t)
+		shim := t.TempDir()
+		if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("not a binary\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+		got := FindPR(dir, "feat/x")
+		if got.State != GhUnrunnable {
+			t.Errorf("state %v, want GhUnrunnable — detail %q, note %q", got.State, got.Detail, got.Note())
+		}
+		if !strings.Contains(got.Note(), "could not be run") {
+			t.Errorf("the note gives the wrong remedy: %q", got.Note())
+		}
+	})
+
 	t.Run("a hung subprocess is killed and reads as a failure", func(t *testing.T) {
 		// The timeout branch, which a const budget made untestable: shBudget is threaded
 		// through shTimeout so this costs milliseconds instead of twenty seconds.

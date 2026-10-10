@@ -1,9 +1,8 @@
 target: internal/report/report.go
 verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
 expect: --- FAIL:
-why:    `null` decodes into a struct WITHOUT error — encoding/json's documented rule that null has no effect on a non-pointer target — so it slipped past the error check and became a zero-value entry. Measured: `"agents":[{...},null]` rendered a second, fabricated bullet reading "- `` (?) — , ? finding(s)" that the Python does not emit, where `isinstance(a, dict)` is False for None. A fabricated roster row reads as an extra agent having run, which is the gate-weakening direction: the roster is the evidence of what was actually spawned.
+why:    `null` decodes into a struct WITHOUT error — encoding/json's documented rule that null has no effect on a non-pointer target — so it slipped past the error check and became a zero-value entry. Measured: `"agents":[{...},null]` rendered a second, fabricated bullet reading "- `` (?) — , ? finding(s)" that the Python does not emit, where `isinstance(a, dict)` is False for None. A fabricated roster row reads as an extra agent having run, which is the gate-weakening direction: the roster is the evidence of what was actually spawned. The condition is DISABLED rather than the block deleted, because `bytes` is imported for this one call and a deletion leaves the import unused — a mutation that does not compile scores broken and tests nothing, which is how the first version of this entry failed. Same idiom, same reason, as push-diag-never-written.
 --- old
 		if string(bytes.TrimSpace(e)) == "null" {
-			continue // `isinstance(a, dict)` is False for None there
-		}
 --- new
+		if string(bytes.TrimSpace(e)) == "null" && false {
