@@ -247,10 +247,17 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 			"that row, and there is no sensible default run to render")
 	}
 	// A DELIBERATE DIVERGENCE, in the hardening direction: the Python interpolates the run id
-	// raw into both the marker and the summary line, so a newline in it forges markdown in a
-	// PUBLIC PR comment — the marker `<!-- review-loop:run=%s -->` can be closed early and a
-	// blockquote contradicting the disclosure written under it. `record.Load` does not
-	// constrain `run_id`, so a store row can carry one and this flag can name it.
+	// raw into both the marker and the summary line of a PUBLIC PR comment, and `record.Load`
+	// does not constrain `run_id`, so a store row can carry anything and this flag can name it.
+	// The forgery: a `-->` in the id closes the marker early and renders
+	// whatever follows as VISIBLE markdown. Measured against the oracle with `run_id` =
+	// "a-->\n\n> **Review converged — nothing outstanding**": the comment ends after `a` and a
+	// forged blockquote saying the review converged renders directly above the real disclosure,
+	// which says UNKNOWN. A plain newline is milder than first recorded — measured, `a\nb`
+	// splits the marker across two lines but swallows NOTHING, and push.Fingerprint's needle is
+	// built by Sprintf from the same raw id so it still matches. Both earlier claims here
+	// ("swallowing the first line of the body", "the needle is gone") were consequences nobody
+	// measured; the `-->` case is the one that justifies the guard.
 	//
 	// Refused HERE and not inside Render, for two reasons. Render stays pure, so the 89
 	// fixture cases and every run in the author's live store still compare byte for byte

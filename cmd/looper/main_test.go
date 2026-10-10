@@ -400,10 +400,18 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 func prReportStore(t *testing.T, id string) string {
 	t.Helper()
 	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	// The id is JSON-ENCODED, not concatenated: the forging ids this store has to carry include
+	// a literal newline and a CR, which would otherwise tear the JSONL row and make every such
+	// fixture test an unreadable store rather than the shape it names.
+	enc, err := json.Marshal(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := string(enc)
 	rows := []string{
-		`{"run_id":"` + id + `","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","gates":{"evidence":{"planned":"run"}}}`,
-		`{"run_id":"` + id + `","phase":"cycle","n":1,"applied":3,"agents":9}`,
-		`{"run_id":"` + id + `","phase":"finish","outcome":"cycle-limit","executed":{"evidence":{"status":"done"}}}`,
+		`{"run_id":` + q + `,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","gates":{"evidence":{"planned":"run"}}}`,
+		`{"run_id":` + q + `,"phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":` + q + `,"phase":"finish","outcome":"cycle-limit","executed":{"evidence":{"status":"done"}}}`,
 	}
 	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -513,15 +521,24 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 
 // A DELIBERATE DIVERGENCE from pr-report.py, in the hardening direction. The Python
 // interpolates the run id RAW into the marker and the summary line, so a newline in it forges
-// markdown in a public PR comment. Measured against the oracle with `run_id` = "a\nb": it
-// emits
+// markdown in a public PR comment. The case that justifies the guard is a `-->` in the id,
+// which closes the marker early and renders whatever follows as VISIBLE markdown. Measured
+// against the oracle with `run_id` = "a-->\n\n> **Review converged — nothing outstanding**":
 //
-//	<!-- review-loop:run=a
-//	b -->
+//	<!-- review-loop:run=a-->
 //
-// so the HTML comment closes on the SECOND line, swallowing the first line of the body with
-// it, and the needle push.Fingerprint matches exactly is gone. `record.Load` places no
-// constraint on `run_id`, so a store row can carry one and -run-id can name it.
+//	> **Review converged — nothing outstanding** -->
+//
+//	## review-loop
+//
+//	> **Review completeness UNKNOWN: ...**
+//
+// A forged blockquote saying the review converged, rendered directly above the real disclosure
+// saying UNKNOWN. A plain newline is milder than first recorded here: measured, `a\nb` splits
+// the marker across two lines but swallows NOTHING of the body, and push.Fingerprint's needle
+// is built by Sprintf from the same raw id, so it still matches. Both of those were asserted
+// without measurement. `record.Load` places no constraint on `run_id`, so a store row can
+// carry any of this and -run-id can name it.
 //
 // Refused at the command rather than cell()ed in Render: cell() would rewrite the marker that
 // the push gate matches, hardening one gate by breaking the other, and Render has to stay
@@ -529,9 +546,17 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 // store. (No count here on purpose: that number grows every time the loop runs — it was 42
 // when first written and is 44 now — so TestRealStoreParity logs its own total instead.)
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
-	store := prReportStore(t, "pr1")
 	for _, id := range []string{"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
+			// The store CARRIES the forging id, which is the whole point and was the hole in
+			// the first version of this test: with a store holding only "pr1", every case fell
+			// through to the pre-existing "no readable record" refusal, so two of the three
+			// assertions below could never fire and the test passed without the guard ever
+			// being what produced the non-zero exit. Measured on a store that does carry it,
+			// with the guard disabled: exit 0 and a rendered body whose marker is split across
+			// two lines. The threat this test names is "a store row can carry one and -run-id
+			// can name it", so the fixture has to be that row.
+			store := prReportStore(t, id)
 			code, out, errOut := doRun(t, "pr-report", "-run-id", id, "-store", store)
 			if code == 0 {
 				t.Errorf("exit 0 for a run id that reaches a public comment raw:\n%s", out)

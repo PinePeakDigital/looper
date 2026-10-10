@@ -669,17 +669,27 @@ func TestTheBranchesNothingReached(t *testing.T) {
 	})
 
 	t.Run("a grandchild holding the pipes cannot outlive the budget", func(t *testing.T) {
-		// The case `sleep 5` above cannot reach, and the `&` is what makes the difference:
-		// /bin/sh tail-execs a lone final command, so `sleep 5` BECOMES the shim and dies with
-		// it, while `sleep 30 &` forks a real grandchild that inherits stdout and outlives its
-		// parent. The context then has nothing left to kill, so with WaitDelay unset Wait
-		// simply waits for the grandchild. Measured before the fix: a
-		// 300ms budget returned after 10.15s AND with code 0 — a SUCCESS verdict for a call
-		// that blew its deadline by 34x, which is worse than a slow failure because every
-		// caller here tests `Code != 0`. This is the shape a real gh produces too, via a
-		// credential helper or a git subprocess it leaves running.
+		// What the `sleep 5` case above cannot reach: `&` forks a real grandchild that inherits
+		// stdout and outlives its parent, so the context has nothing left to kill and with
+		// WaitDelay unset Wait simply waits for it. Measured before the fix on THIS fixture:
+		// 30.15-30.30s against a 300ms budget — ~100x — and with code 0, a SUCCESS verdict,
+		// which is worse than a slow failure because every caller here tests `Code != 0`. (An
+		// earlier version of this comment carried the 10.15s/34x figure from the `sleep 10 &`
+		// probe in post.go, which is a different fixture. Numbers travel; measurements do not.)
+		// This is the shape a real gh produces via a credential helper or a git subprocess it
+		// leaves running.
+		//
+		// The shim is WARMED first, and that is load-bearing. Without it this subtest let the
+		// defect through ~29% of the time (4 survivals in 14 runs): the FIRST exec of a freshly
+		// written script on this machine costs 124-268ms against 4ms for a repeat, so a 300ms
+		// budget races shim startup, and when startup loses the shim is killed before `&` ever
+		// forks — no grandchild, no defect, green. That is exactly the hazard the subtest above
+		// documents ("a budget the fork comfortably wins is the deterministic fixture"), and
+		// 300ms does not comfortably win 268ms. The warm-up pays the first-exec cost outside
+		// the timed call instead of raising the budget, so the assertion stays tight.
 		dir := t.TempDir()
 		shimGh(t, "sleep 30 &")
+		_ = exec.Command("gh", "--warm").Run()
 		start := time.Now()
 		r := shTimeout(dir, 300*time.Millisecond, "gh", "pr", "list")
 		if elapsed := time.Since(start); elapsed > 3*time.Second {
