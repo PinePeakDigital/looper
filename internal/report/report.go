@@ -67,6 +67,25 @@ func cell(s string) string {
 	return strings.ReplaceAll(strings.Join(strings.Fields(s), " "), "|", `\|`)
 }
 
+// isEmptyContainer reports whether a raw value is an empty JSON array or object. The
+// leading-byte test is what keeps a plain string or number out of the two Unmarshal calls, and
+// a value that fails to decode answers false — cellJSON renders its text either way, so the
+// only thing a decode failure can cost is this one shortcut.
+func isEmptyContainer(b []byte, trimmed string) bool {
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed[0] {
+	case '[':
+		var a []json.RawMessage
+		return json.Unmarshal(b, &a) == nil && len(a) == 0
+	case '{':
+		var m map[string]json.RawMessage
+		return json.Unmarshal(b, &m) == nil && len(m) == 0
+	}
+	return false
+}
+
 // cellJSON is cell() over a raw JSON scalar, reproducing the Python's `str(text or "")` —
 // which is FALSINESS, not emptiness. `cell(0)` is "" there, because `0 or ""` is "", and the
 // store's roster really does carry `findings: 0`: it renders as "ok,  finding(s)" with the
@@ -84,23 +103,25 @@ func cell(s string) string {
 // trade record.GateStatus names and refuses.
 func cellJSON(b []byte) string {
 	t := strings.TrimSpace(string(b))
-	// COMPACTED before the switch, so what follows tests the value and not the punctuation.
-	// A json.RawMessage holds the WRITER's bytes verbatim — it is populated by Unmarshal
-	// copying the input subslice, not emitted by encoding/json — so internal whitespace
-	// survives: measured, `{"findings": [ ], "status": {\t}}` decodes to `"[ ]"` and
-	// `"{\t}"`, and TrimSpace only strips the outside. Matching an empty container by
-	// spelling was therefore bypassable with one space, which is the same spelling-instead-of
-	// -value error the zero-number case below was already fixed for. Compact leaves string
-	// contents alone, so it cannot change what a quoted value renders as.
-	var flat bytes.Buffer
-	if json.Compact(&flat, b) == nil {
-		t = flat.String()
+	// An empty container is falsy in Python too — `[] or ""` and `{} or ""` are both "" — which
+	// is a PRESENCE divergence, not the punctuation one the enumerated list covers for non-empty
+	// containers: measured, `"findings": []` renders "ok,  finding(s)" there and
+	// "ok, [] finding(s)" here.
+	//
+	// Decoded, not matched against a spelling, and deliberately WITHOUT rewriting `t`. A
+	// json.RawMessage holds the WRITER's bytes verbatim — Unmarshal copies the input subslice
+	// rather than re-emitting it — so `{"findings": [ ], "status": {\t}}` decodes to `"[ ]"` and
+	// `"{\t}"` and TrimSpace only strips the outside; a spelling match was bypassable with one
+	// space. The first attempt at this ran json.Compact over `t` and was a net wash: it fixed
+	// the three whitespace spellings and BROKE three that had agreed, because Python's `str()`
+	// normalises a container to `, ` and `: ` while Compact normalises to neither — measured,
+	// `[1, 2]` agreed before and rendered `[1,2]` after. Testing emptiness and leaving every
+	// other value's bytes alone is what makes this a test of the value.
+	if isEmptyContainer(b, t) {
+		return ""
 	}
 	switch t {
-	// An empty container is falsy in Python too — `[] or ""` and `{} or ""` are both "" —
-	// which is a PRESENCE divergence, not the punctuation one the comment above enumerates:
-	// measured, `"findings": []` renders "ok,  finding(s)" there and "ok, [] finding(s)" here.
-	case "false", "null", `""`, "[]", "{}":
+	case "false", "null", `""`:
 		return ""
 	case "true":
 		return "True" // str(True), not JSON's spelling

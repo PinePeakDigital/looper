@@ -52,16 +52,20 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	switch {
 	case err == nil:
 		return r
-	// OUR OWN budget ran out. Asked first because it is the one cause that is true whichever
-	// side of the fork it lands on: `Start` checks the context BEFORE forking and returns
-	// `ctx.Err()`, while a kill after the fork surfaces as an ExitError carrying "signal:
-	// killed". Measured — budget 1ns gives `context deadline exceeded`, a
-	// context.deadlineExceededError and not an ExitError; budget 1ms gives `signal: killed`,
-	// which is one. Without this arm the pre-fork half fell to the "never started" test below
-	// and answered "install gh" for a gh the caller's own deadline cancelled, which is the
-	// advice the default arm's comment says must never be given for a gh that was killed. It
-	// also made the 1ms test below depend on winning a race against LookPath plus fork.
-	case ctx.Err() != nil:
+	// OUR OWN budget cancelled the probe before the fork. `Start` checks the context after
+	// LookPath and returns `ctx.Err()`, which is not an ExitError, so without this arm it fell
+	// to the "never started" test below and answered "install gh" for a gh the caller's own
+	// deadline cancelled — the advice the default arm's comment says must never be given for a
+	// gh that was killed. Measured: budget 1ns gives `context deadline exceeded`; budget 1ms
+	// gives `signal: killed`, an ExitError, which the default arm already handles.
+	//
+	// The test is on the ERROR's identity and NOT on `ctx.Err() != nil`, which was the first
+	// attempt and asked the clock instead. `Start` returns a missing binary's lookPathErr
+	// BEFORE it consults the context, so with both true at once that arm claimed an uninstalled
+	// gh and reported "gh ran and failed" — measured, `Runnable=true Code=1` with "executable
+	// file not found in $PATH" in the very same string. Trading one wrong assertion for another:
+	// an expired clock is not evidence about what went wrong.
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		r.Code = 1
 		if r.Err == "" {
 			r.Err = err.Error()
@@ -125,10 +129,15 @@ const (
 	// uses for every other failure. Verified against the live repo: `--head` on a branch with
 	// no PR gives rc 0 and no output; on a branch with one it gives the number.
 	NoPR
-	// GhUnrunnable: gh is not installed, not executable, or was killed.
+	// GhUnrunnable: gh never started — not installed, not executable, or the wrong binary
+	// format. NOT a kill: this said "or was killed" and no kill has reached it since shTimeout
+	// grew an arm for the deadline, because a kill before the fork is a context error and one
+	// after it is an ExitError, so both land on GhFailed. A state nothing can produce is worse
+	// than an undocumented one — it tells a reader a cause has been accounted for.
 	GhUnrunnable
-	// GhFailed: gh ran and failed. Auth, rate limit, TLS, a network error, a repo it cannot
-	// see. Its stderr is the only thing that says which, so it is carried, not dropped.
+	// GhFailed: gh ran and failed, or this function's own budget cancelled it. Auth, rate
+	// limit, TLS, a network error, a repo it cannot see, a hang. Its stderr is the only thing
+	// that says which, so it is carried, not dropped.
 	GhFailed
 )
 

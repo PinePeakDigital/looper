@@ -181,7 +181,14 @@ func (e *Escalation) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &p); err != nil {
 		return err
 	}
-	e.Gate, e.Reason = p.Gate, p.Reason
+	// isNull is reset EXPLICITLY. `*e = Escalation(p)` used to do it as a side effect of
+	// overwriting the whole struct, and replacing that with a field-by-field assignment lost
+	// it — encoding/json decodes into an existing slice element without zeroing it when the
+	// slice already has length, which happens for a row carrying `escalations` TWICE. Measured:
+	// `"escalations":[null],"escalations":[{"gate":"a","reason":"b"}]` left isNull set from the
+	// first decode, Render skipped the element, and the oracle's `- `a` — b` bullet vanished
+	// from the one section whose stated purpose is that an escalation cannot be silent.
+	e.Gate, e.Reason, e.isNull = p.Gate, p.Reason, false
 	return nil
 }
 

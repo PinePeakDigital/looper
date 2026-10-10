@@ -256,6 +256,15 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"escalations":[{"gate":"a","reason":"b"},null]`)}},
 		{"an escalation list of nothing but null", []string{plan(""),
 			finishRow(`,"escalations":[null]`)}},
+		// A row carrying `escalations` TWICE, which is how a stale `isNull` becomes visible:
+		// encoding/json decodes into an existing slice element WITHOUT zeroing it, so the
+		// marker set by the first occurrence survived into the second and Render skipped a
+		// real escalation. Python is last-wins and emits the bullet. The reverse order agrees
+		// either way, which is why only this direction exposes it.
+		{"a row carrying escalations twice, null then real", []string{plan(""),
+			finishRow(`,"escalations":[null],"escalations":[{"gate":"a","reason":"b"}]`)}},
+		{"a row carrying escalations twice, real then null", []string{plan(""),
+			finishRow(`,"escalations":[{"gate":"a","reason":"b"}],"escalations":[null]`)}},
 		{"an escalation with no reason", []string{plan(""),
 			finishRow(`,"escalations":[{"gate":"evidence"}]`)}},
 		{"an escalation reason with a newline", []string{plan(""),
@@ -308,6 +317,18 @@ func TestParityWithPrReport(t *testing.T) {
 			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":{` + "\t" + `}}]`)}},
 		{"a roster status that is an empty object with a space in it", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"m","status":{ },"findings":1}]`)}},
+		// The NON-empty containers, which agree only when the writer used Python's own
+		// spacing — `str()` normalises a container to `, ` and `: ` while this renders the
+		// writer's bytes. Fixtures because the first fix for the empty case ran json.Compact
+		// over the text and silently broke all three: no case covered them, so a net wash
+		// (three fixed, three broken) read as a clean parity run. The enumerated-divergence
+		// list holds the other direction, where the writer wrote no spaces.
+		{"a roster findings list spelled the way str() spells it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[1, 2]}]`)}},
+		{"a roster findings list of floats spelled the way str() spells it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[1.5, 2.5]}]`)}},
+		{"a roster findings list of lists spelled the way str() spells it", []string{plan(""),
+			finishRow(`,"agents":[{"id":"1","model":"m","status":"ok","findings":[[1], [2]]}]`)}},
 		{"a roster entry with a string findings count", []string{plan(""),
 			finishRow(`,"agents":[{"id":"1","model":"sonnet","status":"ok","findings":"many"}]`)}},
 		// `null` decodes into a struct WITHOUT error, so it slipped past the error check and

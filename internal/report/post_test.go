@@ -560,6 +560,32 @@ func TestTheBranchesNothingReached(t *testing.T) {
 			t.Errorf("a cancelled probe reads as success, so a timeout would look like an "+
 				"answer about whether a PR exists: %+v", r)
 		}
+		// The DETAIL, without which the two assertions above pass on the defect this subtest
+		// was written to catch: an uninstalled binary also reads Runnable with a non-zero code
+		// under a clock-based arm, so `shimGh` was inert and the subtest could not tell the
+		// cancelled gh from the absent one. Measured by swapping "gh" for a name that does not
+		// exist and watching it stay green.
+		if !strings.Contains(r.Err, "deadline exceeded") {
+			t.Errorf("the detail does not name the deadline, so this subtest cannot tell a "+
+				"cancelled probe from a missing binary: %+v", r)
+		}
+	})
+
+	t.Run("a missing binary under an expired budget is still NOT RUNNABLE", func(t *testing.T) {
+		// Both conditions at once, which is the case a clock-based first arm got wrong: Start
+		// returns the lookPathErr BEFORE it consults the context, so `ctx.Err() != nil` was
+		// true for an error that has nothing to do with the deadline. Measured at that commit:
+		// Runnable=true, Code=1, and a Note() reading "gh ran and failed (executable file not
+		// found in $PATH)" — self-contradictory in one sentence, and the wrong remedy.
+		r := shTimeout(t.TempDir(), time.Nanosecond, "looper-definitely-not-installed", "x")
+		if r.Runnable {
+			t.Errorf("an uninstalled binary reads as RUNNABLE under an expired budget, so the "+
+				"operator is told to wait for GitHub when the fix is to install gh: %+v", r)
+		}
+		if r.Code != 127 {
+			t.Errorf("code = %d, want 127 — the never-started code every caller reads: %+v",
+				r.Code, r)
+		}
 	})
 
 	t.Run("a hung subprocess is killed and reads as a failure", func(t *testing.T) {
