@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_descendant'
+expect: --- FAIL:
+why:    FindPR reads the PR NUMBER out of the probe's stdout, so it is one of the two callers that must refuse an undrained result — the other is WritePending, where the same buffer becomes a filesystem path. Without this arm a descendant's bytes are believed: measured, gh printed nothing and a descendant printed "42", giving `PRFound` with number "42" and the disclosure commented onto it. Placed BEFORE the `r.Out == ""` test on purpose, because the empty case is equally untrustworthy — either answer would be a guess, so the probe reports unknown instead. The arm is DISABLED rather than deleted so the switch keeps its shape; deleting the case compiles too, but then the entry no longer names one condition.
+--- old
+	case !r.Drained:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
+--- new
+	case !r.Drained && false:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}

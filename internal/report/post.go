@@ -34,6 +34,16 @@ type result struct {
 	Runnable bool
 	Code     int
 	Out, Err string
+	// Drained is false when the output pipe could not be read to EOF within the drain bound,
+	// which happens when a DESCENDANT of the child inherited it and outlived it. The child's
+	// exit status is still trustworthy in that case; `Out` is NOT, because the descendant
+	// writes into the same fd and therefore into the same buffer. Measured: a `gh pr list`
+	// that exited 0 printing nothing — meaning there is no PR — alongside a descendant that
+	// printed "42" yielded Out="42", and FindPR answered "PR #42" for a PR that does not
+	// exist, after which the disclosure was commented onto it. Any caller that READS Out must
+	// test this; a caller that only needs the exit status must not, because rejecting those
+	// is what made a `gh pr comment` that had already landed read as failed.
+	Drained bool
 }
 
 func sh(repo, prog string, args ...string) result {
@@ -66,28 +76,42 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
-	r := result{Runnable: true, Out: strings.TrimSpace(out.String()), Err: strings.TrimSpace(errOut.String())}
+	r := result{Runnable: true, Drained: true,
+		Out: strings.TrimSpace(out.String()), Err: strings.TrimSpace(errOut.String())}
 	switch {
 	case err == nil:
 		return r
-	// The child exited CLEANLY inside its budget and only the DRAIN timed out. That is a
-	// SUCCESS whose output is whole, not a failure: gh had already written and exited, so
-	// everything it produced is in `Out` (measured: 8 MiB survives intact), and the only thing
-	// still holding the pipe is a descendant we do not care about.
+	// The child exited CLEANLY and only the DRAIN timed out, because a descendant inherited
+	// the output pipe and outlived it. The EXIT STATUS is a real success; `Out` is not
+	// trustworthy, so this sets Drained false rather than claiming the output is whole.
 	//
-	// Without this arm, adding WaitDelay traded one defect for a worse one. Measured: a shim
-	// that prints "7", exits 0, and leaves `sleep 5 &` behind, under the PRODUCTION 20s budget
-	// — before WaitDelay it returned `Code=0 Out="7"` and the report was posted; after, it
-	// returned `Code=1` with `Out="7"` sitting right there, FindPR read GhFailed, and on the
-	// Post path a `gh pr comment` that had already landed read as failed, deferred, and Step
-	// 0c then posted a SECOND public disclosure. 19 of the 20 seconds were unused.
+	// Both halves are load-bearing and each was measured after getting it wrong. Rejecting the
+	// whole call — which is what happened before this arm existed — made a `gh pr comment`
+	// that had ALREADY LANDED read as failed, so the body was deferred and Step 0c posted a
+	// SECOND public disclosure; under the production 20s budget, with 19 of them unused.
+	// Accepting it as a success WITH its output — the first version of this arm — let the
+	// descendant's bytes become the answer: measured, a `gh pr list` that exited 0 printing
+	// NOTHING, meaning there is no PR, alongside a descendant printing "42", gave Out="42",
+	// FindPR said "PR #42", and the disclosure was commented onto a PR that does not exist for
+	// this branch. The descendant is not a bystander; it writes into the same fd.
 	//
-	// `ctx.Err() == nil` is what distinguishes it from the kill: if our own deadline fired, the
-	// child was signalled and Wait reports an ExitError, which the default arm handles.
+	// NOT a kill-versus-drain test. `ctx.Err()` is read AFTER the up-to-WaitDelay drain, so for
+	// any budget at or below WaitDelay the deadline has always passed by the time this runs and
+	// the arm cannot fire — measured, the same shim gives code 0 at a 20s budget and code 1 at
+	// 300ms. An earlier comment here claimed this distinguished the kill, which it does not; a
+	// kill is an ExitError and the default arm takes it either way. What the condition actually
+	// buys is that a call whose own deadline expired is never reported as a success.
 	case ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) &&
 		!errors.As(err, new(*exec.ExitError)):
-		r.Err = "note: the subprocess exited cleanly but a descendant held its output pipe " +
-			"past the drain bound (" + err.Error() + "); the output above is complete"
+		r.Drained = false
+		drain := "a descendant held the output pipe past the drain bound (" + err.Error() +
+			"), so the output cannot be trusted; the subprocess itself exited cleanly"
+		// APPENDED, not assigned: gh's stderr is the only stream that says what gh thought,
+		// and the arm one level down was fixed for dropping it. This one dropped it too.
+		if r.Err != "" {
+			drain += "; its stderr: " + r.Err
+		}
+		r.Err = drain
 		return r
 	// OUR OWN budget cancelled the probe before the fork. `Start` checks the context after
 	// LookPath and returns `ctx.Err()`, which is not an ExitError, so without this arm it fell
@@ -254,6 +278,9 @@ func FindPR(repo, branch string) Probe {
 			gitDetail = "git could not be run: " + firstLine(r.Err)
 		case r.Code != 0:
 			gitDetail = "git branch --show-current failed: " + firstLine(r.Err)
+		case !r.Drained:
+			// A descendant co-wrote this buffer, so the "branch name" may be its bytes.
+			gitDetail = "git's output could not be trusted: " + firstLine(r.Err)
 		default:
 			branch = r.Out
 		}
@@ -270,6 +297,13 @@ func FindPR(repo, branch string) Probe {
 	case !r.Runnable:
 		return Probe{State: GhUnrunnable, Detail: r.Err}
 	case r.Code != 0:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
+	// Checked BEFORE the empty test and before the number is believed. gh exited cleanly here,
+	// so the exit status says nothing is wrong — but a descendant shares the pipe, so `Out` is
+	// whatever the two of them wrote between them. Measured: gh printed nothing, meaning there
+	// is no PR, a descendant printed "42", and this said "PR #42" and commented the disclosure
+	// onto it. Either answer would be a guess, so this reports what it is: unknown.
+	case !r.Drained:
 		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
 	case r.Out == "":
 		return Probe{State: NoPR}
@@ -416,7 +450,9 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	if !r.Runnable {
 		return "", fmt.Errorf("git could not be run (%s) — nowhere to defer the report to", r.Err)
 	}
-	if r.Code != 0 || r.Out == "" {
+	// !Drained too: this Out becomes a filesystem PATH, so a descendant's bytes in it would
+	// write the report somewhere nobody looks.
+	if r.Code != 0 || r.Out == "" || !r.Drained {
 		return "", fmt.Errorf("no git dir in %s — nowhere to defer the report to", repo)
 	}
 	// The run id reaches a PATH here, and it arrives from the caller's -run-id. A traversing

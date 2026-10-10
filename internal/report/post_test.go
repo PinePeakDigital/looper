@@ -619,6 +619,56 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
+	t.Run("a descendant's bytes never become the answer", func(t *testing.T) {
+		// The first version of the clean-exit arm called the output complete and returned it.
+		// The descendant shares the fd, so it is a CO-WRITER: measured, `gh pr list` exited 0
+		// printing NOTHING — which means there is no PR for this branch — while a descendant
+		// printed "42", and FindPR answered "PR #42" and the disclosure was commented onto a
+		// PR that does not exist. The exit status is still a real success, so `Drained` carries
+		// the distinction instead of the whole call being rejected.
+		dir := gitRepo(t)
+		shimGh(t, "(printf '42\\n'; sleep 5) &")
+		_ = exec.Command("gh", "--warm").Run()
+		r := shTimeout(dir, 20*time.Second, "gh", "pr", "list")
+		if r.Drained {
+			t.Fatalf("an undrained call reports Drained, so every reader believes its output: %+v", r)
+		}
+		if r.Code != 0 {
+			t.Errorf("the child exited 0 and this says otherwise, which is what made a landed "+
+				"comment read as failed: %+v", r)
+		}
+		if got := FindPR(dir, "feature"); got.State == PRFound {
+			t.Errorf("FindPR believed a descendant's bytes: state=%v number=%q — the "+
+				"disclosure would be posted to a PR nothing established exists",
+				got.State, got.Number)
+		}
+	})
+
+	t.Run("an undrained comment still counts as posted", func(t *testing.T) {
+		// The other half, and the reason Drained is a field rather than a rejection: this call
+		// reads no output, so an undrained `gh pr comment` that exited 0 DID post. Rejecting it
+		// — which is what happened before the arm existed — deferred the body and had Step 0c
+		// post a second public disclosure.
+		dir := gitRepo(t)
+		log := shimGh(t, `case "$*" in
+  "pr list"*) echo 9;;
+  "pr comment"*) (sleep 5) & exit 0;;
+esac`)
+		_ = exec.Command("gh", "--warm").Run()
+		var diag strings.Builder
+		if _, err := Post(PostParams{Repo: dir, RunID: "drain01", Branch: "feat/x",
+			Convergence: "capped", Body: postBody, Diag: &diag}); err != nil {
+			t.Fatalf("Post: %v", err)
+		}
+		if !strings.Contains(diag.String(), "posted to PR #9") {
+			t.Errorf("a comment that landed does not read as posted, so Step 0c will post a "+
+				"second public disclosure: %q", diag.String())
+		}
+		if !strings.Contains(calls(t, log), "pr comment 9") {
+			t.Fatalf("the comment was never attempted: %s", calls(t, log))
+		}
+	})
+
 	t.Run("a hung subprocess is killed and reads as a failure", func(t *testing.T) {
 		// The timeout branch, which a const budget made untestable: shBudget is threaded
 		// through shTimeout so this costs milliseconds instead of twenty seconds.
@@ -705,7 +755,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
-	t.Run("a clean exit whose pipe is held is a SUCCESS, not a failure", func(t *testing.T) {
+	t.Run("a clean exit whose pipe is held keeps its exit status", func(t *testing.T) {
 		// WaitDelay bounds the drain even when the context never expired, so without an arm
 		// for this, adding it traded one defect for a worse one. Measured under the PRODUCTION
 		// 20s budget with a shim that prints "7", exits 0, and leaves `sleep 5 &` behind:
@@ -721,12 +771,17 @@ func TestTheBranchesNothingReached(t *testing.T) {
 				"comment that landed is reported as failed and posted twice: %+v", r)
 		}
 		if r.Out != "7" {
-			t.Errorf("the output is not whole, so the drain bound truncated an answer the "+
-				"caller reads: %+v", r)
+			t.Errorf("what the child wrote was not kept, so the drain bound truncated it "+
+				"rather than merely failing to reach EOF: %+v", r)
 		}
-		if got := FindPR(dir, "feature"); got.State != PRFound || got.Number != "7" {
-			t.Errorf("FindPR = %v/%q, want PRFound/\"7\" — the probe had the answer and "+
-				"threw it away", got.State, got.Number)
+		// NO assertion that FindPR believes "7". An earlier version of this subtest asserted
+		// exactly that, and it was wrong: a descendant shares the fd, so `Out` is whatever the
+		// two of them wrote between them, and believing it posted the disclosure to a PR that
+		// does not exist. `Drained` carries that, and the subtest two up asserts it. What
+		// belongs here is only that the child's own exit status survives, because that is what
+		// keeps an undrained `gh pr comment` from being reported as failed and posted twice.
+		if !r.Runnable {
+			t.Errorf("a child that started reads as never started: %+v", r)
 		}
 	})
 
@@ -738,6 +793,12 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// for the budget, in the file written to remove that class.
 		dir := t.TempDir()
 		shimGh(t, "echo 'warning: this is unrelated' >&2\nsleep 30 &")
+		// Warmed, for the reason the subtest above gives. Unwarmed this failed 1 of 12 runs
+		// idle and 16 of 25 under load — the shim being SIGKILLed before its first `echo`, so
+		// Err read "signal: killed" with no stderr at all. Worse than red CI: the catalog
+		// entry for this subtest expects `--- FAIL:`, which the flake satisfies on its own
+		// while the mutation does nothing, so it could score `caught` against unmutated code.
+		_ = exec.Command("gh", "--warm").Run()
 		r := shTimeout(dir, 300*time.Millisecond, "gh", "pr", "list")
 		if !strings.Contains(r.Err, "outlived the drain bound") {
 			t.Errorf("the drain cause is missing, so gh's stderr is the asserted cause: %+v", r)
