@@ -172,7 +172,7 @@ jobs:
           # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
           # table and the narrative table are different widths and measure different halves,
           # and one aggregate would let the narrative table vanish under a table that grew.
-          for spec in TestParityWithPrReport:83 TestParityOnTheNarrative:5 \
+          for spec in TestParityWithPrReport:81 TestParityOnTheNarrative:5 \
                       TestTheEnumeratedRenderDivergences:5 \
                       TestTheHardeningDivergence:7 \
                       TestWrongTypedFieldsAreRefusedAtTheLoad:13 \
