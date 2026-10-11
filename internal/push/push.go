@@ -424,7 +424,7 @@ func Check(p CheckParams) (Result, error) {
 	var unreported string
 	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
-			"run pr-report.py --post first"
+			"run looper pr-report --post first"
 		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe

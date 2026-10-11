@@ -3,60 +3,25 @@ package push
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pinepeakdigital/looper/internal/golden"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
-// The parity gate for the push decision. Until push-check.py is retired, the two must not
-// be able to disagree: this runs the Python against the same store, the same git repo and
-// the same flags, and requires the same JSON.
+// The parity gate for the push decision. Each case compares the whole JSON verdict against
+// what push-check.py printed for the same store, git repo and flags before it was retired —
+// frozen under testdata/oracle; see internal/golden for what those files are and are not.
 //
-// A port is the one refactor with a free oracle — the thing being replaced still runs — and
-// the previous slice's worst defects were all found by running it rather than reading it.
-// Here the oracle covers more than the verdict: `disclose` is prose an operator reads, and
-// a reworded disclosure is a silent behaviour change that no verdict comparison catches.
-//
-// Skipped, not failed, when the Python is unreachable: this repo must test in a checkout
-// with no skills repo beside it. REVIEW_LOOP_PUSH_CHECK names the script; otherwise the
-// default sibling path is tried.
-func pushCheckPath(t *testing.T) string {
+// The oracle covers more than the verdict: `disclose` is prose an operator reads, and a
+// reworded disclosure is a silent behaviour change that no verdict comparison catches.
+func pyPushCheck(t *testing.T) Result {
 	t.Helper()
-	if p := os.Getenv("REVIEW_LOOP_PUSH_CHECK"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		t.Fatalf("REVIEW_LOOP_PUSH_CHECK=%s does not exist — set it correctly or unset it", p)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory to look for push-check.py in")
-	}
-	p := filepath.Join(home, ".claude", "skills", "review-loop", "push-check.py")
-	if _, err := os.Stat(p); err != nil {
-		t.Skip("push-check.py not found; set REVIEW_LOOP_PUSH_CHECK to run the parity gate")
-	}
-	return p
-}
-
-// pyPushCheck runs the Python and returns its parsed JSON.
-func pyPushCheck(t *testing.T, script, store string, args ...string) Result {
-	t.Helper()
-	cmd := exec.Command("python3", append([]string{script}, args...)...)
-	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store)
-	var errOut strings.Builder
-	cmd.Stderr = &errOut
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
-	}
+	out := golden.Read(t, "push-check.json")
 	var got Result
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("python printed %q: %v\nstderr:\n%s", out, err, errOut.String())
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("frozen oracle output %q: %v", out, err)
 	}
 	return got
 }
@@ -94,7 +59,6 @@ func deref(s *string) string {
 }
 
 func TestParityWithPushCheck(t *testing.T) {
-	script := pushCheckPath(t)
 	// Both sides see the same failing gh, so neither can satisfy the report gate from a PR
 	// and both fall through to the pending file. Shimmed rather than left to the real
 	// binary: gh's outcome would otherwise depend on a login, the network, and which
@@ -224,12 +188,7 @@ func TestParityWithPushCheck(t *testing.T) {
 				landReport(t, gitdir, id, Fingerprint(r))
 			}
 
-			args := []string{"--run-id", id, "--repo", dir, "--gate-state", gateState,
-				"--branch", branch, "--default-branch", defaultBranch}
-			if c.unresolvedSkip {
-				args = append(args, "--unresolved-skip")
-			}
-			py := pyPushCheck(t, script, store, args...)
+			py := pyPushCheck(t)
 
 			got, err := Check(CheckParams{Store: store, RunID: id, GateState: gateState,
 				UnresolvedSkip: c.unresolvedSkip, Branch: branch, DefaultBranch: defaultBranch,
@@ -252,7 +211,6 @@ func TestParityWithPushCheck(t *testing.T) {
 // Stated as a TEST, not a comment, so the day the Python's wording is what matters, or the
 // day someone makes the pointer three-state, this says which half moved.
 func TestTheDisclosureWordingDivergence(t *testing.T) {
-	script := pushCheckPath(t)
 	shimGh(t, "exit 1")
 	const id = "parity02"
 	dir, gitdir := repo(t)
@@ -265,8 +223,7 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 	}
 	landReport(t, gitdir, id, Fingerprint(runs[id]))
 
-	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
-		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
+	py := pyPushCheck(t)
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
 		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {
@@ -309,7 +266,6 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 // empty record is the two lines pr-report.py renders for a run with no cycle rows, so no
 // forgery is needed to reach the state the Python permits.
 func TestTheEmptyRecordDivergence(t *testing.T) {
-	script := pushCheckPath(t)
 	shimGh(t, "exit 1")
 	const id = "parity03"
 	dir, gitdir := repo(t)
@@ -320,8 +276,7 @@ func TestTheEmptyRecordDivergence(t *testing.T) {
 		`{"run_id":"other1","phase":"cycle","n":1,"applied":1,"agents":2}`)
 	landReport(t, gitdir, id, Fingerprint(&record.Run{ID: id}))
 
-	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
-		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
+	py := pyPushCheck(t)
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
 		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {

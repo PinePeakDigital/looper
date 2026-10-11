@@ -391,7 +391,7 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 		t.Errorf("the push was permitted despite an undeterminable report: %q", out)
 	}
 	// The refusal text is unchanged, which is what keeps the parity gate green.
-	if !strings.Contains(got.Reason, "pr-report.py --post") {
+	if !strings.Contains(got.Reason, "looper pr-report --post") {
 		t.Errorf("reason = %q, want the unchanged owed-report refusal", got.Reason)
 	}
 }

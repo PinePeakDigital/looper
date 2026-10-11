@@ -674,7 +674,7 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 
 // The diagnostic channel. A genuinely unposted report, a missing `gh`/`git`, and a fired
 // timeout all refuse the push identically and correctly — the gate fails closed — but the
-// refusal says "run pr-report.py --post first", which is the wrong instruction for two of the
+// refusal says "run looper pr-report --post first", which is the wrong instruction for two of the
 // three. The reason string cannot say more, because parity_test.go compares it for exact
 // equality against the Python's, so the distinction goes to Diag.
 func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
@@ -694,7 +694,7 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 			t.Fatalf("expected a refusal: %+v", res)
 		}
 		// The refusal itself is unchanged, which is what keeps parity.
-		if !strings.Contains(res.Reason, "pr-report.py --post") {
+		if !strings.Contains(res.Reason, "looper pr-report --post") {
 			t.Errorf("reason = %q, want the unchanged owed-report refusal", res.Reason)
 		}
 		if !strings.Contains(diag.String(), "could not be determined") {
@@ -858,7 +858,7 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 
 // The second refusal whose stated reason is the wrong instruction: the run is not in the
 // store. Measured before this existed — a wrong -store produced exit 0, an EMPTY stderr, and
-// "run pr-report.py --post first", which re-renders the same empty record and cannot fix it.
+// "run looper pr-report --post first", which re-renders the same empty record and cannot fix it.
 //
 // Kept separate from TestCheckDiagnosesBeingUnableToAsk because the two notes answer different
 // questions and only this one can name the store path.
