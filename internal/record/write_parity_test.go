@@ -375,7 +375,14 @@ func scenarioRepo(t *testing.T, sc wscenario) (repo, common string) {
 			t.Fatal(err)
 		}
 	}
-	return repo, common
+	// Handed out through a symlink, so the working directory and git's resolved answer differ
+	// on every OS and not only on macOS, whose temp dir happens to sit under one. Without it a
+	// repoID that returned the working directory passed on Linux CI.
+	link := filepath.Join(t.TempDir(), "repo")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	return link, common
 }
 
 type transcript struct {
