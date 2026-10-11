@@ -1,0 +1,1224 @@
+package record
+
+// The write half: every runlog.py subcommand, as `looper record <sub>`. The read half above is
+// typed and strict because its answers gate a push; this half mirrors runlog.py's dict
+// semantics instead, because its guards (is there a plan, is the run already finished) must
+// not refuse a write over a malformed row elsewhere in a shared, append-only store. The one
+// derivation it needs — convergence, for finish's warning and the `convergence` subcommand —
+// is taken from the typed read half, so there is still exactly one definition of it.
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+)
+
+// DefaultAgentCap is runlog.DEFAULT_AGENT_CAP: a ceiling, not a target. review-stats derives
+// the numbers to look at before changing it; they are deliberately not restated here.
+const DefaultAgentCap = 40
+
+// exitErr is sys.exit(msg): the message on stderr, exit 1. Code 2 is argparse's usage error.
+type exitErr struct {
+	code int
+	msg  string
+}
+
+func (e *exitErr) Error() string { return e.msg }
+
+func fail(format string, a ...any) error { return &exitErr{1, fmt.Sprintf(format, a...)} }
+
+// ---- the store, read the way runlog.load() reads it -------------------------------------
+
+// runStore is load()'s merge, keeping first-seen order: Python dicts iterate in insertion
+// order, and unfinished() sorts stably on top of that order.
+type runStore struct {
+	order []string
+	runs  map[string]map[string]any
+}
+
+func (s runStore) get(id string) map[string]any { return s.runs[id] }
+
+// tailLines is runlog.TAIL_LINES: REVIEW_LOOP_TAIL, at least 1, and 4000 when it does not
+// parse, because a fat-fingered override must not break every invocation.
+func tailLines() int {
+	v := strings.TrimSpace(os.Getenv("REVIEW_LOOP_TAIL"))
+	if v == "" {
+		return DefaultTail
+	}
+	n, err := strconv.Atoi(strings.ReplaceAll(v, "_", ""))
+	if err != nil {
+		return DefaultTail
+	}
+	return max(1, n)
+}
+
+// loadRaw is runlog.load(limit). limit <= 0 reads the whole store. The tail counts LINES, blank
+// ones included, the way deque(fh, maxlen=limit) does.
+func loadRaw(path string, limit int) runStore {
+	s := runStore{runs: map[string]map[string]any{}}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return s
+	}
+	lines := strings.SplitAfter(string(b), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if limit > 0 && len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		d := json.NewDecoder(strings.NewReader(line))
+		d.UseNumber()
+		if d.Decode(&rec) != nil || rec == nil {
+			continue // a torn line never invalidates the rest of the store
+		}
+		rid, _ := rec["run_id"].(string)
+		if rid == "" {
+			continue
+		}
+		run, ok := s.runs[rid]
+		if !ok {
+			run = map[string]any{}
+			s.runs[rid] = run
+			s.order = append(s.order, rid)
+		}
+		// Cycle rows ACCUMULATE; every other phase merges.
+		if rec["phase"] == "cycle" {
+			cy, _ := run["cycles"].([]any)
+			run["cycles"] = append(cy, rec)
+			continue
+		}
+		for k, v := range rec {
+			run[k] = v
+		}
+	}
+	return s
+}
+
+// truthy is Python's bool().
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case string:
+		return x != ""
+	case json.Number:
+		f, err := x.Float64()
+		return err != nil || f != 0
+	case map[string]any:
+		return len(x) > 0
+	case []any:
+		return len(x) > 0
+	}
+	return true
+}
+
+// pyStr is str() for the values these messages interpolate.
+func pyStr(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "None"
+	case bool:
+		if x {
+			return "True"
+		}
+		return "False"
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// pyRepr is repr() of a str (and None), which the refusal messages quote names with.
+func pyRepr(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return pyStr(v)
+	}
+	q := byte('\'')
+	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
+		q = '"'
+	}
+	var b strings.Builder
+	b.WriteByte(q)
+	for _, r := range s {
+		switch {
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == rune(q):
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte(q)
+	return b.String()
+}
+
+func strip(v any) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
+}
+
+// ---- environment, the way runlog reads it -----------------------------------------------
+
+func now() string { return time.Now().Format("2006-01-02T15:04:05-07:00") }
+
+func newRunID() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// git is runlog.git(): stdout, stripped, or "" on any failure.
+func git(args ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// repoID is a repo's identity across worktrees: its common dir's path.
+func repoID() string {
+	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if common == "" {
+		wd, _ := os.Getwd()
+		return wd
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common
+}
+
+// sessionKind is runlog.session_kind(). CLAUDE_CODE_SESSION_ATTENDED is the harness's own
+// answer and outranks the tty guess, which classifies every interactive Claude Code run as
+// headless because its commands run with stdin detached.
+func sessionKind() string {
+	if os.Getenv("AO_SESSION_ID") != "" {
+		return "ao-worker"
+	}
+	if os.Getenv("CLAUDE_REVIEW_LOOP_SUBAGENT") != "" {
+		return "subagent"
+	}
+	if v, set := os.LookupEnv("CLAUDE_CODE_SESSION_ATTENDED"); set {
+		if v != "" && v != "0" && v != "false" {
+			return "interactive"
+		}
+		return "headless"
+	}
+	if !isTerminal(os.Stdin.Fd()) && !isTerminal(os.Stderr.Fd()) {
+		return "headless"
+	}
+	return "interactive"
+}
+
+// sessionID is `os.environ.get(A) or os.environ.get(B)`: the second operand's raw value,
+// None when unset, whenever the first is unset or blank.
+func sessionID() any {
+	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
+		return v
+	}
+	if v, set := os.LookupEnv("AO_SESSION_ID"); set {
+		return v
+	}
+	return nil
+}
+
+// ---- the precedent ban ------------------------------------------------------------------
+
+// BannedReason is runlog.BANNED_REASON. "It has precedent in the repo" is an invalid
+// justification for reduced review, not a weak one: bugs pre-exist, copying a pattern
+// propagates them, and the copy is the cheapest moment to catch one.
+var BannedReason = []string{
+	"precedent", "already exists in the repo", "matches an existing pattern",
+	"matches existing pattern", "same pattern as", "pattern copy", "pattern-copy",
+	"copied from existing", "consistent with existing code", "follows the existing pattern",
+	"consistent with existing pattern",
+	"established pattern in this repo",
+	"how the rest of the codebase",
+	"how the rest of this codebase",
+	"it's the convention here",
+	"the convention in this repo",
+	"identical to what",
+	"same as what",
+	"already done this way",
+	"done this way elsewhere",
+	"mirrors the existing",
+}
+
+type reason struct {
+	where string
+	text  any
+}
+
+// orderedObj is a JSON object with its key order kept: runlog iterates gates and executed in
+// the order the caller wrote them, and that order reaches the refusal and partial messages.
+type orderedObj struct {
+	keys []string
+	m    map[string]any
+}
+
+func (o *orderedObj) set(k string, v any) {
+	if _, ok := o.m[k]; !ok {
+		o.keys = append(o.keys, k)
+	}
+	o.m[k] = v
+}
+
+// reasonsIn is runlog.reasons_in(): every free-text reason a record carries.
+func reasonsIn(gates, executed *orderedObj, escalations []any, fields map[string]any) []reason {
+	var out []reason
+	if gates != nil {
+		for _, g := range gates.keys {
+			if v, ok := gates.m[g].(map[string]any); ok && v["planned"] != "run" {
+				out = append(out, reason{fmt.Sprintf("gate %s as %s", pyRepr(g), pyStr(v["planned"])), v["reason"]})
+			}
+		}
+	}
+	if executed != nil {
+		for _, g := range executed.keys {
+			if v, ok := executed.m[g].(map[string]any); ok && v["status"] != "done" {
+				out = append(out, reason{fmt.Sprintf("gate %s as %s", pyRepr(g), pyStr(v["status"])), v["reason"]})
+			}
+		}
+	}
+	for _, e := range escalations {
+		if v, ok := e.(map[string]any); ok {
+			out = append(out, reason{fmt.Sprintf("escalation on %s", pyRepr(v["gate"])), v["reason"]})
+		}
+	}
+	for _, kl := range [][2]string{
+		{"abandoned_missing", "this abandonment"}, {"skip_reason", "this skip"},
+		{"sizing_excluded", "this sizing exclusion"}, {"tier_reason", "this tier"},
+		{"width_reason", "this fan-out width"},
+	} {
+		if truthy(fields[kl[0]]) {
+			out = append(out, reason{kl[1], fields[kl[0]]})
+		}
+	}
+	return out
+}
+
+// pyFields is str.split() with no argument. Python counts \x1c-\x1f as whitespace and Go's
+// unicode.IsSpace does not; a phrase split by one would otherwise pass here and be refused there.
+func pyFields(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
+	})
+}
+
+// rejectBanned refuses a reason that cites precedent. Whitespace-normalised, not just
+// lowercased: a phrase wrapped across a line is the ordinary case, not an evasion.
+func rejectBanned(rs []reason) error {
+	for _, r := range rs {
+		low := strings.Join(pyFields(strings.ToLower(pyStrOrEmpty(r.text))), " ")
+		for _, phrase := range BannedReason {
+			if strings.Contains(low, phrase) {
+				return fail("runlog: refusing to record %s — its reason cites precedent (%s).\n"+
+					"Existing code being similar is not evidence it is correct; a copied "+
+					"pattern carries its bugs, and the copy is the cheapest place to catch "+
+					"them. State a measurable reason (size, no logic touched, no runtime "+
+					"change) or run the gate.", r.where, pyRepr(phrase))
+			}
+		}
+	}
+	return nil
+}
+
+// pyStrOrEmpty is `(text or "")` for a value that is about to be lowercased.
+func pyStrOrEmpty(v any) string {
+	if !truthy(v) {
+		return ""
+	}
+	return pyStr(v)
+}
+
+// ---- appending --------------------------------------------------------------------------
+
+// appendRec writes one record as one line. A single write() to a file opened O_APPEND does not
+// interleave with other writers on the local filesystems this store lives on, which is what
+// lets concurrent worktree sessions share it without a lock (not over NFS, and not the PIPE_BUF
+// guarantee, which is about pipes). Keys sorted and compact, as runlog writes them. Non-ASCII
+// is written as UTF-8 where runlog writes \u escapes: the same value to every reader.
+func appendRec(rec map[string]any, rs []reason) error {
+	if err := rejectBanned(rs); err != nil {
+		return err
+	}
+	path := StorePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(rec); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(buf.Bytes())
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
+}
+
+func appendPlain(rec map[string]any) error {
+	return appendRec(rec, reasonsIn(nil, nil, nil, rec))
+}
+
+// ---- JSON arguments ---------------------------------------------------------------------
+
+func decodeJSON(raw, what string) (any, error) {
+	d := json.NewDecoder(strings.NewReader(raw))
+	d.UseNumber()
+	var v any
+	err := d.Decode(&v)
+	if err == nil && d.More() {
+		err = errors.New("extra data")
+	}
+	if err != nil {
+		return nil, fail("runlog: --%s is not valid JSON: %v", what, err)
+	}
+	return v, nil
+}
+
+// objectArg is `parse_json_arg(raw) or {}`, with key order kept. A falsy value is {}; a
+// truthy non-object is refused where runlog would die on .items().
+func objectArg(raw *string, what string) (*orderedObj, error) {
+	o := &orderedObj{m: map[string]any{}}
+	if raw == nil {
+		return o, nil
+	}
+	v, err := decodeJSON(*raw, what)
+	if err != nil || !truthy(v) {
+		return o, err
+	}
+	if _, ok := v.(map[string]any); !ok {
+		return nil, fail("runlog: --%s must be a JSON object", what)
+	}
+	d := json.NewDecoder(strings.NewReader(*raw))
+	d.UseNumber()
+	if _, err := d.Token(); err != nil {
+		return nil, err
+	}
+	for d.More() {
+		t, err := d.Token()
+		if err != nil {
+			return nil, err
+		}
+		var val any
+		if err := d.Decode(&val); err != nil {
+			return nil, err
+		}
+		o.set(t.(string), val)
+	}
+	return o, nil
+}
+
+func listArg(raw *string, what string) ([]any, error) {
+	if raw == nil {
+		return []any{}, nil
+	}
+	v, err := decodeJSON(*raw, what)
+	if err != nil || !truthy(v) {
+		return []any{}, err
+	}
+	l, ok := v.([]any)
+	if !ok {
+		return nil, fail("runlog: --%s must be a JSON list", what)
+	}
+	return l, nil
+}
+
+func anyArg(raw *string, what string) (any, error) {
+	if raw == nil {
+		return map[string]any{}, nil
+	}
+	v, err := decodeJSON(*raw, what)
+	if err != nil || !truthy(v) {
+		return map[string]any{}, err
+	}
+	return v, nil
+}
+
+// ---- the plan/finish invariants ---------------------------------------------------------
+
+// Every state the record can hold, in one place.
+var (
+	Outcomes         = []string{"clean", "cycle-limit", "test-failure", "blocked", "abandoned", "skipped", "carried"}
+	Tiers            = []string{"skipped", "carried", "fast", "full", "partial"}
+	SubcommandStates = []string{"skipped", "carried"}
+	// A waiver passes its gate, so it must not force partial; review-stats still shows it.
+	GateAccounted = append(append([]string{}, GateOK...), "waived")
+	tierRank      = map[string]int{"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
+)
+
+func in(s string, set []string) bool {
+	for _, x := range set {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// plannedGates is the set of gates a plan said to run.
+func plannedGates(plan map[string]any) map[string]bool {
+	out := map[string]bool{}
+	gates, _ := plan["gates"].(map[string]any)
+	for g, v := range gates {
+		if m, ok := v.(map[string]any); ok && m["planned"] == "run" {
+			out[g] = true
+		}
+	}
+	return out
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unaccounted is the invariant the whole record exists for: gates the plan said to run that
+// the finish neither ran nor escalated.
+func unaccounted(planned map[string]bool, executed *orderedObj, escalations []any) []string {
+	acc := map[string]bool{}
+	for _, k := range executed.keys {
+		acc[k] = true
+	}
+	for _, e := range escalations {
+		if m, ok := e.(map[string]any); ok {
+			if g, ok := m["gate"].(string); ok {
+				acc[g] = true
+			}
+		}
+	}
+	var out []string
+	for _, g := range sortedKeys(planned) {
+		if !acc[g] {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// deriveTier makes `partial` a fact about the run rather than a label the caller picks, and
+// refuses a claim below the plan's floor. claimed is nil when no --tier was given.
+func deriveTier(claimed *string, executed *orderedObj, agents []any, planned map[string]bool, floor any, errOut io.Writer) (any, error) {
+	var broken []string
+	for _, g := range executed.keys {
+		if v, ok := executed.m[g].(map[string]any); ok {
+			st, _ := v["status"].(string)
+			if !(in(st, GateAccounted) && v["status"] != nil) && planned[g] {
+				broken = append(broken, g)
+			}
+		}
+	}
+	for _, x := range agents {
+		if v, ok := x.(map[string]any); ok {
+			if v["status"] != "ok" && v["status"] != "done" {
+				id := any("?")
+				if got, ok := v["id"]; ok {
+					id = got
+				}
+				broken = append(broken, pyStr(id))
+			}
+		}
+	}
+	claimedV := any(nil)
+	cl := ""
+	if claimed != nil {
+		claimedV, cl = *claimed, *claimed
+	}
+	if len(broken) > 0 && cl != "partial" {
+		fmt.Fprintf(errOut, "runlog: recording tier `partial`, not %s — did not complete: %s\n",
+			pyRepr(claimedV), strings.Join(broken, ", "))
+		return "partial", nil
+	}
+	if fl, ok := floor.(string); ok && truthy(floor) && tierRank[cl] < tierRank[fl] {
+		return nil, fail("runlog: refusing to record tier %s — the plan computed a floor of "+
+			"%s. You may escalate above the floor, never below it. Record "+
+			"%s (or `partial` if something did not complete).", pyRepr(claimedV), pyRepr(fl), pyRepr(fl))
+	}
+	return claimedV, nil
+}
+
+// storedConvergence is the typed derivation, read fresh, so finish's warning and the
+// `convergence` subcommand say what the push gate and the report will say.
+func storedConvergence(id string) (string, bool) {
+	runs, err := Load(StorePath(), 0)
+	if err != nil {
+		return Unknown, false
+	}
+	r, ok := runs[id]
+	if !ok {
+		return Unknown, false
+	}
+	c, err := r.Convergence()
+	if err != nil {
+		return Unknown, true
+	}
+	return c, true
+}
+
+// ---- the subcommands --------------------------------------------------------------------
+
+type sub struct {
+	fs       *flag.FlagSet
+	strs     map[string]*string
+	ints     map[string]*int
+	bools    map[string]*bool
+	required []string
+}
+
+func newSub(name string, errOut io.Writer) *sub {
+	fs := flag.NewFlagSet("looper record "+name, flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	return &sub{fs: fs, strs: map[string]*string{}, ints: map[string]*int{}, bools: map[string]*bool{}}
+}
+
+// str declares an optional string whose absence is distinguishable from "" (None vs "").
+func (s *sub) str(name, usage string) {
+	var p *string
+	s.strs[name] = nil
+	s.fs.Func(name, usage, func(v string) error { p = &v; s.strs[name] = p; return nil })
+}
+
+// num declares an int; def nil means absent reads as None.
+func (s *sub) num(name string, def *int, usage string) {
+	s.ints[name] = def
+	s.fs.Func(name, usage, func(v string) error {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("invalid int value: %q", v)
+		}
+		s.ints[name] = &n
+		return nil
+	})
+}
+
+func (s *sub) flagBool(name, usage string) { s.bools[name] = s.fs.Bool(name, false, usage) }
+
+func (s *sub) parse(args []string, choices map[string][]string) error {
+	if err := s.fs.Parse(args); err != nil {
+		return &exitErr{2, ""}
+	}
+	if s.fs.NArg() > 0 {
+		return &exitErr{2, fmt.Sprintf("%s: unrecognized arguments: %s", s.fs.Name(), strings.Join(s.fs.Args(), " "))}
+	}
+	for _, r := range s.required {
+		_, isStr := s.strs[r]
+		if (isStr && s.strs[r] == nil) || (!isStr && s.ints[r] == nil) {
+			return &exitErr{2, fmt.Sprintf("%s: the following arguments are required: --%s", s.fs.Name(), r)}
+		}
+	}
+	for name, ok := range choices {
+		if v := s.strs[name]; v != nil && !in(*v, ok) {
+			return &exitErr{2, fmt.Sprintf("%s: argument --%s: invalid choice: %s (choose from %s)",
+				s.fs.Name(), name, pyRepr(*v), strings.Join(ok, ", "))}
+		}
+	}
+	return nil
+}
+
+func intVal(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func strVal(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func orStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func ip(n int) *int { return &n }
+
+var cmdNames = []string{"plan", "finish", "cycle", "convergence", "carried", "skipped", "nudge", "abandon", "check", "show", "pending"}
+
+// Command runs `looper record <sub> [flags]` and returns the exit status runlog.py would.
+func Command(args []string, out, errOut io.Writer) int {
+	if len(args) == 0 || !in(args[0], cmdNames) {
+		fmt.Fprintf(errOut, "usage: looper record {%s} ...\n", strings.Join(cmdNames, ","))
+		return 2
+	}
+	code, err := dispatch(args[0], args[1:], out, errOut)
+	var ee *exitErr
+	if errors.As(err, &ee) {
+		if ee.msg != "" {
+			fmt.Fprintln(errOut, ee.msg)
+		}
+		return ee.code
+	}
+	if err != nil {
+		fmt.Fprintf(errOut, "runlog: %v\n", err)
+		return 1
+	}
+	return code
+}
+
+func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
+	s := newSub(name, errOut)
+	switch name {
+	case "plan":
+		for _, f := range []string{"run-id", "head", "base", "tier", "model", "session-kind", "inputs", "gates", "tier-reason", "sizing-excluded"} {
+			s.str(f, "")
+		}
+		s.num("changed-lines", nil, "raw added+deleted lines")
+		s.num("agent-cap", ip(DefaultAgentCap), "cumulative subagent budget for the run")
+		s.num("semantic-lines", nil, "raw minus whitespace-only, lockfiles and declared-generated files")
+		s.required = []string{"tier", "model"}
+		if err := s.parse(args, map[string][]string{
+			"tier": {"fast", "full", "skipped"}, "session-kind": {"interactive", "ao-worker", "headless", "subagent"},
+		}); err != nil {
+			return 0, err
+		}
+		return 0, cmdPlan(s, out)
+	case "finish":
+		for _, f := range []string{"run-id", "outcome", "tier", "executed", "escalations", "agents", "findings"} {
+			s.str(f, "")
+		}
+		s.num("asks", ip(0), "unresolved ask-bucket items")
+		s.flagBool("allow-unaccounted", "record planned gates that went unrun, marking the run partial")
+		s.required = []string{"run-id", "outcome"}
+		var outcomes, tiers []string
+		for _, o := range Outcomes {
+			if !in(o, SubcommandStates) {
+				outcomes = append(outcomes, o)
+			}
+		}
+		for _, t := range Tiers {
+			if t != "carried" {
+				tiers = append(tiers, t)
+			}
+		}
+		if err := s.parse(args, map[string][]string{"outcome": outcomes, "tier": tiers}); err != nil {
+			return 0, err
+		}
+		return 0, cmdFinish(s, out, errOut)
+	case "cycle":
+		s.str("run-id", "")
+		s.str("width-reason", "the measurement that settled the fan-out width")
+		s.num("n", nil, "cycle number, 1-based")
+		s.num("applied", nil, "fixes applied this cycle")
+		s.num("asked", ip(0), "ask-bucket items put to the user")
+		s.num("defect-findings", ip(0), "")
+		s.num("comment-findings", ip(0), "")
+		s.num("agents", nil, "agents spawned this cycle")
+		s.num("tokens", nil, "observed subagent tokens, recorded not enforced")
+		s.flagBool("analysis-changed", "the Step 4a deterministic pass changed files or left unresolved findings")
+		s.required = []string{"run-id", "n", "applied", "agents"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return 0, cmdCycle(s, errOut)
+	case "convergence":
+		s.str("run-id", "")
+		s.required = []string{"run-id"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return cmdConvergence(*s.strs["run-id"], out, errOut), nil
+	case "carried":
+		s.str("from", "the rewritten-away sha")
+		s.str("to", "the new sha the record now covers")
+		s.str("how", "")
+		s.str("by", "what established the two are the same content")
+		s.required = []string{"from", "to", "how"}
+		if err := s.parse(args, map[string][]string{"how": {"reviewed", "skipped"}}); err != nil {
+			return 0, err
+		}
+		return 0, cmdCarried(s, out)
+	case "skipped":
+		s.str("reason", "")
+		s.str("model", "")
+		s.required = []string{"reason"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return 0, cmdSkipped(s, out)
+	case "nudge":
+		s.str("run-id", "")
+		s.required = []string{"run-id"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return 0, appendPlain(map[string]any{"run_id": *s.strs["run-id"], "phase": "nudge", "nudged_at": now()})
+	case "abandon":
+		s.str("run-id", "")
+		s.str("missing", "which planned gates you are NOT running, and why")
+		s.required = []string{"run-id", "missing"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return 0, cmdAbandon(s, out)
+	case "check":
+		s.str("head", "")
+		s.str("run-id", "")
+		s.str("session", "only runs this session started (default: $CLAUDE_CODE_SESSION_ID)")
+		s.flagBool("force", "report an unfinished run even if already nudged")
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return cmdCheck(s, out)
+	case "show":
+		s.str("run-id", "")
+		s.required = []string{"run-id"}
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		return 0, cmdShow(*s.strs["run-id"], out)
+	case "pending":
+		if err := s.parse(args, nil); err != nil {
+			return 0, err
+		}
+		cmdPending(out, errOut)
+		return 0, nil
+	}
+	return 2, nil
+}
+
+func cmdPlan(s *sub, out io.Writer) error {
+	// A non-positive cap makes `capped` unreachable or universal; neither is expressible.
+	if c := s.ints["agent-cap"]; c != nil && *c <= 0 {
+		return fail("runlog: --agent-cap must be positive (got %d) — a cap of zero "+
+			"or less cannot bind, it only changes which label a stall gets", *c)
+	}
+	gates, err := objectArg(s.strs["gates"], "gates")
+	if err != nil {
+		return err
+	}
+	var bad, unexplained []string
+	for _, g := range gates.keys {
+		v, ok := gates.m[g].(map[string]any)
+		if !ok || !(v["planned"] == "run" || v["planned"] == "skip") {
+			bad = append(bad, g)
+		}
+	}
+	sort.Strings(bad)
+	if len(bad) > 0 {
+		return fail("runlog: refusing to plan — these gates are not "+
+			"{\"planned\": \"run\"|\"skip\", \"reason\": ...}:\n  %s", strings.Join(bad, ", "))
+	}
+	for _, g := range gates.keys {
+		if strip(gates.m[g].(map[string]any)["reason"]) == "" {
+			unexplained = append(unexplained, g)
+		}
+	}
+	sort.Strings(unexplained)
+	if len(unexplained) > 0 {
+		return fail("runlog: refusing to plan — these gates carry no reason:\n  %s\nA gate's "+
+			"reason is what a later run is measured against; an unexplained plan cannot be "+
+			"iterated on.", strings.Join(unexplained, ", "))
+	}
+	inputs, err := anyArg(s.strs["inputs"], "inputs")
+	if err != nil {
+		return err
+	}
+	rid := orStr(s.strs["run-id"])
+	if rid == "" {
+		rid = newRunID()
+	}
+	head := orStr(s.strs["head"])
+	if head == "" {
+		head = git("rev-parse", "HEAD")
+	}
+	kind := orStr(s.strs["session-kind"])
+	if kind == "" {
+		kind = sessionKind()
+	}
+	rec := map[string]any{
+		"run_id": rid, "phase": "plan", "planned_at": now(),
+		"repo": repoID(), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+		"head": head, "base": strVal(s.strs["base"]),
+		"orchestrator_model": *s.strs["model"], "session_kind": kind,
+		// Linked worktrees share a git-common-dir, so repo alone would let one session's open
+		// run block another's Stop.
+		"session_id": sessionID(), "tier_floor": *s.strs["tier"],
+		"inputs": inputs, "gates": gates.m,
+		"changed_lines": intVal(s.ints["changed-lines"]), "agent_cap": intVal(s.ints["agent-cap"]),
+		"semantic_lines":  intVal(s.ints["semantic-lines"]),
+		"sizing_excluded": strVal(s.strs["sizing-excluded"]), "tier_reason": strVal(s.strs["tier-reason"]),
+	}
+	if err := appendRec(rec, reasonsIn(gates, nil, nil, rec)); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, rid)
+	return nil
+}
+
+func cmdCycle(s *sub, errOut io.Writer) error {
+	id := *s.strs["run-id"]
+	store := loadRaw(StorePath(), 0)
+	prior := store.get(id)
+	if len(prior) == 0 {
+		return fail("runlog: no plan for run %s — record the plan first", pyRepr(id))
+	}
+	// A cycle row after `finish` silently rewrites a convergence already disclosed on a PR and
+	// already used to clear a push: `--clean-exit` by another name.
+	if truthy(prior["finished_at"]) || truthy(prior["outcome"]) {
+		return fail("runlog: run %s is already finished — a cycle row appended now would "+
+			"change a convergence that has already been reported. Start a new run.", pyRepr(id))
+	}
+	for _, n := range []string{"n", "applied", "asked", "agents", "tokens"} {
+		if v := s.ints[n]; v != nil && *v < 0 {
+			return fail("runlog: --%s cannot be negative (got %d) — a negative count pulls "+
+				"cumulative spend back under the cap", n, *v)
+		}
+	}
+	rec := map[string]any{
+		"run_id": id, "phase": "cycle", "n": *s.ints["n"], "closed_at": now(),
+		"applied": *s.ints["applied"], "asked": intVal(s.ints["asked"]),
+		"defect_findings": intVal(s.ints["defect-findings"]), "comment_findings": intVal(s.ints["comment-findings"]),
+		"analysis_changed": *s.bools["analysis-changed"], "agents": *s.ints["agents"],
+		"width_reason": strVal(s.strs["width-reason"]), "subagent_tokens": intVal(s.ints["tokens"]),
+	}
+	if err := appendPlain(rec); err != nil {
+		return err
+	}
+	fmt.Fprintf(errOut, "runlog: cycle %d of %s (%d applied, %d agents)\n",
+		*s.ints["n"], id, *s.ints["applied"], *s.ints["agents"])
+	return nil
+}
+
+func cmdConvergence(id string, out, errOut io.Writer) int {
+	if len(loadRaw(StorePath(), 0).get(id)) == 0 {
+		fmt.Fprintln(errOut, "unknown")
+		return 2
+	}
+	c, _ := storedConvergence(id)
+	fmt.Fprintln(out, c)
+	if c == Converged {
+		return 0
+	}
+	return 1
+}
+
+func cmdFinish(s *sub, out, errOut io.Writer) error {
+	id := *s.strs["run-id"]
+	executed, err := objectArg(s.strs["executed"], "executed")
+	if err != nil {
+		return err
+	}
+	escalations, err := listArg(s.strs["escalations"], "escalations")
+	if err != nil {
+		return err
+	}
+	plan := loadRaw(StorePath(), 0).get(id)
+	planned := plannedGates(plan)
+	var unexplained []string
+	for _, g := range executed.keys {
+		v, ok := executed.m[g].(map[string]any)
+		if !ok || (v["status"] != "done" && strip(v["reason"]) == "") {
+			unexplained = append(unexplained, g)
+		}
+	}
+	sort.Strings(unexplained)
+	if len(unexplained) > 0 {
+		return fail("runlog: refusing to finish — these gates carry no usable account (a status "+
+			"other than \"done\" with no reason, or not a {\"status\":..,\"reason\":..} object "+
+			"at all):\n  %s\nA status says what happened; the reason is the part anyone reading "+
+			"this later actually needs. Give each one a measurable reason.", strings.Join(unexplained, ", "))
+	}
+	missing := unaccounted(planned, executed, escalations)
+	allow := *s.bools["allow-unaccounted"]
+	if len(missing) > 0 && !allow {
+		return fail("runlog: refusing to finish — the plan said to run these gates and the "+
+			"finish accounts for none of them:\n  %s\nGive each one an `executed` entry (status "+
+			"done/skipped/failed, with a reason for anything but done) or record an escalation. "+
+			"If they genuinely went unrun and you are recording that fact, pass "+
+			"--allow-unaccounted and the run is marked partial.", strings.Join(missing, ", "))
+	}
+	agents, err := listArg(s.strs["agents"], "agents")
+	if err != nil {
+		return err
+	}
+	for _, g := range missing {
+		executed.set(g, map[string]any{"status": "failed", "reason": "unaccounted at finish"})
+	}
+	tier, err := deriveTier(s.strs["tier"], executed, agents, planned, plan["tier_floor"], errOut)
+	if err != nil {
+		return err
+	}
+	findings, err := anyArg(s.strs["findings"], "findings")
+	if err != nil {
+		return err
+	}
+	outcome := *s.strs["outcome"]
+	rec := map[string]any{
+		"run_id": id, "phase": "finish", "finished_at": now(), "outcome": outcome,
+		"tier_executed": tier, "executed": executed.m, "escalations": escalations,
+		"agents": agents, "findings": findings, "unresolved_asks": intVal(s.ints["asks"]),
+		"head_at_finish": git("rev-parse", "HEAD"),
+	}
+	if err := appendRec(rec, reasonsIn(nil, executed, escalations, rec)); err != nil {
+		return err
+	}
+	// Said at finish, where it can still be fixed, rather than at the push gate.
+	conv, _ := storedConvergence(id)
+	hasCycles := false
+	if cy, ok := loadRaw(StorePath(), 0).get(id)["cycles"].([]any); ok && len(cy) > 0 {
+		hasCycles = true
+	}
+	switch {
+	case !hasCycles:
+		fmt.Fprintln(errOut, "runlog: WARNING — no cycle rows for this run, so convergence is "+
+			"unknown, which every consumer reads as 'did not converge'. Record each cycle with "+
+			"`looper record cycle`.")
+	case outcome == "clean" && conv != Converged:
+		fmt.Fprintf(errOut, "runlog: WARNING — outcome 'clean' but the cycle rows derive %s. "+
+			"The derivation is what the PR and the push gate read; `clean` here is a self-report "+
+			"that contradicts it. Record the missing cycle or fix the outcome.\n", pyRepr(conv))
+	}
+	fmt.Fprintf(out, "runlog: finished %s (%s; convergence: %s)\n", id, outcome, conv)
+	return nil
+}
+
+func cmdCarried(s *sub, out io.Writer) error {
+	frm, to, how := *s.strs["from"], *s.strs["to"], *s.strs["how"]
+	by := any("patch-id")
+	if p := s.strs["by"]; p != nil {
+		by = *p
+	}
+	if err := appendPlain(map[string]any{
+		"run_id": newRunID(), "phase": "finish", "finished_at": now(),
+		"repo": repoID(), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+		"head": to, "head_at_finish": to, "session_kind": sessionKind(),
+		"outcome": "carried", "tier_executed": "carried",
+		"carried_from": frm, "carried_how": how, "carried_by": by, "executed": map[string]any{},
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "runlog: recorded %s record carried %s -> %s\n", how, first(frm, 12), first(to, 12))
+	return nil
+}
+
+func first(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+func cmdSkipped(s *sub, out io.Writer) error {
+	reasonText := *s.strs["reason"]
+	// Two writes: a refusal on the second would leave the first behind as a phantom open run,
+	// so the reason is vetted once, up front.
+	if err := rejectBanned([]reason{{"this skip", reasonText}}); err != nil {
+		return err
+	}
+	model := "(none)"
+	if p := s.strs["model"]; p != nil {
+		model = *p
+	}
+	rid, head := newRunID(), git("rev-parse", "HEAD")
+	if err := appendPlain(map[string]any{
+		"run_id": rid, "repo": repoID(), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+		"head": head, "orchestrator_model": model, "session_kind": sessionKind(),
+		"session_id": sessionID(), "phase": "plan", "planned_at": now(),
+		"tier_floor": "skipped", "gates": map[string]any{},
+	}); err != nil {
+		return err
+	}
+	if err := appendPlain(map[string]any{
+		"run_id": rid, "phase": "finish", "finished_at": now(), "outcome": "skipped",
+		"tier_executed": "skipped", "executed": map[string]any{}, "skip_reason": reasonText,
+		"head_at_finish": head,
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, rid)
+	return nil
+}
+
+func cmdAbandon(s *sub, out io.Writer) error {
+	id, missing := *s.strs["run-id"], *s.strs["missing"]
+	// A finish is terminal: merged field-wise, an abandonment over it would sit beside that
+	// run's `executed: {all done}`.
+	if o := loadRaw(StorePath(), 0).get(id)["outcome"]; truthy(o) {
+		return fail("runlog: %s already finished as %s — not overwriting", id, pyRepr(o))
+	}
+	if strings.TrimSpace(missing) == "" {
+		return fail("runlog: --missing needs the gates that did not run — an abandonment with " +
+			"nothing named is the silent skip this record exists to prevent")
+	}
+	if err := appendPlain(map[string]any{
+		"run_id": id, "phase": "finish", "finished_at": now(), "outcome": "abandoned",
+		"abandoned_missing": missing, "head_at_finish": git("rev-parse", "HEAD"),
+	}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "runlog: marked %s abandoned — %s\n", id, missing)
+	return nil
+}
+
+// unfinished is planned runs in this repo with no finish, newest first. A run recorded without
+// a session id still matches a session filter: dropping it would stop guarding it silently.
+func unfinished(repo, head string, session any) []map[string]any {
+	s := loadRaw(StorePath(), tailLines())
+	var out []map[string]any
+	for _, id := range s.order {
+		run := s.runs[id]
+		// The FACT of being finished, not the latest phase: a row appended after `finish`
+		// overwrites `phase` in the merge and would resurrect a closed run.
+		if run["repo"] != repo || truthy(run["finished_at"]) || truthy(run["outcome"]) {
+			continue
+		}
+		if head != "" && run["head"] != head {
+			continue
+		}
+		if truthy(session) && truthy(run["session_id"]) && run["session_id"] != session {
+			continue
+		}
+		out = append(out, run)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return pyStrOrEmpty(out[i]["planned_at"]) > pyStrOrEmpty(out[j]["planned_at"])
+	})
+	return out
+}
+
+type openRun struct {
+	RunID        any       `json:"run_id"`
+	Head         any       `json:"head"`
+	TierFloor    any       `json:"tier_floor"`
+	PlannedGates []string  `json:"planned_gates"`
+	AlsoOpen     []openRun `json:"also_open,omitempty"`
+}
+
+func cmdCheck(s *sub, out io.Writer) (int, error) {
+	session := any(nil)
+	if p := s.strs["session"]; p != nil && *p != "" {
+		session = *p
+	} else {
+		session = sessionID()
+	}
+	var mine []map[string]any
+	for _, r := range unfinished(repoID(), orStr(s.strs["head"]), session) {
+		if id := orStr(s.strs["run-id"]); id == "" || r["run_id"] == id {
+			mine = append(mine, r)
+		}
+	}
+	if len(mine) == 0 {
+		fmt.Fprintln(out, "runlog: no unfinished run")
+		return 0, nil
+	}
+	// Every unfinished run, not just the newest: a session that re-planned after an error
+	// leaves an earlier one open.
+	var fresh []openRun
+	for _, r := range mine {
+		if r["phase"] != "nudge" || *s.bools["force"] {
+			fresh = append(fresh, openRun{r["run_id"], r["head"], r["tier_floor"], sortedKeys(plannedGates(r)), nil})
+		}
+	}
+	if len(fresh) == 0 {
+		fmt.Fprintln(out, "runlog: unfinished run already nudged")
+		return 0, nil
+	}
+	payload := fresh[0]
+	if len(fresh) > 1 {
+		payload.AlsoOpen = fresh[1:]
+	}
+	if err := writeIndented(out, payload); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// writeIndented is json.dumps(v, indent=1): the same layout, without HTML escaping.
+func writeIndented(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", " ")
+	return enc.Encode(v)
+}
+
+func cmdShow(id string, out io.Writer) error {
+	run := loadRaw(StorePath(), 0).get(id)
+	if len(run) == 0 {
+		return fail("runlog: no run %s", id)
+	}
+	return writeIndented(out, run)
+}
+
+// cmdPending is Step 0c's worklist: pending-report files whose run was planned on THIS branch.
+// The files live under the common dir, which every branch and linked worktree shares, so
+// listing them all would post another branch's report and label onto this PR.
+func cmdPending(out, errOut io.Writer) {
+	br := git("rev-parse", "--abbrev-ref", "HEAD")
+	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if br == "" || br == "HEAD" || common == "" {
+		fmt.Fprintln(errOut, "runlog: no current branch — pending reports left in place")
+		return
+	}
+	s := loadRaw(StorePath(), 0)
+	files, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*.md"))
+	sort.Strings(files)
+	for _, f := range files {
+		base := filepath.Base(f)
+		rid := strings.TrimSuffix(strings.TrimPrefix(base, "review-loop-pending-report."), ".md")
+		run := s.get(rid)
+		switch {
+		case run == nil:
+			fmt.Fprintf(errOut, "runlog: no run record for %s — left in place\n", f)
+		case run["branch"] == br:
+			fmt.Fprintln(out, f)
+		}
+	}
+}

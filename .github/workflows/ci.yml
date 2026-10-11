@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: narthur/skills
-          ref: b9f21b9d58a534e5fcaf154131d0f93fb7b63de3 # narthur/skills main, 2026-10-07
+          ref: 6993999796b2c782893e470ba27ce9f25fd0fad3 # narthur/skills main, 2026-10-11
           path: .parity-oracle
           persist-credentials: false
 
@@ -89,10 +89,12 @@ jobs:
           # every gate here green, measured. (Why it was left out is recorded nowhere, so this
           # comment no longer guesses at it, and the agent count that was here belongs in a commit
           # message, not in the tree.) The floor
-          # of 11 pins the table's WIDTH as well as the test's existence; the per-case `expect:`
+          # of 11 pins the table's WIDTH as well as the test's existence. Write is the write half's
+          # gate (looper record against runlog.py): 25 scenarios, each a SEQUENCE of calls, so its
+          # floor pins the scenario table and not the number of calls. The per-case `expect:`
           # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
           # entry, because two of the five store-path entries share one `expect:` string.
-          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11; do
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:25; do
             t=${spec%:*}; min=${spec#*:}
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
             # Two reasons written here before were wrong, and the third is deliberately
@@ -254,7 +256,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 244 ] || { echo "only $n mutations, expected at least 244 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 250 ] || { echo "only $n mutations, expected at least 250 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
