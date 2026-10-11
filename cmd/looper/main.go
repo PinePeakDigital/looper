@@ -416,8 +416,8 @@ func shouldReadStdin(in io.Reader) bool {
 	return st.Mode()&os.ModeCharDevice == 0
 }
 
-// version is the module version `go install ...@vX.Y.Z` stamped into the binary. A
-// checkout build gets a VCS pseudo-version instead, and "(devel)" only without VCS info.
+// version is the module version `go install ...@vX.Y.Z` stamped into the binary. Other
+// builds print a VCS pseudo-version (`go build`) or "(devel)" (`go run`, -buildvcs=false).
 func version() string {
 	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
 		return bi.Main.Version
