@@ -501,9 +501,12 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	}
 	// The label block only runs when a PR exists, and on a fresh branch there is none — the
 	// common case, since the push gate forces loop-then-push-then-PR. Say the label is still
-	// owed so Step 0c applies it.
-	note := fmt.Sprintf("\n<!-- review-loop: label review:%s still owed; Step 0c applies it "+
-		"with `looper pr-report --run-id %s --label` -->\n", conv, runID)
+	// owed so Step 0c applies it, and name the command that DOES: it used to name
+	// `looper pr-report --run-id <id> --label`, which applies nothing, since -label acts only
+	// with -post and -post would add a second comment. Step 0c posts this file as-is and
+	// labels with gh.
+	note := fmt.Sprintf("\n<!-- review-loop: label review:%s still owed for run %s; Step 0c "+
+		"applies it with `gh pr edit <n> --add-label review:%s` -->\n", conv, runID, conv)
 	if err := os.WriteFile(path, []byte(body+note), 0o644); err != nil {
 		return "", err
 	}
