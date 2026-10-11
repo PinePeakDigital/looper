@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinepeakdigital/looper/internal/report"
 )
@@ -59,8 +60,8 @@ func doRun(t *testing.T, args ...string) (int, string, string) {
 	return doRunIn(t, strings.NewReader(""), args...)
 }
 
-// doRunIn is doRun with a stdin to feed: pr-report reads its narrative from there when no
-// -findings-file is named, which is how the skill pipes an orchestrator's findings in.
+// doRunIn is doRun with a stdin to feed: pr-report reads its narrative from there under
+// `-findings-file -`, which is how the skill pipes an orchestrator's findings in.
 func doRunIn(t *testing.T, in io.Reader, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -445,9 +446,9 @@ func TestPrReportWritesTheBodyToStdout(t *testing.T) {
 
 func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
 	store := prReportStore(t, "pr1")
-	t.Run("stdin", func(t *testing.T) {
+	t.Run("stdin, when asked for with -findings-file -", func(t *testing.T) {
 		code, out, errOut := doRunIn(t, strings.NewReader("two real defects\n"),
-			"pr-report", "-run-id", "pr1", "-store", store)
+			"pr-report", "-run-id", "pr1", "-store", store, "-findings-file", "-")
 		if code != 0 {
 			t.Fatalf("exit = %d: stderr %q", code, errOut)
 		}
@@ -455,14 +456,26 @@ func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
 			t.Errorf("the narrative from stdin is missing:\n%s", out)
 		}
 	})
+	// The RULE end to end, not readNarrative alone: with the flag's default flipped to "-",
+	// every readNarrative test stayed green while the CLI went back to reading stdin unasked,
+	// which is the hang this rule removed. Measured by the cycle-1 reviewer.
+	t.Run("stdin without the flag is not read", func(t *testing.T) {
+		code, out, errOut := doRunIn(t, strings.NewReader("from stdin\n"),
+			"pr-report", "-run-id", "pr1", "-store", store)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if strings.Contains(out, "from stdin") {
+			t.Errorf("stdin was read without -findings-file -:\n%s", out)
+		}
+	})
 	t.Run("a findings file", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "findings.md")
 		if err := os.WriteFile(f, []byte("- one thing\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// Stdin is fed too, and must LOSE: -findings-file is the explicit channel, and a
-		// piped-in stdin that silently won would append whatever the shell happened to hand
-		// the process.
+		// Stdin is fed too, and must be ignored: a named file is the narrative, and a stdin
+		// that leaked in would append whatever the shell happened to hand the process.
 		code, out, errOut := doRunIn(t, strings.NewReader("from stdin"),
 			"pr-report", "-run-id", "pr1", "-store", store, "-findings-file", f)
 		if code != 0 {
@@ -649,6 +662,37 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 	if !strings.Contains(errOut, "deferred to") || !strings.Contains(errOut, "no PR for this branch yet") {
 		t.Errorf("stderr does not say where the report went: %q", errOut)
 	}
+	// No -findings-file, so the narrative half is empty, and that must be visible: before
+	// stdin became opt-in a narrative piped in without the flag was read, and after it the
+	// same pipe is silently dropped unless something says so.
+	if !strings.Contains(errOut, "stdin is piped but not read") {
+		t.Errorf("a post with no narrative was silent about it: %q", errOut)
+	}
+	// The shape production hands it: os.Stdin is always an *os.File, so the MODE decides,
+	// and the strings.Reader above never reaches that check. With the check returning false
+	// for every pipe, the whole tree stayed green (measured by the cycle-2 reviewer).
+	prd, pwr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = pwr.WriteString("a narrative nobody asked for\n")
+	_ = pwr.Close()
+	defer prd.Close()
+	if _, _, errOut := doRunIn(t, prd, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post"); !strings.Contains(errOut, "stdin is piped but not read") {
+		t.Errorf("a real pipe without -findings-file - was dropped silently: %q", errOut)
+	}
+	// And quiet when stdin is a character device: a `</dev/null` flush has no narrative to
+	// lose, and a warning on every one of those is noise that buries the real case.
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	if _, _, errOut := doRunIn(t, devnull, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post"); strings.Contains(errOut, "stdin is piped") {
+		t.Errorf("a </dev/null post warned about a narrative it could not have had: %q", errOut)
+	}
 	b, err := os.ReadFile(filepath.Join(dir, ".git", "info", "review-loop-pending-report.pr1.md"))
 	if err != nil {
 		t.Fatalf("the report was not kept: %v", err)
@@ -677,117 +721,51 @@ func TestPrReportDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 	}
 }
 
-// readNarrative's *os.File branch, which no test reached: every other test drives run() with a
-// strings.Reader, so the type assertion always failed and the tty check — the thing the
-// function's own comment says it exists for — never ran. os.Stdin in production is always an
-// *os.File, so this was the shape that ships.
-func TestTheNarrativeReadsARealFile(t *testing.T) {
-	t.Run("a regular file is read through", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "narrative.md")
-		if err := os.WriteFile(p, []byte("from a real file\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		got, err := readNarrative("", f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "from a real file\n" {
-			t.Errorf("a regular *os.File was not read through: %q", got)
-		}
-	})
-
-	t.Run("a pipe is read through", func(t *testing.T) {
-		rd, wr, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			_, _ = wr.WriteString("from a pipe")
-			_ = wr.Close()
-		}()
-		got, err := readNarrative("", rd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "from a pipe" {
-			t.Errorf("a pipe was not read through: %q", got)
-		}
-	})
-
-	// The DECISION, not the result. Asserting readNarrative's return value for /dev/null
-	// could not fail: reading /dev/null yields "" too, so the subtest passed with the entire
-	// guard deleted — the same vacuous-assertion class cycle 1 had just fixed elsewhere,
-	// reproducible by removing the guard and watching this stay green.
-	// shouldReadStdin exists so the branch itself is observable.
-	t.Run("stdin is not read when it is a character device", func(t *testing.T) {
-		f, err := os.Open(os.DevNull)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if st.Mode()&os.ModeCharDevice == 0 {
-			t.Skipf("%s is not a character device on this platform", os.DevNull)
-		}
-		if shouldReadStdin(f) {
-			t.Error("a character device would be read, so an interactive run can hang on a " +
-				"read nobody is going to feed")
-		}
-	})
-
-	// The CALL SITE, which the two subtests around it do not reach: they assert the predicate,
-	// and readNarrative can stop consulting it with every one of them still green — measured,
-	// the whole tree stays green with the `if !shouldReadStdin(in)` line deleted. Extracting
-	// the predicate so the decision was observable moved the vacuity up one level instead of
-	// closing it.
-	//
-	// A CLOSED *os.File is what distinguishes the two: Stat fails, so the guard answers "do
-	// not read" and readNarrative returns empty with no error, while an unguarded read reports
-	// "file already closed". /dev/null cannot do this job — reading it succeeds and yields ""
-	// either way, which is how the first version of this test could not fail. The same fixture
-	// is the only thing that reaches shouldReadStdin's own Stat-error arm.
-	t.Run("a closed stdin is not read, so the guard is still consulted", func(t *testing.T) {
-		f, err := os.Open(os.DevNull)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := f.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if shouldReadStdin(f) {
-			t.Error("a reader whose Stat fails would be read, so an unreadable stdin can hang " +
-				"the command instead of being skipped")
-		}
-		got, err := readNarrative("", f)
-		if err != nil {
-			t.Errorf("readNarrative read a stdin the guard rejects, so the guard is no longer "+
-				"consulted: %v", err)
-		}
-		if got != "" {
-			t.Errorf("a rejected stdin produced a narrative: %q", got)
-		}
-	})
-
-	t.Run("stdin IS read when it is a pipe or a plain reader", func(t *testing.T) {
+// Stdin is opt-in. Before, it was read whenever it was not a terminal, so an inherited pipe
+// that nobody writes to (an agent harness's stdin) hung `pr-report --post` with no output.
+// The fixture is exactly that: an *os.File pipe whose writer stays open. Without the flag
+// the read must not happen; a regression blocks, which the timeout turns into a failure
+// instead of a hung test binary.
+func TestStdinIsReadOnlyWhenAskedFor(t *testing.T) {
+	t.Run("an idle pipe is not read without -findings-file -", func(t *testing.T) {
 		rd, wr, err := os.Pipe()
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer rd.Close()
 		defer wr.Close()
-		if !shouldReadStdin(rd) {
-			t.Error("a pipe would not be read, so a piped-in narrative is silently dropped")
+		type result struct {
+			got string
+			err error
 		}
-		if !shouldReadStdin(strings.NewReader("x")) {
-			t.Error("a non-*os.File would not be read, so the skill's own callers are ignored")
+		done := make(chan result, 1)
+		go func() {
+			got, err := readNarrative("", rd)
+			done <- result{got, err}
+		}()
+		select {
+		case r := <-done:
+			if r.err != nil || r.got != "" {
+				t.Errorf("no flag gave %q, %v; want an empty narrative", r.got, r.err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("readNarrative blocked on a pipe nobody writes to: stdin is being read " +
+				"without -findings-file -, which hangs an orchestrator's pr-report")
+		}
+	})
+	t.Run("a real pipe is read under -findings-file -", func(t *testing.T) {
+		rd, wr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rd.Close()
+		go func() {
+			_, _ = wr.WriteString("from a pipe")
+			_ = wr.Close()
+		}()
+		got, err := readNarrative("-", rd)
+		if err != nil || got != "from a pipe" {
+			t.Errorf("-findings-file - gave %q, %v; want the piped narrative", got, err)
 		}
 	})
 }

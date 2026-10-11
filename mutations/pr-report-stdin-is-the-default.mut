@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportTakesTheNarrativeFromStdinAndFromAFile/stdin_without'
+expect: --- FAIL:
+why:    the opt-in rule lives in two places, readNarrative and the flag's default, and only the first had a test: with the default flipped to "-", every readNarrative test stayed green while the CLI went back to reading stdin unasked — the inherited-pipe hang this rule removed. Measured by the cycle-1 reviewer in a clean export.
+--- old
+	findingsFile := fs.String("findings-file", "", 
+--- new
+	findingsFile := fs.String("findings-file", "-", 

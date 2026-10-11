@@ -213,7 +213,7 @@ now names the run id, so the command can be run as printed.
 Renders the Step 14 review disclosure from the run record, and publishes it.
 
 ```text
-looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
                  [-repo dir] [-branch b] [-store path]
 ```
 
@@ -225,8 +225,10 @@ flush. The body is never dropped: a report that exists in neither place is what 
 
 The split the Python states and this keeps: **facts** come from the record and are not
 retyped by the orchestrator, so they cannot drift from what was recorded; the
-**narrative** arrives on stdin or via `-findings-file` and is appended verbatim, because
-what the agents found is not derivable and must not be faked.
+**narrative** arrives via `-findings-file` (a path, or `-` for stdin) and is appended verbatim,
+because what the agents found is not derivable and must not be faked. Stdin is read only under
+`-findings-file -`: the older rule, read it whenever it is not a terminal, hung an
+orchestrator's `pr-report --post` on an inherited pipe that nobody writes to.
 
 **It refuses a run it cannot read.** `record.Load` returns an empty map and no error for
 a mistyped id or a wrong `-store`, and a report rendered from that is not an empty

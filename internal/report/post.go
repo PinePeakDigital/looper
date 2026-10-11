@@ -454,6 +454,13 @@ func applyLabel(p PostParams, num string, diag func(string, ...any)) {
 			continue
 		}
 		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
+			// gh resolves names against the REPO's labels first and answers "'<name>' not found"
+			// for one the repo does not have (cli/cli api/queries_repo.go, LabelsToIDs). Only
+			// the applied label is ever created, so that is most of them on most repos, and a
+			// label the repo lacks cannot be on the PR: nothing is left standing.
+			if strings.Contains(r.Err, "'"+l.Name+"' not found") {
+				continue
+			}
 			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
 		}
 	}

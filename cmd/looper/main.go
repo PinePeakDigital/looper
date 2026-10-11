@@ -22,7 +22,7 @@ const usage = `usage: looper version
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
                          [-repo dir] [-store path]
-       looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+       looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
                         [-repo dir] [-branch b] [-store path]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
@@ -278,7 +278,7 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	// usage banner mixed into it would be posted as the review disclosure on the next run.
 	fs.SetOutput(errOut)
 	runID := fs.String("run-id", "", "the run to render from the record (required)")
-	findingsFile := fs.String("findings-file", "", "the orchestrator's narrative; \"-\" or omitted reads stdin")
+	findingsFile := fs.String("findings-file", "", "the orchestrator's narrative: a path, or \"-\" for stdin; stdin is read only then")
 	post := fs.Bool("post", false, "comment on this branch's PR, or keep the report for Step 0c")
 	label := fs.Bool("label", false, "also apply the review:<convergence> label")
 	repo := fs.String("repo", ".", "the repo to run git and gh in")
@@ -363,6 +363,15 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		_, err = io.WriteString(out, body)
 		return err
 	}
+	if *findingsFile == "" && stdinOffered(in) {
+		// Stdin is not read without the flag, and a narrative piped in without it is otherwise
+		// lost without a trace: the report posts, exit 0, and reads like a run with nothing to say.
+		// Advice for both readings, because the mode cannot tell them apart: "-findings-file -"
+		// on an idle inherited pipe is exactly the hang opt-in removed.
+		fmt.Fprintln(errOut, "pr-report: stdin is piped but not read, so the report carries no "+
+			"narrative. If one was piped, re-run with -findings-file -; if not, run with "+
+			"</dev/null to silence this")
+	}
 	_, err = report.Post(report.PostParams{
 		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
 		Body: body, Label: *label, Diag: errOut,
@@ -370,50 +379,36 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	return err
 }
 
-// readNarrative resolves the narrative the same way the Python does: a named file, else stdin
-// when stdin is not a terminal.
+// readNarrative takes the narrative from -findings-file: a path, or "-" for stdin. Stdin is
+// opt-in. It used to be read whenever it was not a terminal, the Python's rule, and an
+// inherited pipe that nobody writes to is not a terminal either: on 2026-10-11 an orchestrator
+// flushing a report by hand ran `looper pr-report --post` with its harness's stdin and it sat
+// silent for minutes until killed. No test can tell an idle pipe from a slow writer, so the
+// caller says which it means.
 func readNarrative(path string, in io.Reader) (string, error) {
-	if path != "" && path != "-" {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return "", err
-		}
-		return string(b), nil
-	}
-	if !shouldReadStdin(in) {
+	if path == "" {
 		return "", nil
 	}
-	b, err := io.ReadAll(in)
-	if err != nil {
-		return "", err
+	if path == "-" {
+		b, err := io.ReadAll(in)
+		return string(b), err
 	}
-	return string(b), nil
+	b, err := os.ReadFile(path)
+	return string(b), err
 }
 
-// shouldReadStdin is the tty test, split out as its own function so it can be ASSERTED.
-// Folded into readNarrative it could not be: the only observable difference between taking the
-// branch and not taking it is whether a read happens, and the obvious fixture — /dev/null —
-// returns the empty string either way, so a test of readNarrative's RESULT passed identically
-// with the whole guard deleted. Reproduce it by deleting the guard and running the package.
-//
-// What the guard is for: an interactive `looper pr-report` must not block on a read nobody is
-// going to feed. A character device is a terminal, or /dev/zero, which never EOFs at all;
-// /dev/null is one too and EOFs immediately, which is exactly why it cannot serve as the
-// fixture. The `!ok` arm is for a reader that is not an *os.File at all — a strings.Reader —
-// and NOT for a pipe: os.Pipe returns *os.File, so a pipe goes through Stat and is read
-// because its mode is ModeNamedPipe. In production `in` is always os.Stdin, so that arm is
-// reached only by this package's tests; it exists because run() takes an io.Reader, and a
-// caller that hands one over has already decided to supply a narrative.
-func shouldReadStdin(in io.Reader) bool {
+// stdinOffered reports whether stdin LOOKS like it carries a narrative — a pipe or a file —
+// from its mode alone. Stat never blocks, which is the difference from reading it: an idle
+// inherited pipe is indistinguishable from a real one by mode, so this can only warn, never
+// read. A terminal or </dev/null is a character device and stays quiet. A reader that is not
+// an *os.File is something a caller handed over on purpose, so it counts as offered.
+func stdinOffered(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {
 		return true
 	}
 	st, err := f.Stat()
-	if err != nil {
-		return false // cannot tell, so do not risk hanging
-	}
-	return st.Mode()&os.ModeCharDevice == 0
+	return err == nil && st.Mode()&os.ModeCharDevice == 0
 }
 
 // version is the module version `go install ...@vX.Y.Z` stamped into the binary. Other

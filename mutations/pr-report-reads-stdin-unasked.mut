@@ -1,0 +1,12 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestStdinIsReadOnlyWhenAskedFor/an_idle_pipe'
+expect: --- FAIL:
+why:    stdin is read only under `-findings-file -`. The earlier rule, the Python's, read it whenever it was not a terminal, and an inherited pipe nobody writes to is not a terminal: on 2026-10-11 an orchestrator flushing a report by hand ran `looper pr-report --post` with its harness's stdin, and it sat silent for minutes until killed. This restores the implicit read; the test hands it an idle pipe and fails on the timeout instead of hanging.
+--- old
+	if path == "" {
+		return "", nil
+	}
+--- new
+	if path == "" {
+		path = "-"
+	}

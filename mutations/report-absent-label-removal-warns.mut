@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestAFailedLabelRemovalIsReported'
+expect: --- FAIL:
+why:    every post tries to remove the three convergence labels it is not applying, and gh resolves those names against the repo's labels before removing anything. applyLabel only ever creates the label it applies, so on most repos the others do not exist and gh answers "'review:unknown' not found" (cli/cli LabelsToIDs). Reported as "not removed, so two may now stand at once", that warning fired on every run with nothing standing, measured on the first v0.2.2 post, and a warning that always fires buries the one that means a PR really does carry two convergences.
+--- old
+			if strings.Contains(r.Err, "'"+l.Name+"' not found") {
+--- new
+			if false && strings.Contains(r.Err, "'"+l.Name+"' not found") {

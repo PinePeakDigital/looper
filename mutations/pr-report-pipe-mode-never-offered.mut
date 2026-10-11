@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportPostDefersAndReportsWhereTo'
+expect: --- FAIL:
+why:    os.Stdin is always an *os.File, so in production the mode check alone decides whether a narrative piped without -findings-file - is reported or dropped in silence. The first tests reached only the non-*os.File branch, and with this line made false for every pipe the whole tree stayed green — measured by the cycle-2 reviewer in a clean export.
+--- old
+	return err == nil && st.Mode()&os.ModeCharDevice == 0
+--- new
+	return err == nil && st.Mode()&os.ModeCharDevice == 0 && false
