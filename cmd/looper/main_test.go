@@ -668,6 +668,20 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 	if !strings.Contains(errOut, "stdin is piped but not read") {
 		t.Errorf("a post with no narrative was silent about it: %q", errOut)
 	}
+	// The shape production hands it: os.Stdin is always an *os.File, so the MODE decides,
+	// and the strings.Reader above never reaches that check. With the check returning false
+	// for every pipe, the whole tree stayed green (measured by the cycle-2 reviewer).
+	prd, pwr, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = pwr.WriteString("a narrative nobody asked for\n")
+	_ = pwr.Close()
+	defer prd.Close()
+	if _, _, errOut := doRunIn(t, prd, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post"); !strings.Contains(errOut, "stdin is piped but not read") {
+		t.Errorf("a real pipe without -findings-file - was dropped silently: %q", errOut)
+	}
 	// And quiet when stdin is a character device: a `</dev/null` flush has no narrative to
 	// lose, and a warning on every one of those is noise that buries the real case.
 	devnull, err := os.Open(os.DevNull)

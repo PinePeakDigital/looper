@@ -366,8 +366,11 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	if *findingsFile == "" && stdinOffered(in) {
 		// Stdin is not read without the flag, and a narrative piped in without it is otherwise
 		// lost without a trace: the report posts, exit 0, and reads like a run with nothing to say.
+		// Advice for both readings, because the mode cannot tell them apart: "-findings-file -"
+		// on an idle inherited pipe is exactly the hang opt-in removed.
 		fmt.Fprintln(errOut, "pr-report: stdin is piped but not read, so the report carries no "+
-			"narrative — pass -findings-file - to include it")
+			"narrative. If one was piped, re-run with -findings-file -; if not, run with "+
+			"</dev/null to silence this")
 	}
 	_, err = report.Post(report.PostParams{
 		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
