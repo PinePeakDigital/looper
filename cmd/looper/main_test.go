@@ -543,8 +543,11 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 // Refused at the command rather than cell()ed in Render: cell() would rewrite the marker that
 // the push gate matches, hardening one gate by breaking the other, and Render has to stay
 // byte-comparable with the oracle for the 89 fixture cases and every run in the author's live
-// store. (No count here on purpose: that number grows every time the loop runs — it was 42
-// when first written and is 44 now — so TestRealStoreParity logs its own total instead.)
+// store. (No count here on purpose: that number grows every time the loop runs — 42 when this
+// was written, 45 at the latest check, and it moved twice in one evening — so
+// TestRealStoreParity logs its own total instead. This comment was right first; every other
+// site in this repo that DID carry a census has since been reduced to a ratio for the same
+// reason, after a date-qualified count went stale nine minutes after it was written.)
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	for _, id := range []string{
 		// The `-->` case FIRST, because it is the one that justifies the guard and it had no

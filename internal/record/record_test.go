@@ -1390,8 +1390,10 @@ func contains(ss []string, want string) bool {
 //
 // The reason this matters more than it looks: a gate reading a different store than the oracle
 // answers `unknown` for EVERY run, with no error anywhere. `Finish` is nil, so a recorded
-// `test-failure` never reaches the blocker — and for a run with NO cycle rows, which is 22 of
-// the live store's 41, nothing at all is left standing: the empty record fingerprints as
+// `test-failure` never reaches the blocker — and for a run with NO cycle rows, which is about
+// HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 — the store
+// gains runs several times a day, so re-derive rather than trust the figure), nothing at all
+// is left standing: the empty record fingerprints as
 // `0 cycle(s) · 0 agent(s)`, which is exactly what pr-report.py renders for such a run, so a
 // genuine posted report satisfies the gate and the push is GRANTED. Measured end to end.
 // unsetHOME removes $HOME for the duration of t and restores it afterwards. Three copies of

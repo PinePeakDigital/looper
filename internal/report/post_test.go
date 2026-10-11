@@ -379,17 +379,31 @@ func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
 		"a*b", "a[b", "a]b", "a(b", "a{b", "a\"b", "a'b", "a\\b", "a~b", "a$b", "a%b", "a&b",
 		"a+b", "a=b", "a:b", "a;b", "a,b", "a?b", "a@b", "a^b",
 	}
-	// Every single BYTE, and `string([]byte{...})` not `string(rune(b))`, which is the whole
-	// point. `string(rune(0x80))` is the two-byte UTF-8 encoding of U+0080, so the rune form
-	// enumerates U+0000-U+00FF and the raw bytes 0x80-0xFF never appear alone — exactly the
-	// widening the comment claimed to seal. This package ranges over RUNES and the push gate
-	// matches a regexp on the string, so an invalid UTF-8 byte is the one input where the two
-	// could most plausibly disagree, and for 128 of 256 iterations it was never tried.
+	// The LENGTH UNIT is the real structural asymmetry between the two halves, and until these
+	// three cases it was unasserted. This package tests `len(s) > 64`, which counts BYTES;
+	// push's `{1,64}` is an RE2 repeat of a rune class, which counts RUNES. Both allowed sets
+	// are pure ASCII today, so every string either side ACCEPTS has len(bytes) == len(runes)
+	// and the two are provably equivalent — but widen either set to one non-ASCII character
+	// and they diverge at exactly 64, with nothing here to notice. A measured sweep of every
+	// 1-, 2- and 3-byte string (16,843,008 inputs) found 0 disagreements, so these are not
+	// pinning a live bug; they are pinning the bound that a widening would cross first.
+	ids = append(ids,
+		strings.Repeat("é", 32),     // 64 bytes, 32 runes
+		strings.Repeat("é", 64),     // 128 bytes, 64 runes — the unit decides this one
+		strings.Repeat("a", 63)+"é", // 65 bytes, 64 runes
+	)
+	// Every single BYTE, and `string([]byte{...})` not `string(rune(b))`. `string(rune(0x80))`
+	// is the two-byte UTF-8 encoding of U+0080, so the rune form enumerates U+0000-U+00FF and
+	// the raw bytes 0x80-0xFF never appear alone — exactly the widening the comment claimed to
+	// seal, for 128 of its 256 iterations. (An earlier version of this comment called an
+	// invalid UTF-8 byte "the one input where the two could most plausibly disagree". That is
+	// the one thing it got wrong: both sides reject every non-ASCII byte by construction, so
+	// it is a non-divergence. The length unit above is the asymmetry that can actually bite.)
 	for b := 0; b < 256; b++ {
 		ids = append(ids, "a"+string([]byte{byte(b)})+"b")
 	}
-	// Both forms, since the rune spellings are a real input class too (`é` is already in the
-	// table above, and a two-byte sequence is what a UTF-8 terminal actually sends).
+	// The rune spellings too — a UTF-8 terminal sends multi-byte sequences, not lone bytes.
+	// Duplicates the first loop for 0-127, which costs nothing and keeps each loop readable.
 	for r := 0; r < 256; r++ {
 		ids = append(ids, "a"+string(rune(r))+"b")
 	}
@@ -715,10 +729,13 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// EXITS leaves `Drained` true and a decodable answer, and no oracle in this output can
 		// separate it from gh having answered. That residue is a deferred finding, not a hole
 		// this test pretends to close.
-		// No warm-up here, unlike the two subtests above, and that is the point of saying so:
-		// FindPR goes through the production 20s budget, where first-exec cost (134-304ms
-		// measured, p50 ~142ms) cannot lose the race to the `&`. A warm-up copied here would
-		// read as load-bearing in a file whose comments are the reviewed artifact.
+		// No warm-up here, unlike the two subtests above, and there is no timing margin to
+		// quote: there is no race at all. The shim backgrounds the WHOLE `(printf …; sleep 5)`,
+		// so the shell exits at once, cmd.WaitDelay fires at 1s against a 20s budget, Wait
+		// returns ErrWaitDelay with ctx.Err() == nil, and Drained goes false regardless of what
+		// exec cost. The sibling subtests need a warm-up because their budget is 300ms, which
+		// first-exec cost can actually beat. A warm-up copied here would read as load-bearing
+		// in a file whose comments are the reviewed artifact.
 		dir := gitRepo(t)
 		shimGh(t, `(printf '[{"number":42}]\n'; sleep 5) &`)
 		if got := FindPR(dir, "feature"); got.State == PRFound {

@@ -174,9 +174,9 @@ missing file, a mistyped `-run-id`, or every row for that run torn — the recor
 as empty *with no error*. Convergence then reads `unknown`, which is a disclosure
 rather than a block; no recorded outcome can block, because there is none; and the
 required report fingerprint collapses to `0 cycle(s) · 0 agent(s)`, which is exactly
-what `pr-report.py` renders for a run with no cycle rows — 22 of the 44 runs in the
-author's own store as of 2026-10-10, a figure dated because the store is append-only, lives
-outside the repo, and an unqualified count goes stale on the next run. So a *genuine* report, rendered by the real tool for a real
+what `pr-report.py` renders for a run with no cycle rows — about half the runs in the author's own
+store (22 of 45 when last counted) — a figure given as a ratio because the store lives
+outside the repo and gains runs several times a day, so no commit pin and no date fixes it. So a *genuine* report, rendered by the real tool for a real
 zero-cycle run, satisfies the gate off a record that said nothing, with no forgery at
 all. Measured: changing only `$HOME` turned a recorded `test-failure` refusal into a
 granted push, in both implementations.

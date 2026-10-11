@@ -18,7 +18,7 @@ import (
 // this path, unlike the push gate's, so there is nothing to decode around.
 //
 // The fixtures are deliberately not the real store. TestRealStoreParity compares every real
-// run in the live store (44 of them as of 2026-10-10) and they agree, but the store exercises
+// run in the live store and they agree, but the store exercises
 // none of the shapes that actually diverged while this port was written: measured over it, every gate carries a string status, every escalation
 // names a gate, every roster id is a string, and `planned` is always "run" or "skip". The
 // states worth pinning are the ones no row happens to hold.
@@ -119,13 +119,15 @@ func TestParityWithPrReport(t *testing.T) {
 	}{
 		// The floor: a plan row and nothing else. Zero cycles is the `unknown` disclosure,
 		// which both must word identically because the push gate reads it as a DISCLOSURE
-		// rather than a block, and most of the real store is this shape — 22 of its 44 runs as
-		// of 2026-10-10. DATED, not pinned to a commit: the store is append-only and lives
-		// outside the repo, so a repo sha never identified a state of it. The pin here read
-		// `22d086e` for several passes and was provably wrong — that commit is dated
-		// 2026-10-09 and the 44th run arrived on the 10th — while report.go:95 carried `42 at
-		// 22d086e` for the same store, which is the two-different-totals condition this
-		// comment exists to prevent, surviving the correction that renumbered one of them.
+		// rather than a block, and most of the real store is this shape — about HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 19:50 — the store gains runs several times a day, so re-derive rather than trust the figure: group its rows by run_id and count those with no `cycle` row).
+		// Neither pinned to a commit NOR relied on as a figure, and both halves of that are
+		// earned. The pin here read `22d086e` for several passes and was provably wrong: that
+		// commit is dated 2026-10-09 and the 44th run arrived on the 10th, while report.go
+		// carried `42 at 22d086e` for the same store — the two-different-totals condition this
+		// comment exists to prevent, surviving the correction that renumbered one of them. The
+		// DATE that replaced it lasted nine minutes: the review run that checked the
+		// replacement was itself the 45th row. A store this repo's own workflow appends to
+		// several times a day has no stable census, so what is asserted is the SHAPE.
 		{"plan only", []string{plan("")}},
 		{"plan and finish, no cycles", []string{plan(""), finishRow("")}},
 
@@ -422,7 +424,7 @@ func TestParityOnTheNarrative(t *testing.T) {
 }
 
 // The enumerated divergences, and the whole of them: every shape found by rendering every
-// real run in the live store (44 as of 2026-10-10; it grows every run) plus a probe over
+// real run in the live store (it grows every run, so the count is not asserted) plus a probe over
 // every (site, value) state the Python's duck typing accepts.
 // Stated as tests rather than comments so the day one of them is what matters — or the day
 // someone closes one — this says which half moved.
