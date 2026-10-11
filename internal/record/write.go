@@ -76,12 +76,17 @@ func tailLines() int {
 }
 
 // loadRaw is runlog.load(limit). limit <= 0 reads the whole store. The tail counts LINES, blank
-// ones included, the way deque(fh, maxlen=limit) does.
-func loadRaw(path string, limit int) runStore {
+// ones included, the way deque(fh, maxlen=limit) does. Only a missing store reads as empty, as
+// runlog.load's `except FileNotFoundError` has it: an unreadable one is an error, never "no runs",
+// or `check` tells the Stop hook nothing is open and `finish` skips its plan-based refusals.
+func loadRaw(path string, limit int) (runStore, error) {
 	s := runStore{runs: map[string]map[string]any{}}
 	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return s, nil
+	}
 	if err != nil {
-		return s
+		return s, fail("runlog: cannot read the run store: %v", err)
 	}
 	// Python's text mode splits on \n, \r\n AND a bare \r, so a bare \r ends a record there too.
 	text := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n")
@@ -123,7 +128,7 @@ func loadRaw(path string, limit int) runStore {
 			run[k] = v
 		}
 	}
-	return s
+	return s, nil
 }
 
 // truthy is Python's bool().
@@ -872,8 +877,7 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		if err := s.parse(args, nil); err != nil {
 			return 0, err
 		}
-		cmdPending(out, errOut)
-		return 0, nil
+		return 0, cmdPending(out, errOut)
 	}
 	return 2, nil
 }
@@ -949,7 +953,10 @@ func cmdPlan(s *sub, out io.Writer) error {
 
 func cmdCycle(s *sub, errOut io.Writer) error {
 	id := *s.strs["run-id"]
-	store := loadRaw(StorePath(), 0)
+	store, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
 	prior := store.get(id)
 	if len(prior) == 0 {
 		return fail("runlog: no plan for run %s — record the plan first", pyRepr(id))
@@ -982,7 +989,12 @@ func cmdCycle(s *sub, errOut io.Writer) error {
 }
 
 func cmdConvergence(id string, out, errOut io.Writer) int {
-	if len(loadRaw(StorePath(), 0).get(id)) == 0 {
+	store, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	if len(store.get(id)) == 0 {
 		fmt.Fprintln(errOut, "unknown")
 		return 2
 	}
@@ -1012,7 +1024,11 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 	if m, ok := escalations.(map[string]any); ok && len(m) == 0 {
 		escalations = []any{}
 	}
-	plan := loadRaw(StorePath(), 0).get(id)
+	store, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
+	plan := store.get(id)
 	planned := plannedGates(plan)
 	var unexplained []string
 	for _, g := range executed.keys {
@@ -1069,7 +1085,7 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 	// Said at finish, where it can still be fixed, rather than at the push gate.
 	conv, cerr := storedConvergence(id)
 	hasCycles := false
-	if cy, ok := loadRaw(StorePath(), 0).get(id)["cycles"].([]any); ok && len(cy) > 0 {
+	if cy, ok := store.get(id)["cycles"].([]any); ok && len(cy) > 0 {
 		hasCycles = true
 	}
 	switch {
@@ -1151,7 +1167,11 @@ func cmdAbandon(s *sub, out io.Writer) error {
 	id, missing := *s.strs["run-id"], *s.strs["missing"]
 	// A finish is terminal: merged field-wise, an abandonment over it would sit beside that
 	// run's `executed: {all done}`.
-	if o := loadRaw(StorePath(), 0).get(id)["outcome"]; truthy(o) {
+	store, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
+	if o := store.get(id)["outcome"]; truthy(o) {
 		return fail("runlog: %s already finished as %s — not overwriting", id, pyRepr(o))
 	}
 	if pyStrip(missing) == "" {
@@ -1170,8 +1190,11 @@ func cmdAbandon(s *sub, out io.Writer) error {
 
 // unfinished is planned runs in this repo with no finish, newest first. A run recorded without
 // a session id still matches a session filter: dropping it would stop guarding it silently.
-func unfinished(repo, head string, session any) []map[string]any {
-	s := loadRaw(StorePath(), tailLines())
+func unfinished(repo, head string, session any) ([]map[string]any, error) {
+	s, err := loadRaw(StorePath(), tailLines())
+	if err != nil {
+		return nil, err
+	}
 	var out []map[string]any
 	for _, id := range s.order {
 		run := s.runs[id]
@@ -1191,7 +1214,7 @@ func unfinished(repo, head string, session any) []map[string]any {
 	sort.SliceStable(out, func(i, j int) bool {
 		return pyStrOrEmpty(out[i]["planned_at"]) > pyStrOrEmpty(out[j]["planned_at"])
 	})
-	return out
+	return out, nil
 }
 
 type openRun struct {
@@ -1209,8 +1232,12 @@ func cmdCheck(s *sub, out io.Writer) (int, error) {
 	} else {
 		session = sessionID()
 	}
+	open, err := unfinished(repoID(), orStr(s.strs["head"]), session)
+	if err != nil {
+		return 0, err
+	}
 	var mine []map[string]any
-	for _, r := range unfinished(repoID(), orStr(s.strs["head"]), session) {
+	for _, r := range open {
 		if id := orStr(s.strs["run-id"]); id == "" || r["run_id"] == id {
 			mine = append(mine, r)
 		}
@@ -1250,7 +1277,11 @@ func writeIndented(w io.Writer, v any) error {
 }
 
 func cmdShow(id string, out io.Writer) error {
-	run := loadRaw(StorePath(), 0).get(id)
+	store, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
+	run := store.get(id)
 	if len(run) == 0 {
 		return fail("runlog: no run %s", id)
 	}
@@ -1260,14 +1291,17 @@ func cmdShow(id string, out io.Writer) error {
 // cmdPending is Step 0c's worklist: pending-report files whose run was planned on THIS branch.
 // The files live under the common dir, which every branch and linked worktree shares, so
 // listing them all would post another branch's report and label onto this PR.
-func cmdPending(out, errOut io.Writer) {
+func cmdPending(out, errOut io.Writer) error {
 	br := git("rev-parse", "--abbrev-ref", "HEAD")
 	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
 	if br == "" || br == "HEAD" || common == "" {
 		fmt.Fprintln(errOut, "runlog: no current branch — pending reports left in place")
-		return
+		return nil
 	}
-	s := loadRaw(StorePath(), 0)
+	s, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
 	files, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*.md"))
 	sort.Strings(files)
 	for _, f := range files {
@@ -1281,4 +1315,5 @@ func cmdPending(out, errOut io.Writer) {
 			fmt.Fprintln(out, f)
 		}
 	}
+	return nil
 }

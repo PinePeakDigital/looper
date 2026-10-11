@@ -744,3 +744,26 @@ func TestInvalidUTF8InTheStoreIsReadNotFatal(t *testing.T) {
 		t.Errorf("show over invalid UTF-8: exit %d, out %q, err %q", c, out.String(), errb.String())
 	}
 }
+
+// Only a missing store reads as empty. runlog.py dies on any other read error, and an unreadable
+// store read as "no runs" would let `check` tell the Stop hook nothing is open.
+func TestAnUnreadableStoreIsAnErrorNotEmpty(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	t.Setenv("REVIEW_LOOP_RUNS", t.TempDir()) // a directory: EISDIR, not ENOENT
+	for _, args := range [][]string{
+		{"check"},
+		{"cycle", "--run-id", "u", "--n", "1", "--applied", "0", "--agents", "1"},
+		{"convergence", "--run-id", "u"},
+		{"finish", "--run-id", "u", "--outcome", "clean"},
+		{"abandon", "--run-id", "u", "--missing", "x"},
+		{"show", "--run-id", "u"},
+		{"pending"},
+	} {
+		var out, errb bytes.Buffer
+		if c := Command(args, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot read the run store") {
+			t.Errorf("%v: exit %d, out %q, err %q", args, c, out.String(), errb.String())
+		}
+	}
+}
