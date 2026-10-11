@@ -201,27 +201,29 @@ jobs:
           mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$')
           go test -count=1 "${pkgs[@]}"
 
-      # Anchors before behaviour. The mutation score below takes about fifteen minutes, so a
-      # stale anchor — an entry whose `--- old` block no longer appears in its target, after a
-      # rename or a control-flow edit — costs a whole CI cycle to discover. This finds it in a
-      # second. Three commits on the report slice shipped one, every time from an edit that had
-      # nothing to do with the entry.
+      # Anchors and parsing before behaviour. The mutation score below takes about fifteen
+      # minutes, so an entry that would not RUN — a stale anchor after a rename, a `why:`
+      # wrapped onto a second line, a target git stopped tracking — costs a whole CI cycle to
+      # discover, and the catalog aborts as a WHOLE, so one bad entry takes every other
+      # entry's guard with it. This finds it in seconds.
       #
-      # It checks the HEADER by the same rule and for the same reason: catalog.go reads every
-      # non-blank, non-`#` line before `--- old` as `key: value` and rejects an unknown key
-      # (and rejects an `old` block identical to `new`), so a `why:`
-      # whose prose wraps onto a second line makes that line a header and the whole catalog
-      # fails to LOAD. `go test ./...` does not parse these files, so the only other thing that
-      # notices is the fifteen-minute step below — which is how one shipped this slice.
-      #
-      # It is a script and not inline bash because getting the match right needs catalog.go's
-      # exact rule: the markers are found with Index(text, "--- old\n") anywhere in the file,
-      # NOT anchored to a line start, and exactly one trailing newline is stripped — ten entries
-      # here have an anchor that legitimately ends mid-line with `--- new` appended onto it. A
-      # `grep -cF` cannot express that at all: with a multi-line anchor it counts matching LINES
-      # rather than occurrences of the block.
-      - name: every catalog entry parses and its anchor matches exactly once
-        run: python3 mutations/anchorcheck.py
+      # `mutate -check` and not a script, and that is the finding rather than a preference.
+      # This step used to run mutations/anchorcheck.py, a Python reimplementation of
+      # catalog.go's parser. Four consecutive review rounds found divergences in it, every
+      # time in the direction where the script passed and `looper mutate` then failed to load
+      # anything: it read only `target:` from the header; it took the first duplicate key
+      # where catalog.go takes the last; it never checked `old == new`; it globbed
+      # non-recursively; it skipped dot-paths; it read in Python text mode where Go reads raw
+      # bytes. The last round found three more in one pass — `os.walk` classifies with a
+      # symlink-FOLLOWING is_dir() where fs.DirEntry.IsDir() is lstat-based, os.walk's default
+      # onerror discards a mid-walk error WalkDir propagates, and WalkDir lstats its root so a
+      # symlinked mutations/ yields nothing — plus two preconditions it never modelled at all
+      # (requireTrackedTargets' symlink and untracked-target refusals, which abort a run just
+      # as fatally). A fifth patch buys a fifth round. Reusing ParseCatalog and Runner.Check
+      # makes the fast gate the same code as the slow one, so divergence is impossible by
+      # construction rather than by review.
+      - name: every catalog entry would actually run
+        run: go run ./cmd/looper mutate -check
 
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
@@ -245,7 +247,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 232 ] || { echo "only $n mutations, expected at least 232 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 234 ] || { echo "only $n mutations, expected at least 234 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

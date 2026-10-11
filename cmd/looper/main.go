@@ -76,6 +76,8 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	fs.SetOutput(errOut)
 	catalog := fs.String("catalog", "mutations", "directory of .mut files")
 	root := fs.String("root", ".", "repo root the mutations apply to")
+	check := fs.Bool("check", false,
+		"parse the catalog and verify every anchor, then stop — seconds, not the full run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -84,6 +86,24 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	// -check runs the real run's preconditions and nothing else. It replaced a Python
+	// script that shadowed this parser and diverged from it in four consecutive review
+	// rounds — every time in the direction where the script passed and the catalog then
+	// failed to load, taking every entry's guard with it. Reusing ParseCatalog and
+	// Runner.Check makes a divergence impossible rather than merely reviewed.
+	if *check {
+		problems := (&mutate.Runner{Root: *root}).Check(muts)
+		for _, p := range problems {
+			fmt.Fprintln(errOut, p)
+		}
+		if len(problems) > 0 {
+			return fmt.Errorf("%d of %d catalog entr(ies) would not run", len(problems), len(muts))
+		}
+		fmt.Fprintf(out, "ok: %d entries parse and every anchor matches exactly once\n", len(muts))
+		return nil
+	}
+
 	fmt.Fprintf(out, "%d mutation(s) from %s against %s\n\n", len(muts), *catalog, *root)
 
 	r := &mutate.Runner{Root: *root, Log: out}

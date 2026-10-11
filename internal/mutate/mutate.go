@@ -497,3 +497,52 @@ func Score(results []Result) (caught, survived, stale, broken int) {
 
 // ErrHoles is returned when any mutation survived, went stale, or broke.
 var ErrHoles = errors.New("the suite did not catch every reintroduced defect")
+
+// Check reports every problem that would abort or invalidate a run, without running one.
+//
+// It exists because the Python shadow of this parser could not be kept faithful. Four
+// consecutive review rounds found divergences in `mutations/anchorcheck.py`, each time in
+// the same direction: the script said ok and `looper mutate` then failed to load the
+// catalog, which takes EVERY entry's guard down. The last round found three more — a
+// `.mut` that is a symlink to a directory (`os.walk` classifies with a symlink-following
+// `is_dir()`, `fs.DirEntry.IsDir()` is lstat-based), a symlinked `mutations/` (WalkDir
+// lstats its root and never descends; os.walk resolves it), and an unreadable directory
+// mid-walk (os.walk's default `onerror=None` discards it; WalkDir propagates it). Plus two
+// it never modelled: `requireTrackedTargets`' symlink and untracked-target refusals, which
+// abort `Run` just as fatally. Patching the shadow a fifth time buys another round of this.
+//
+// So the check is the consumer. Everything here is the SAME code path a real run takes —
+// the caller's ParseCatalog, this package's requireTrackedTargets, this package's
+// filepath.Join and bytes.Count — so a divergence is not possible by construction rather
+// than by review. It is also seconds instead of the fifteen minutes a full run costs,
+// which is the whole reason a fast gate was wanted.
+//
+// NOT requireCleanTree: this writes nothing, and refusing to run with edits in flight would
+// make it useless at exactly the moment it is wanted — right before a commit.
+func (r *Runner) Check(muts []Mutation) []string {
+	if err := r.requireTrackedTargets(muts); err != nil {
+		return []string{err.Error()}
+	}
+	var problems []string
+	for _, m := range muts {
+		target := filepath.Join(r.Root, m.Target)
+		original, err := os.ReadFile(target)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: target unreadable: %v", m.Source, err))
+			continue
+		}
+		// `one`'s test, and deliberately not a byte-for-byte copy of its LINE: the catalog
+		// anchors `one`'s spelling of it (anchor-count-unchecked.mut), so a second
+		// identical line here makes that anchor ambiguous. This Check caught exactly that
+		// on its own first run, which is a fair demonstration of why it exists. Zero
+		// occurrences means the catalog has rotted; more than one means the edit is
+		// ambiguous and would change code the mutation does not name.
+		n := bytes.Count(original, []byte(m.Old))
+		if n == 1 {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"%s: anchor occurs %d times in %s, want exactly 1", m.Source, n, m.Target))
+	}
+	return problems
+}

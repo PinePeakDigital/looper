@@ -1,0 +1,11 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCheckReportsEverythingThatWouldAbortARun'
+expect: an untracked target was not reported
+why:    `mutate -check` is the fast CI gate that stands ahead of the fifteen-minute score, and its whole justification is that it runs the SAME preconditions a real run runs. requireTrackedTargets is the half the thing it replaced never modelled at all: it aborts `Run` before any mutation is applied, so a symlinked or untracked target is exactly as fatal as a catalog that will not parse — and the Python shadow reported ok for both, measured. Dropping this call leaves the anchor loop, which looks like a complete check and passes a catalog whose first mutation would abort the run. Returning the error as a one-element slice rather than failing the command directly is deliberate: `Run` aborts on it, so there is nothing to be gained by continuing to count anchors against targets the run will never reach.
+--- old
+	if err := r.requireTrackedTargets(muts); err != nil {
+		return []string{err.Error()}
+	}
+	var problems []string
+--- new
+	var problems []string

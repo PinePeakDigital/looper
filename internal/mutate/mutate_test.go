@@ -909,3 +909,107 @@ func firstContentLine(detail []string) string {
 	}
 	return ""
 }
+
+// Check must report every problem that would abort or invalidate a run, because it is the
+// fast gate CI runs ahead of the fifteen-minute one — and the thing it replaced, a Python
+// reimplementation of this parser, diverged from it in four consecutive review rounds,
+// every time by passing a catalog that then failed to load.
+//
+// The cases are the exact divergences that script shipped, plus the two preconditions it
+// never modelled at all. Each asserts that Check REPORTS, since the failure mode under
+// review is always silence: the script said ok and the catalog was dead.
+func TestCheckReportsEverythingThatWouldAbortARun(t *testing.T) {
+	t.Run("a stale anchor", func(t *testing.T) {
+		dir := repo(t, map[string]string{"a.txt": "x = 1\n"})
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: "a.txt", Verify: []string{"true"},
+			Why: "w", Old: "NOT PRESENT", New: "y",
+		}})
+		if len(got) != 1 || !strings.Contains(got[0], "anchor occurs 0 times") {
+			t.Errorf("a stale anchor was not reported: %q", got)
+		}
+	})
+
+	t.Run("an ambiguous anchor", func(t *testing.T) {
+		// TWO occurrences, which a full run scores Stale for the same reason: the edit
+		// would change code the mutation does not name.
+		dir := repo(t, map[string]string{"a.txt": "x = 1\nx = 1\n"})
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: "a.txt", Verify: []string{"true"},
+			Why: "w", Old: "x = 1", New: "y",
+		}})
+		if len(got) != 1 || !strings.Contains(got[0], "anchor occurs 2 times") {
+			t.Errorf("an ambiguous anchor was not reported: %q", got)
+		}
+	})
+
+	t.Run("a target git does not track", func(t *testing.T) {
+		// requireTrackedTargets, which the Python shadow never modelled. It aborts Run
+		// before any mutation is applied, so it is exactly as fatal as a dead catalog.
+		dir := repo(t, map[string]string{"a.txt": "x = 1\n"})
+		if err := os.WriteFile(filepath.Join(dir, "gen.txt"), []byte("x = 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: "gen.txt", Verify: []string{"true"},
+			Why: "w", Old: "x = 1", New: "y",
+		}})
+		if len(got) != 1 || !strings.Contains(got[0], "git does not track") {
+			t.Errorf("an untracked target was not reported: %q", got)
+		}
+	})
+
+	t.Run("a symlinked target", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "outside.txt")
+		if err := os.WriteFile(outside, []byte("x = 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dir := repo(t, map[string]string{"a.txt": "x = 1\n"})
+		if err := os.Symlink(outside, filepath.Join(dir, "linked.txt")); err != nil {
+			t.Fatal(err)
+		}
+		gitCmd(t, dir, "add", "-A")
+		gitCmd(t, dir, "commit", "-qm", "link")
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: "linked.txt", Verify: []string{"true"},
+			Why: "w", Old: "x = 1", New: "y",
+		}})
+		if len(got) != 1 || !strings.Contains(got[0], "symlink") {
+			t.Errorf("a symlinked target was not reported: %q", got)
+		}
+	})
+
+	t.Run("an absolute target resolves against Root, as a run resolves it", func(t *testing.T) {
+		// filepath.Join(Root, "/abs/path") cannot be escaped by the leading slash, so a
+		// run reads a path that does not exist and scores Stale. The Python shadow
+		// open()ed the absolute path verbatim and counted the anchor successfully — the
+		// one case where it was LESS strict about a path than the thing it stood in for.
+		other := t.TempDir()
+		abs := filepath.Join(other, "src.txt")
+		if err := os.WriteFile(abs, []byte("x = 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dir := repo(t, map[string]string{"a.txt": "x = 1\n"})
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: abs, Verify: []string{"true"},
+			Why: "w", Old: "x = 1", New: "y",
+		}})
+		if len(got) != 1 {
+			t.Fatalf("an absolute target was not reported: %q", got)
+		}
+	})
+
+	t.Run("a catalog that would run reports nothing", func(t *testing.T) {
+		// The other direction, and the one that makes the rest mean something: a check
+		// that reported a problem for every input would pass all five cases above while
+		// being useless.
+		dir := repo(t, map[string]string{"a.txt": "x = 1\n"})
+		got := (&Runner{Root: dir}).Check([]Mutation{{
+			Source: "c/x.mut", Target: "a.txt", Verify: []string{"true"},
+			Why: "w", Old: "x = 1", New: "x = 2",
+		}})
+		if len(got) != 0 {
+			t.Errorf("a runnable catalog was reported as broken: %q", got)
+		}
+	})
+}
