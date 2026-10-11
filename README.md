@@ -274,6 +274,36 @@ renderings, and `TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three reco
 on which the Python tracebacked — dropping the whole report — and this refuses at the
 typed boundary with the offending field named.
 
+## `looper record`
+
+The run record's writer: every `runlog.py` subcommand, with the same flags, records,
+refusals and exit statuses.
+
+```text
+looper record plan --tier <fast|full|skipped> --model <m> [--gates json] [--inputs json] ...
+looper record cycle --run-id <id> --n <k> --applied <n> --agents <n> [--asked n] ...
+looper record finish --run-id <id> --outcome <o> [--tier t] [--executed json] [--agents json] ...
+looper record {convergence,show,nudge} --run-id <id>
+looper record abandon --run-id <id> --missing <gates>
+looper record skipped --reason <r>
+looper record carried --from <sha> --to <sha> --how reviewed|skipped
+looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open
+looper record pending                                                     # this branch's pending reports
+```
+
+It appends to the same store (`$REVIEW_LOOP_RUNS`, default `~/.claude/review-loop/runs.jsonl`)
+one record per line, in a single `O_APPEND` write. Its guards — is there a plan, is the run
+already finished — read the store the way `runlog.load()` does, as merged dicts, so a malformed
+row elsewhere in a shared store never blocks a write. Convergence, for `finish`'s warning and
+the `convergence` subcommand, comes from the typed read half above, so it has one definition.
+
+`TestWriteMatchesThePython` runs 25 scenarios through `runlog.py` and `looper record` against
+copies of one seeded store and requires the same exit status, stdout, stderr and decoded
+records; only timestamps and generated run ids are normalised. Each scenario is a sequence of
+calls, because most of what the write half guards is a relationship between calls. One
+divergence is recorded on purpose: a numeric agent id crashes `runlog.py finish` with
+`TypeError` and records nothing, and `looper record` records the run as partial.
+
 ## `looper docs`
 
 ```text
