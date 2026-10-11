@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestFindPRDistinguishesTheThreeCauses'
+expect: --- FAIL:
+why:    this is the defect the whole slice exists to fix, reintroduced. pr-report.py branches on `rc != 0 or not num` and prints "no PR yet", which asserts the first of three causes and discards the only stream that says which. The verify test's own fixture table is the checkable form of why that matters: it drives gh to fail by TLS error, by auth error and by a kill signal, and "create a PR" is the wrong instruction for all three. Folding a non-zero exit back into NoPR restores exactly that conflation. (An earlier version of this line argued from "on this machine gh has already failed with a keychain TLS error" — true, and observed, but unfalsifiable from the tree, which is not what a permanent catalog entry should rest on. The fixtures say the same thing and can be re-run.)
+--- old
+	case r.Code != 0:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
+--- new
+	case r.Code != 0:
+		return Probe{State: NoPR, Detail: firstLine(r.Err)}

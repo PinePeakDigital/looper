@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinepeakdigital/looper/internal/report"
 )
 
 // fixture builds a committed throwaway repo with a catalog, and returns its path.
@@ -52,8 +56,15 @@ func git(t *testing.T, dir string, args ...string) {
 // doRun calls run() with its output captured, and returns the exit code plus both streams.
 func doRun(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
+	return doRunIn(t, strings.NewReader(""), args...)
+}
+
+// doRunIn is doRun with a stdin to feed: pr-report reads its narrative from there when no
+// -findings-file is named, which is how the skill pipes an orchestrator's findings in.
+func doRunIn(t *testing.T, in io.Reader, args ...string) (int, string, string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, &out, &errOut)
+	code := run(args, in, &out, &errOut)
 	return code, out.String(), errOut.String()
 }
 
@@ -382,5 +393,459 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 	// The refusal text is unchanged, which is what keeps the parity gate green.
 	if !strings.Contains(got.Reason, "pr-report.py --post") {
 		t.Errorf("reason = %q, want the unchanged owed-report refusal", got.Reason)
+	}
+}
+
+// prReportStore writes a one-run fixture and returns its path.
+func prReportStore(t *testing.T, id string) string {
+	t.Helper()
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	// The id is JSON-ENCODED, not concatenated: the forging ids this store has to carry include
+	// a literal newline and a CR, which would otherwise tear the JSONL row and make every such
+	// fixture test an unreadable store rather than the shape it names.
+	enc, err := json.Marshal(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := string(enc)
+	rows := []string{
+		`{"run_id":` + q + `,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","gates":{"evidence":{"planned":"run"}}}`,
+		`{"run_id":` + q + `,"phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":` + q + `,"phase":"finish","outcome":"cycle-limit","executed":{"evidence":{"status":"done"}}}`,
+	}
+	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func TestPrReportWritesTheBodyToStdout(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1", "-store", store)
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	// The marker and the `N cycle(s) · M agent(s)` line are what push-check looks for; if
+	// either moves, every push is refused on advice that cannot succeed.
+	for _, want := range []string{
+		"<!-- review-loop:run=pr1 -->",
+		"## review-loop",
+		"1 cycle(s) · 9 agent(s)",
+		"CAPPED at 9 of 8 agents",
+		"| `evidence` | run | done |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout is missing %q:\n%s", want, out)
+		}
+	}
+	if errOut != "" {
+		t.Errorf("stderr should be silent without -post: %q", errOut)
+	}
+}
+
+func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	t.Run("stdin", func(t *testing.T) {
+		code, out, errOut := doRunIn(t, strings.NewReader("two real defects\n"),
+			"pr-report", "-run-id", "pr1", "-store", store)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if !strings.Contains(out, "### Findings\n\ntwo real defects") {
+			t.Errorf("the narrative from stdin is missing:\n%s", out)
+		}
+	})
+	t.Run("a findings file", func(t *testing.T) {
+		f := filepath.Join(t.TempDir(), "findings.md")
+		if err := os.WriteFile(f, []byte("- one thing\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Stdin is fed too, and must LOSE: -findings-file is the explicit channel, and a
+		// piped-in stdin that silently won would append whatever the shell happened to hand
+		// the process.
+		code, out, errOut := doRunIn(t, strings.NewReader("from stdin"),
+			"pr-report", "-run-id", "pr1", "-store", store, "-findings-file", f)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if !strings.Contains(out, "- one thing") || strings.Contains(out, "from stdin") {
+			t.Errorf("the findings file did not win over stdin:\n%s", out)
+		}
+	})
+	t.Run("a missing findings file is an error", func(t *testing.T) {
+		code, out, _ := doRun(t, "pr-report", "-run-id", "pr1", "-store", store,
+			"-findings-file", filepath.Join(t.TempDir(), "nope.md"))
+		// Not silently empty: the narrative is the half of the report the record cannot
+		// derive, and a typo'd path would post a report with the findings section missing.
+		if code == 0 {
+			t.Errorf("a missing findings file exited 0 and printed:\n%s", out)
+		}
+	})
+}
+
+// record.Load returns an empty map and NO error for a store that does not hold the run, so a
+// report rendered off nothing is not an empty report: it is a GENUINE one reading `0 cycle(s)
+// · 0 agent(s)`, which is exactly what push-check's required fingerprint collapses to. The
+// two halves refuse together, by the same measurement.
+func TestPrReportRefusesARunItCannotRead(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	// A run that is PRESENT and says nothing: a row filed under a phase the typed decode does
+	// not own creates a *Run with no plan, no cycles and no finish. `r == nil` missed it, and
+	// that narrower test is the one PR #4's review rejected in the sibling gate. Measured
+	// before the fix: this store printed a complete, plausible report reading
+	// `0 cycle(s) · 0 agent(s)` and exited 0 — exactly the fingerprint push-check accepts.
+	nudgeOnly := filepath.Join(t.TempDir(), "runs.jsonl")
+	if err := os.WriteFile(nudgeOnly, []byte(`{"run_id":"pr1","phase":"nudge"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, id, store string }{
+		{"a mistyped run id", "pr2", store},
+		{"a store that does not exist", "pr1", filepath.Join(t.TempDir(), "absent.jsonl")},
+		{"a run known only by a nudge", "pr1", nudgeOnly},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, errOut := doRun(t, "pr-report", "-run-id", c.id, "-store", c.store)
+			if code == 0 {
+				t.Errorf("exit 0 — a report was rendered from no record:\n%s", out)
+			}
+			if out != "" {
+				t.Errorf("stdout should be empty on a refusal: %q", out)
+			}
+			// Both halves named: the id is usually not the wrong one.
+			if !strings.Contains(errOut, c.id) || !strings.Contains(errOut, c.store) {
+				t.Errorf("the refusal names neither the run nor the store: %q", errOut)
+			}
+		})
+	}
+}
+
+// A DELIBERATE DIVERGENCE from pr-report.py, in the hardening direction. The Python
+// interpolates the run id RAW into the marker and the summary line, so a newline in it forges
+// markdown in a public PR comment. The case that justifies the guard is a `-->` in the id,
+// which closes the marker early and renders whatever follows as VISIBLE markdown. Measured
+// against the oracle with `run_id` = "a-->\n\n> **Review converged — nothing outstanding**":
+//
+//	<!-- review-loop:run=a-->
+//
+//	> **Review converged — nothing outstanding** -->
+//
+//	## review-loop
+//
+//	> **Review completeness UNKNOWN: ...**
+//
+// A forged blockquote saying the review converged, rendered directly above the real disclosure
+// saying UNKNOWN. A plain newline is milder than first recorded here: measured, `a\nb` splits
+// the marker across two lines but swallows NOTHING of the body, and push.Fingerprint's needle
+// is built by Sprintf from the same raw id, so it still matches. Both of those were asserted
+// without measurement. `record.Load` places no constraint on `run_id`, so a store row can
+// carry any of this and -run-id can name it.
+//
+// Refused at the command rather than cell()ed in Render: cell() would rewrite the marker that
+// the push gate matches, hardening one gate by breaking the other, and Render has to stay
+// byte-comparable with the oracle for the 89 fixture cases and every run in the author's live
+// store. (No count here on purpose: that number grows every time the loop runs — 42 when this
+// was written, 45 at the latest check, and it moved twice in one evening — so
+// TestRealStoreParity logs its own total instead. This comment was right first; every other
+// site in this repo that DID carry a census has since been reduced to a ratio for the same
+// reason, after a date-qualified count went stale nine minutes after it was written.)
+func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
+	for _, id := range []string{
+		// The `-->` case FIRST, because it is the one that justifies the guard and it had no
+		// fixture anywhere: measured, adding `>` to report.ValidRunID left every package green
+		// while push.ValidRunID still rejected it, so the two gates disagreed and this forgery
+		// shipped with CI green.
+		"a-->\n\n> **Review converged — nothing outstanding**", "a>b",
+		"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
+		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
+			// The store CARRIES the forging id, which is the whole point and was the hole in
+			// the first version of this test: with a store holding only "pr1", every case fell
+			// through to the pre-existing "no readable record" refusal, so two of the three
+			// assertions below could never fire and the test passed without the guard ever
+			// being what produced the non-zero exit. Measured on a store that does carry it,
+			// with the guard disabled: exit 0 and a rendered body whose marker is split across
+			// two lines. The threat this test names is "a store row can carry one and -run-id
+			// can name it", so the fixture has to be that row.
+			store := prReportStore(t, id)
+			code, out, errOut := doRun(t, "pr-report", "-run-id", id, "-store", store)
+			if code == 0 {
+				t.Errorf("exit 0 for a run id that reaches a public comment raw:\n%s", out)
+			}
+			if !strings.Contains(errOut, "not a usable run id") {
+				t.Errorf("the refusal does not say why: %q", errOut)
+			}
+			// The body must not be on stdout: with -post off stdout IS the report, so a
+			// rendered body here would be posted by a caller that only checks for output.
+			if strings.Contains(out, "## review-loop") {
+				t.Errorf("a report was rendered for a refused run id:\n%s", out)
+			}
+		})
+	}
+	// And the ids the gate accepts still work, or the guard is just a denial of service.
+	for _, id := range []string{"pr1", "6a0fe216ade0", "a-b_c"} {
+		if !report.ValidRunID(id) {
+			t.Errorf("%q is refused, but it is the shape runlog.py writes", id)
+		}
+	}
+}
+
+func TestPrReportRequiresARunID(t *testing.T) {
+	code, out, errOut := doRun(t, "pr-report")
+	if code == 0 {
+		t.Errorf("exit 0 with no -run-id:\n%s", out)
+	}
+	if !strings.Contains(errOut, "-run-id is required") {
+		t.Errorf("stderr does not say what is missing: %q", errOut)
+	}
+}
+
+// Without -post, stdout is the report BODY — so a usage banner or a parse error landing there
+// would be posted as the review disclosure on the next run.
+func TestPrReportFlagOutputNeverTouchesStdout(t *testing.T) {
+	t.Run("help", func(t *testing.T) {
+		code, out, errOut := doRun(t, "pr-report", "-h")
+		if code != 0 {
+			t.Errorf("exit = %d for -h, which is a request that was served", code)
+		}
+		if out != "" {
+			t.Errorf("the usage banner landed on stdout: %q", out)
+		}
+		if !strings.Contains(errOut, "-run-id") {
+			t.Errorf("stderr has no usage text: %q", errOut)
+		}
+	})
+	t.Run("a mistyped flag", func(t *testing.T) {
+		code, out, _ := doRun(t, "pr-report", "-run-ids", "x")
+		if code == 0 {
+			t.Error("a mistyped flag exited 0")
+		}
+		if out != "" {
+			t.Errorf("the parse error landed on stdout: %q", out)
+		}
+	})
+}
+
+// The wiring -post depends on: the body reaching report.Post, and its notes reaching stderr
+// rather than stdout. Shimmed gh answers "no PR", the ordinary case for a fresh branch.
+func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	dir := fixture(t, map[string]string{"README.md": "x\n"})
+	shim := t.TempDir()
+	// `[]`, not silence: the probe decodes gh's JSON, and empty output is not a valid answer
+	// but an unreadable one. Real `gh pr list --json number` prints `[]` for a branch with no
+	// PR, verified against the live repo.
+	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\necho '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post")
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	if out != "" {
+		t.Errorf("-post must not print the body to stdout: %q", out)
+	}
+	if !strings.Contains(errOut, "deferred to") || !strings.Contains(errOut, "no PR for this branch yet") {
+		t.Errorf("stderr does not say where the report went: %q", errOut)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".git", "info", "review-loop-pending-report.pr1.md"))
+	if err != nil {
+		t.Fatalf("the report was not kept: %v", err)
+	}
+	if !strings.Contains(string(b), "1 cycle(s) · 9 agent(s)") {
+		t.Errorf("the kept report is not the rendered one:\n%s", b)
+	}
+	// The derived convergence, not a flag: the label the pending note owes and the
+	// disclosure in the body cannot disagree, because both come off the same read.
+	if !strings.Contains(string(b), "label review:capped still owed") {
+		t.Errorf("the label-owed note does not carry the derived convergence:\n%s", b)
+	}
+}
+
+func TestPrReportDefaultsTheStoreFromTheEnvironment(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	// No -store. If the default wiring is gone this reads the real store, finds no `pr1`, and
+	// refuses — which is how this failure now shows up rather than rendering from nothing.
+	code, out, errOut := doRun(t, "pr-report", "-run-id", "pr1")
+	if code != 0 {
+		t.Fatalf("exit = %d: stderr %q", code, errOut)
+	}
+	if !strings.Contains(out, "1 cycle(s) · 9 agent(s)") {
+		t.Errorf("the store named by $REVIEW_LOOP_RUNS was not read:\n%s", out)
+	}
+}
+
+// readNarrative's *os.File branch, which no test reached: every other test drives run() with a
+// strings.Reader, so the type assertion always failed and the tty check — the thing the
+// function's own comment says it exists for — never ran. os.Stdin in production is always an
+// *os.File, so this was the shape that ships.
+func TestTheNarrativeReadsARealFile(t *testing.T) {
+	t.Run("a regular file is read through", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "narrative.md")
+		if err := os.WriteFile(p, []byte("from a real file\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		got, err := readNarrative("", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "from a real file\n" {
+			t.Errorf("a regular *os.File was not read through: %q", got)
+		}
+	})
+
+	t.Run("a pipe is read through", func(t *testing.T) {
+		rd, wr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			_, _ = wr.WriteString("from a pipe")
+			_ = wr.Close()
+		}()
+		got, err := readNarrative("", rd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "from a pipe" {
+			t.Errorf("a pipe was not read through: %q", got)
+		}
+	})
+
+	// The DECISION, not the result. Asserting readNarrative's return value for /dev/null
+	// could not fail: reading /dev/null yields "" too, so the subtest passed with the entire
+	// guard deleted — the same vacuous-assertion class cycle 1 had just fixed elsewhere,
+	// reproducible by removing the guard and watching this stay green.
+	// shouldReadStdin exists so the branch itself is observable.
+	t.Run("stdin is not read when it is a character device", func(t *testing.T) {
+		f, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode()&os.ModeCharDevice == 0 {
+			t.Skipf("%s is not a character device on this platform", os.DevNull)
+		}
+		if shouldReadStdin(f) {
+			t.Error("a character device would be read, so an interactive run can hang on a " +
+				"read nobody is going to feed")
+		}
+	})
+
+	// The CALL SITE, which the two subtests around it do not reach: they assert the predicate,
+	// and readNarrative can stop consulting it with every one of them still green — measured,
+	// the whole tree stays green with the `if !shouldReadStdin(in)` line deleted. Extracting
+	// the predicate so the decision was observable moved the vacuity up one level instead of
+	// closing it.
+	//
+	// A CLOSED *os.File is what distinguishes the two: Stat fails, so the guard answers "do
+	// not read" and readNarrative returns empty with no error, while an unguarded read reports
+	// "file already closed". /dev/null cannot do this job — reading it succeeds and yields ""
+	// either way, which is how the first version of this test could not fail. The same fixture
+	// is the only thing that reaches shouldReadStdin's own Stat-error arm.
+	t.Run("a closed stdin is not read, so the guard is still consulted", func(t *testing.T) {
+		f, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if shouldReadStdin(f) {
+			t.Error("a reader whose Stat fails would be read, so an unreadable stdin can hang " +
+				"the command instead of being skipped")
+		}
+		got, err := readNarrative("", f)
+		if err != nil {
+			t.Errorf("readNarrative read a stdin the guard rejects, so the guard is no longer "+
+				"consulted: %v", err)
+		}
+		if got != "" {
+			t.Errorf("a rejected stdin produced a narrative: %q", got)
+		}
+	})
+
+	t.Run("stdin IS read when it is a pipe or a plain reader", func(t *testing.T) {
+		rd, wr, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rd.Close()
+		defer wr.Close()
+		if !shouldReadStdin(rd) {
+			t.Error("a pipe would not be read, so a piped-in narrative is silently dropped")
+		}
+		if !shouldReadStdin(strings.NewReader("x")) {
+			t.Error("a non-*os.File would not be read, so the skill's own callers are ignored")
+		}
+	})
+}
+
+// `mutate -check` is what CI runs ahead of the fifteen-minute score, and before this test
+// its non-zero exit was covered by nothing: deleting the three lines that produce the error
+// left `go vet` clean and both packages' tests green, while the binary printed the problems
+// AND a false `ok:` line and exited 0 — green CI on a catalog that cannot run. Every sibling
+// exit path here has a test (TestMutateAllCaughtExitsZero and the two non-zero ones); the
+// gate CI actually depends on had none.
+func TestMutateCheckFailsOnACatalogThatWouldNotRun(t *testing.T) {
+	dir := fixture(t, map[string]string{
+		"app.py": "def f(x):\n    return x > 0\n",
+		"t.sh":   "#!/bin/sh\nexit 0\n",
+		// A stale anchor: the catalog says `x >= 0`, the file says `x > 0`. This is the
+		// rename-rot case, which a full run reports as Stale fifteen minutes in.
+		"mutations/stale.mut": "target: app.py\nverify: ./t.sh\nwhy:    w\n--- old\nx >= 0\n--- new\nx < 0\n",
+	})
+	code, out, errOut := doRun(t, "mutate", "-check", "-root", dir,
+		"-catalog", filepath.Join(dir, "mutations"))
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 — CI would be green on a catalog that cannot run\n%s\n%s",
+			code, out, errOut)
+	}
+	// The problem goes to STDERR and names the entry; `ok:` must not appear anywhere.
+	if !strings.Contains(errOut, "anchor occurs 0 times") {
+		t.Errorf("stderr does not say what is wrong: %q", errOut)
+	}
+	if !strings.Contains(errOut, "stale.mut") {
+		t.Errorf("stderr does not name the entry, so CI says a hole exists without saying "+
+			"which: %q", errOut)
+	}
+	if strings.Contains(out, "ok:") || strings.Contains(errOut, "ok:") {
+		t.Errorf("the ok line was printed for a catalog that would not run: %q / %q", out, errOut)
+	}
+}
+
+// The other direction, and the reason the test above means anything: a catalog that WOULD
+// run exits 0 and says so on stdout. A -check that always failed would satisfy every
+// assertion above while making the gate useless.
+func TestMutateCheckPassesACatalogThatWouldRun(t *testing.T) {
+	dir := fixture(t, map[string]string{
+		"app.py":             "def f(x):\n    return x > 0\n",
+		"t.sh":               "#!/bin/sh\nexit 0\n",
+		"mutations/flip.mut": caughtCatalog,
+	})
+	code, out, errOut := doRun(t, "mutate", "-check", "-root", dir,
+		"-catalog", filepath.Join(dir, "mutations"))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "ok: 1 entries") {
+		t.Errorf("stdout does not report what was checked: %q", out)
+	}
+	// And it must NOT have run the verify command — that is the whole point of -check, and
+	// the fifteen minutes it saves. `t.sh` here exits 0 either way, so the discriminator is
+	// the absence of a score.
+	if strings.Contains(out, "score") {
+		t.Errorf("-check ran the full score instead of stopping: %q", out)
 	}
 }

@@ -1,0 +1,10 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCheckReportsEverythingThatWouldAbortARun/an_ambiguous'
+expect: an ambiguous anchor was not reported
+why:    exactly one occurrence, which is `one`'s own test and the reason this check can replace a run for the stale-catalog question. Zero means the catalog has rotted after a rename; MORE than one means the edit is ambiguous and `bytes.Replace(.., 1)` would change whichever occurrence comes first, which is code the mutation does not name. Both score Stale in a full run, so both are findable only after fifteen minutes without this gate — and the second is the one a reader drops, because `n == 0` reads as the whole problem. Weakening the test to `n == 0` keeps every stale-anchor case green and silently accepts the ambiguous one.
+--- old
+		n := bytes.Count(original, []byte(m.Old))
+		if n == 1 {
+--- new
+		n := bytes.Count(original, []byte(m.Old))
+		if n != 0 {

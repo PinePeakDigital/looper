@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheHardeningDivergence'
+expect: --- FAIL:
+why:    the same hardening one line up, where it matters most. `outcome` is record.go's own "orchestrator's self-report" — LLM-written free text with no enum at the decode — and this is the first content line of the comment, directly under the real disclosure and above everything else, which is where a reader anchors. A newline in it renders a second blockquote that reads as the verdict. `conv` needs no collapsing and gets none: record.Convergence answers only four words.
+--- old
+		cell(outcome), conv, cell(tier), cell(floor)))
+--- new
+		outcome, conv, tier, floor))

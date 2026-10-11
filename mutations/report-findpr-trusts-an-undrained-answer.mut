@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_held_pipe'
+expect: a descendant's well-formed bytes became the PR number
+why:    FindPR reads the PR NUMBER out of the probe's stdout, so it is one of the two callers that must refuse an undrained result — the other is WritePending, where the same buffer becomes a filesystem path. Placed BEFORE the `r.Out == ""` test on purpose, because the empty case is equally untrustworthy — either answer would be a guess, so the probe reports unknown instead. The arm is DISABLED rather than deleted so the switch keeps its shape; deleting the case compiles too, but then the entry no longer names one condition. The fixture was WRONG and this entry scored `survived` at 231/232 because of it. It pointed at `/a_descendant`, whose contaminant is the bare string "42" — not JSON, so the shape decode below refuses it and this arm is redundant there. Every other fixture in the file contaminated with a non-JSON spelling too, so with this arm disabled the suite stayed green. The fixture now points at `/a_held_pipe`, where gh prints nothing and a descendant writes `[{"number":42}]` and holds the pipe past the drain bound: the answer decodes cleanly to PR #42 and nothing in its SHAPE is wrong, so the held pipe is the only remaining signal. Measured both ways in a clone — green at the tip, and `number="42"` with the arm disabled. `expect:` names that message rather than `--- FAIL:`, because a bare `--- FAIL:` scores `caught` on any flake in the enclosing test.
+--- old
+	case !r.Drained:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
+--- new
+	case !r.Drained && false:
+		return Probe{State: GhFailed, Detail: firstLine(r.Err)}

@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_descendant'
+expect: --- FAIL:
+why:    a descendant that inherited the output pipe is a CO-WRITER of the buffer, not a bystander, so an undrained call's `Out` may hold bytes the child never wrote. Marking it drained is how the first version of the clean-exit arm claimed "the output above is complete": measured, `gh pr list` exited 0 printing NOTHING — meaning there is no PR for this branch — while a descendant printed "42", and FindPR answered "PR #42" and the public disclosure was commented onto a PR that does not exist. The exit status is genuinely a success, which is why this is a flag rather than a rejection: rejecting the whole call made a `gh pr comment` that had already landed read as failed, after which Step 0c posted a second disclosure.
+--- old
+		r.Drained = false
+--- new
+		r.Drained = true

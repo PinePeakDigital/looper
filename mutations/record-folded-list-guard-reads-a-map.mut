@@ -1,0 +1,15 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestAFoldedEscalationKeyIsRefused'
+expect: --- FAIL:
+why:    the reason `escalations` needed its OWN guard rather than the existing one. foldedEntryKeys decodes the field into `map[string]json.RawMessage` and returns nil when that fails — correct for a wrongly-typed gate map, which the caller's own decode then reports — but a JSON ARRAY also fails that decode, so the guard passes silently on every list. Swapping the list decode back to a map here restores exactly that: a guard that is called, returns nil, and checks nothing. The entry beside it tests that the call exists; this one tests that the call can see anything.
+--- old
+	var entries []json.RawMessage
+	if json.Unmarshal(top[field], &entries) != nil {
+		return nil // not a list; the caller's own decode reports that
+	}
+--- new
+	var asMap map[string]json.RawMessage
+	if json.Unmarshal(top[field], &asMap) != nil {
+		return nil // not a list; the caller's own decode reports that
+	}
+	var entries []json.RawMessage

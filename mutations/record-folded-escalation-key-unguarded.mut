@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestAFoldedEscalationKeyIsRefused'
+expect: --- FAIL:
+why:    `escalations` was the one new entry-shaped field in the report slice with no folded-key guard, and foldedEntryKeys could never have been it: that function decodes the field into a MAP and returns nil when that fails, so pointing it at a JSON array checks nothing while reading as a guard. Measured: `{"Gate":"x"}` decodes into Escalation.Gate as "x", because encoding/json folds struct tags case-insensitively, where the Python's exact `e.get('gate')` reads nothing and prints the literal "None". The escalations section exists so an escalation above the plan cannot be silent, which makes a gate name only one side can see the worst place for this class.
+--- old
+			if err := foldedListEntryKeys([]byte(line), "escalations", "gate", "reason"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
+--- new

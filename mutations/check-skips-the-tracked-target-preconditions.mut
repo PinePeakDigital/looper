@@ -1,0 +1,9 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCheckReportsEverythingThatWouldAbortARun'
+expect: an untracked target was not reported
+why:    `mutate -check` is the fast CI gate standing ahead of the fifteen-minute score, and its whole justification is that it runs the SAME preconditions a real run runs. The tracked-target check is the half the Python shadow it replaced never modelled at all: a symlinked or untracked target aborts `Run` before any mutation is applied, so it is exactly as fatal as a catalog that will not parse — and the script reported ok for both, measured. Dropping this loop leaves the anchor loop, which looks like a complete check and passes a catalog whose first mutation aborts the run. Note what the loop does NOT do, because an earlier version of this entry defended the opposite: it reports every bad target and then checks the anchors anyway. Returning after the first precondition error gave one defect per CI cycle — measured, three stale anchors plus one untracked target reported only the untracked target — which is the serialization this gate exists to remove, and a bad target says nothing about any OTHER target's anchor.
+--- old
+	for _, err := range r.trackedTargetProblems(muts) {
+		problems = append(problems, err.Error())
+	}
+--- new

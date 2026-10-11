@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_binary_of_the_wrong_format'
+expect: --- FAIL:
+why:    "could not start" was decided by enumerating sentinels — ErrNotFound, ErrNotExist, ErrPermission — and that list misses the binary that EXISTS, is executable, and is the wrong format. Measured: a chmod +x text file gives a *fs.PathError ("exec format error") matching none of the three, so it fell through to the default, left Runnable true, and reported "gh ran and failed — Step 0c can flush it once gh works" for a gh that never ran. That is the wrong remedy twice: it tells the operator to wait for GitHub when the fix is to reinstall. Asking the Cmd whether it has a Process answers the question the branch is about; the enumeration can only ever answer a list of causes someone thought of.
+--- old
+	case cmd.Process == nil:
+--- new
+	case errors.Is(err, exec.ErrNotFound), errors.Is(err, os.ErrNotExist), errors.Is(err, os.ErrPermission):

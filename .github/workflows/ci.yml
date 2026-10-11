@@ -146,6 +146,51 @@ jobs:
           done
           echo "$c push parity subtests compared against the Python, plus 2 enumerated divergences"
 
+      # internal/report is the third in the same situation: its parity gate renders the whole
+      # report body against pr-report.py. Same oracle checkout, same skip-is-success problem.
+      - name: go test (report, with the oracle)
+        env:
+          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v ./internal/report/ > report.log 2>&1 || { cat report.log; exit 1; }
+          tail -5 report.log
+
+      - name: the report parity gate actually ran
+        run: |
+          [ -r report.log ] || { echo "report.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          # ONE skip is expected here and nowhere else: TestRealStoreParity renders every run
+          # in the author's live store, which CI does not have and must not be given. Checked
+          # as an allowlist of exactly one name rather than by relaxing the grep, so a second
+          # test going inert still fails — which is the whole point of this step.
+          unexpected=$(grep -- '--- SKIP' report.log | grep -v 'TestRealStoreParity' || true)
+          if [ -n "$unexpected" ]; then
+            echo "the report parity gate SKIPPED — pr-report.py was not reachable:"; cat report.log; exit 1
+          fi
+          grep -q -- '--- SKIP: TestRealStoreParity' report.log || \
+            echo "note: TestRealStoreParity did not skip — CI appears to have a run store"
+          # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
+          # table and the narrative table are different widths and measure different halves,
+          # and one aggregate would let the narrative table vanish under a table that grew.
+          for spec in TestParityWithPrReport:89 TestParityOnTheNarrative:5 \
+                      TestTheEnumeratedRenderDivergences:5 \
+                      TestTheHardeningDivergence:7 \
+                      TestWrongTypedFieldsAreRefusedAtTheLoad:13 \
+                      TestThreeShapesCrashTheOracleAndAreRefusedHere:3; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' report.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
+            echo "$c $t subtests compared against the Python"
+          done
+          # The divergences with no subtests of their own — FOUR, not the two an earlier
+          # version of this comment claimed while looping over four names. Each is the only
+          # thing asserting which side owns which answer, so none can be left to an aggregate.
+          for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
+                   TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
+            grep -q -- "--- PASS: $d" report.log || {
+              echo "enumerated divergence $d was not compared against the Python"; cat report.log; exit 1; }
+          done
+
       - name: go test (everything else)
         # mapfile, not a bare $(...): the two packages above are excluded because they need the
         # oracle, and the word splitting that reassembles the rest is the mechanism, not an
@@ -153,8 +198,38 @@ jobs:
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$')
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$')
           go test -count=1 "${pkgs[@]}"
+
+      # Anchors and parsing before behaviour. The mutation score below takes about fifteen
+      # minutes, so an entry that would not RUN — a stale anchor after a rename, a `why:`
+      # wrapped onto a second line, a target git stopped tracking — costs a whole CI cycle to
+      # discover, and the catalog aborts as a WHOLE, so one bad entry takes every other
+      # entry's guard with it. This finds it in seconds.
+      #
+      # `mutate -check` and not a script, and that is the finding rather than a preference.
+      # This step used to run mutations/anchorcheck.py, a Python reimplementation of
+      # catalog.go's parser. Four consecutive review rounds found divergences in it, every
+      # time in the direction where the script passed and `looper mutate` then failed to load
+      # anything: it read only `target:` from the header; it took the first duplicate key
+      # where catalog.go takes the last; it never checked `old == new`; it globbed
+      # non-recursively; it skipped dot-paths; it read in Python text mode where Go reads raw
+      # bytes. The last round found three more in one pass — `os.walk` classifies with a
+      # symlink-FOLLOWING is_dir() where fs.DirEntry.IsDir() is lstat-based, os.walk's default
+      # onerror discards a mid-walk error WalkDir propagates, and WalkDir lstats its root so a
+      # symlinked mutations/ yields nothing — plus two preconditions it never modelled at all
+      # (requireTrackedTargets' symlink and untracked-target refusals, which abort a run just
+      # as fatally). A fifth patch buys a fifth round. Reusing ParseCatalog and Runner.Check
+      # makes the fast gate the same code as the slow one, so divergence is impossible by
+      # construction rather than by review.
+      #
+      # The step name is narrow on purpose. -check never executes a `verify:` command, so an
+      # entry whose verify is already failing or matches no test scores Broken in a full run
+      # and is invisible here — measured: a `-run` pattern naming a renamed test, the same
+      # rename the anchor half exists for, passes this gate and scores 0/2 in the run. What
+      # this proves is that the catalog LOADS and every target and anchor is usable.
+      - name: every catalog entry parses, and its target and anchor are usable
+        run: go run ./cmd/looper mutate -check
 
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
@@ -178,7 +253,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 181 ] || { echo "only $n mutations, expected at least 181 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 236 ] || { echo "only $n mutations, expected at least 236 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
@@ -195,5 +270,6 @@ jobs:
       - name: mutation score
         env:
           REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
+          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
           REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
         run: go run ./cmd/looper mutate

@@ -1,0 +1,16 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the table is the UNION of planned and executed, so a gate that reported without being planned appears — an escalation the plan never named is exactly what the report exists to make visible. Listing only the planned ones makes the table agree with the plan by construction, which is the shape of report this skill was failing with before any of it was written down.
+--- old
+	if r.Finish != nil {
+		for g := range r.Finish.Executed {
+			seen[g] = true
+		}
+	}
+--- new
+	if false && r.Finish != nil {
+		for g := range r.Finish.Executed {
+			seen[g] = true
+		}
+	}

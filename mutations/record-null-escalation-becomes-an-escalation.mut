@@ -1,0 +1,14 @@
+target: internal/record/record.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    encoding/json leaves a non-pointer destination untouched for `null`, so a null element in `escalations` decoded to a zero-value Escalation and the report rendered a fabricated "- `None` — " bullet for an escalation nobody recorded — in the section whose whole purpose is that an escalation above the plan cannot be silent. The Python drops it with `isinstance(e, dict)`. This is the exact trap decodeRoster was fixed for one list over, and it was missed there because the roster was the list that had been reported: a guard needs applying to every sibling of the thing it guards. The marker is recorded rather than the element dropped, because the Python gates the SECTION on the raw list and the BULLETS on the filter, so dropping at the decode loses the heading. The condition is DISABLED rather than deleted so `bytes.TrimSpace` stays referenced: this is the file's only `bytes.` use, so deleting the block orphans the import and the mutation does not compile — which scores broken and tests nothing. Same idiom, same reason, as push-diag-never-written.
+--- old
+	if string(bytes.TrimSpace(b)) == "null" {
+		e.isNull = true
+		return nil
+	}
+--- new
+	if string(bytes.TrimSpace(b)) == "null" && false {
+		e.isNull = true
+		return nil
+	}

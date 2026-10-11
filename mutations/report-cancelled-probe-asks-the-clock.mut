@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_missing_binary_under_an_expired_budget'
+expect: --- FAIL:
+why:    the deadline arm must test the ERROR's identity, not the clock. `Start` returns a missing binary's lookPathErr BEFORE it consults the context, so `ctx.Err() != nil` is true for an error that has nothing to do with the deadline: measured, an uninstalled binary under a 1ns budget gave Runnable=true, Code=1 and a Note() reading "gh ran and failed (executable file not found in $PATH)" — self-contradictory within one sentence, and it tells the operator to wait for GitHub when the fix is to install gh. An expired clock is not evidence about what went wrong. This was the second wrong assertion in the same arm; the first was "anything that is not an ExitError never started".
+--- old
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+--- new
+	case ctx.Err() != nil:

@@ -1,8 +1,8 @@
 target: cmd/looper/main.go
 verify: go test ./cmd/looper/ -count=1 -run 'TestMutateSurvivorExitsNonZero'
 expect: --- FAIL:
-why:    the score and the survivor names are not printed, so CI output says nothing about what failed
+why:    the score and the survivor names are not printed, so CI output says nothing about what failed (The anchor was `report(...)` until internal/report arrived and the local function was renamed to printScore to stop shadowing the package — a rename makes an entry STALE, which scores as a failure, so the catalog run is what reports it.)
 --- old
-	report(out, results, len(muts))
+	printScore(out, results, len(muts))
 --- new
-	_ = report
+	_ = printScore

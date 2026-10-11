@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the Python decides the section and the bullets in two separate steps — `if isinstance(roster, list) and roster:` for the heading, then a comprehension filtered by `isinstance(a, dict)` for the rows — and collapsing them into one test on the DECODED entries diverges for a list whose every element filters out. `"agents":[null]` is a non-empty list, so the oracle emits an empty `### Agents` section and this side emitted none. Harmless to a reader either way, which is exactly why it needs an assertion rather than a comment.
+--- old
+	if rosterLen(r) > 0 {
+--- new
+	if len(decodeRoster(r)) > 0 {

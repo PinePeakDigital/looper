@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestFindPRWithNoBranchToAskAbout'
+expect: --- FAIL:
+why:    with no branch to look a PR up by, gh is NEVER INVOKED — and folding that case into GhFailed made Note() say "gh ran and failed (...) the report is kept, and Step 0c can flush it once gh works". That names a cause nothing checked and a remedy that cannot work: the operator has to check out a branch or pass -branch, and waiting for gh will never help. This is the file's own defect class inside the file written to remove it, and the test for the path ASSERTED GhFailed, so it pinned the wrong answer while a second assertion in the same test proved gh was not called.
+--- old
+		return Probe{State: NoBranch, Detail: gitDetail}
+--- new
+		return Probe{State: GhFailed, Detail: gitDetail}

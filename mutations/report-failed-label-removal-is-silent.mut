@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestAFailedLabelRemovalIsReported'
+expect: --- FAIL:
+why:    four of applyLabel's five gh calls discarded their result — not even bound to a variable — while the comment above said every call was best-effort, which described only the add. A removal that failed left the PREVIOUS run's label standing beside the new one, the add still succeeded, and the diag still said the label had moved: a PR advertising two convergences at once with nothing anywhere saying so. Discarding the stream that says why a gh call failed is the exact defect this whole slice exists to stop.
+--- old
+		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
+			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
+		}
+--- new
+		sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name)

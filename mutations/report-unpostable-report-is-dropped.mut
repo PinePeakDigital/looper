@@ -1,0 +1,14 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestPostKeepsTheBodyOnEveryUnpostablePath'
+expect: --- FAIL:
+why:    "fail on a MISSING report, never on a failed post" is the module's own rule, and the push gate reads the pending file: a body that reaches neither the PR nor `.git/info` leaves the push refused on advice — "post the report first" — that has already been followed. Returning before the deferral is what a refactor that treats the not-found probe as an early exit does.
+--- old
+		path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Body)
+		if werr != nil {
+			return "", fmt.Errorf("%s, and the report could not be preserved: %w", probe.Note(), werr)
+		}
+--- new
+		path := ""
+		if false {
+			return "", fmt.Errorf("%s, and the report could not be preserved", probe.Note())
+		}

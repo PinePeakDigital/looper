@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheHardeningDivergence'
+expect: --- FAIL:
+why:    the third site of the same defect, in the section whose whole purpose is that an escalation above the plan cannot be silent. A forged "converged" blockquote directly under a real escalation defeats the one disclosure this path provides. `e.Reason` on the same line was already collapsed, which is what made the omission an inconsistency rather than a design choice.
+--- old
+			add(fmt.Sprintf("- `%s` — %s", cell(gate), cell(e.Reason)))
+--- new
+			add(fmt.Sprintf("- `%s` — %s", gate, cell(e.Reason)))

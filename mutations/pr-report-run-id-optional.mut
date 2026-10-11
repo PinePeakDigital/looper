@@ -1,0 +1,14 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportRequiresARunID'
+expect: --- FAIL:
+why:    without -run-id there is no sensible default run, and record.Load returns an empty map with NO error for the empty id — so the command would render a report reading `0 cycle(s) · 0 agent(s)` off nothing, which is exactly the fingerprint push-check accepts. The empty-record refusal catches it one line later with a message about the STORE, so the operator is sent to look at a path when the flag is what is missing.
+--- old
+	if *runID == "" {
+		return errors.New("pr-report: -run-id is required — the report's facts all come from " +
+			"that row, and there is no sensible default run to render")
+	}
+--- new
+	if false {
+		return errors.New("pr-report: -run-id is required — the report's facts all come from " +
+			"that row, and there is no sensible default run to render")
+	}

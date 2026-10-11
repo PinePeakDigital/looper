@@ -1,0 +1,16 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportDefaultsTheStoreFromTheEnvironment'
+expect: --- FAIL:
+why:    the store default is what makes `looper pr-report -run-id X` work at all, and $REVIEW_LOOP_RUNS is how the skill points both halves of the gate at the same file. Drop it and the command reads "" — which is a different failure from reading the wrong file, but both end with a report rendered from a record nobody wrote.
+--- old
+	if *store == "" {
+		*store = record.StorePath()
+	}
+
+	runs, err := record.Load(*store, 0)
+--- new
+	if false {
+		*store = record.StorePath()
+	}
+
+	runs, err := record.Load(*store, 0)

@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestMutateCheckFailsOnACatalogThatWouldNotRun'
+expect: CI would be green on a catalog that cannot run
+why:    the only thing that makes `mutate -check` a GATE rather than a report. CI runs it ahead of the fifteen-minute score, so a zero exit here is a green build on a catalog that `looper mutate` then cannot load — and since ParseCatalog aborts as a whole, that is every entry's guard gone. Measured before the test existed: deleting these three lines left `go vet` clean and both packages green while the binary printed every problem AND a false `ok:` line and exited 0. The three sibling exit paths in this file each had a test; the one CI depends on had none, which is the same shape as the defect this whole gate replaced — a check that certifies the half it was written for.
+--- old
+		if len(problems) > 0 {
+--- new
+		if false {

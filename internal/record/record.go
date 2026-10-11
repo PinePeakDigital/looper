@@ -14,6 +14,7 @@ package record
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,24 +55,70 @@ import (
 // nothing here derives from it.
 type GateSpec struct {
 	Planned string `json:"planned"`
+	// Reason is the plan's justification, and the report falls back to it when the gate
+	// reported no reason of its own. A plain string: absent and "" both mean "nothing was
+	// said", which is what the Python's `or ""` chain treats them as.
+	Reason string `json:"reason"`
 }
 
-// GateResult.Status is a pointer, which separates "" from absent-or-null — NOT all three.
-// encoding/json leaves a pointer nil both for JSON null and for an absent key, so absent and
-// null are indistinguishable by construction, and the one reader collapses "" in with them
-// anyway. A plain string would behave identically today; the pointer is kept because it makes
-// the collapse explicit at the reader rather than implicit in a zero value. A status that is not a string
-// is a decode error: the Python rendered `status: true` as "True" and a number as itself,
-// and reproducing that meant a str()-alike with number and container gaps that could never
-// be closed. Refusing the shape is both simpler and louder.
+// GateStatus keeps the `status` field's PRESENCE, because the report distinguishes three
+// states where the push gate distinguishes two. An executed entry that carries no status key
+// at all renders "**unreported**" — the one thing the gate table exists to surface — while a
+// null or an empty status renders as nothing. A *string cannot hold that distinction:
+// encoding/json leaves a pointer nil for an absent key and for JSON null alike, and Go read
+// "**unreported**" out of existence for `{"evidence": {"reason": "..."}}`, a shape `runlog
+// finish --executed` accepts — its unexplained-gates check passes any entry carrying a
+// non-empty `reason`, whatever its status — and an LLM writes. UnmarshalJSON runs only when the key is
+// present, so Present is exactly "the key was there".
+//
+// A status that is not a string is still a decode error: the Python rendered `status: true` as
+// "True" and a number as itself, and reproducing that meant a str()-alike with number and
+// container gaps that could never be closed. Refusing the shape is both simpler and louder.
+//
+// One accepted cost, pinned by TestTheDecodeErrorNamesWhatTheOperatorMustGoFix's "a bad gate
+// status masks the rest of its own row": encoding/json returns an Unmarshaler's error
+// IMMEDIATELY rather than saving it and decoding on, so a bad status now hides every other
+// bad field in the same row — `unresolved_asks` included, which decides the verdict. Across
+// rows nothing is hidden, because setErr accumulates. The alternative is moving `executed`
+// out of this typed boundary so presence can be read without an Unmarshaler, and the cost is
+// one extra round trip on a row that is bad in two places at once.
+type GateStatus struct {
+	Present bool
+	Value   string
+}
+
+// UnmarshalJSON records presence, then decodes. null is present-with-no-value, which is what
+// the Python's `cell(None)` renders as — nothing.
+func (s *GateStatus) UnmarshalJSON(b []byte) error {
+	s.Present = true
+	if string(b) == "null" {
+		return nil
+	}
+	return json.Unmarshal(b, &s.Value)
+}
+
 type GateResult struct {
-	Status *string `json:"status"`
+	Status GateStatus `json:"status"`
+	// Reason is what the gate said about its own status. Required by runlog for anything
+	// but `done`, but not required HERE: this package reads the record as written, and a
+	// row missing it is a real row to render, not one to refuse.
+	Reason string `json:"reason"`
 }
 
 // Plan is the planned half of a run, written once by cmd_plan.
 type Plan struct {
 	AgentCap *int                `json:"agent_cap"`
 	Gates    map[string]GateSpec `json:"gates"`
+
+	// The rest is read only by the report, which is why it arrived later than the gate
+	// fields above. Pointers where the report must tell absent from zero — a diff of 0
+	// changed lines is a fact and renders, where an absent count renders nothing at all —
+	// and plain strings where absent and "" are the same thing to every reader.
+	OrchestratorModel string `json:"orchestrator_model"`
+	TierFloor         string `json:"tier_floor"`
+	ChangedLines      *int   `json:"changed_lines"`
+	SemanticLines     *int   `json:"semantic_lines"`
+	SizingExcluded    string `json:"sizing_excluded"`
 }
 
 // Cycle is one pass of the loop. Applied is a pointer because ITS absence is load-bearing:
@@ -83,7 +130,87 @@ type Cycle struct {
 	Asked           *int  `json:"asked"`
 	Agents          *int  `json:"agents"`
 	AnalysisChanged *bool `json:"analysis_changed"`
+
+	// Read only by the report's cycle table. Number is a pointer because the Python prints it
+	// RAW — `{c.get('n')}` with no `or`, so an absent n renders the literal "None" — and a
+	// pointer is the only way to reproduce that rather than silently printing 0. Named
+	// Number, not N: the record's KEY is `n` and the json tag carries that, but a
+	// single-letter field beside DefectFindings and SubagentTokens made a reader open the
+	// comment to learn it is an ordinal rather than one more count. The three
+	// counts below are `or 0` on the Python side, so absence is zero and the pointer only
+	// exists to keep the folded-key guard able to see them.
+	Number          *int `json:"n"`
+	DefectFindings  *int `json:"defect_findings"`
+	CommentFindings *int `json:"comment_findings"`
+	SubagentTokens  *int `json:"subagent_tokens"`
 }
+
+// Escalation is one gate run above the plan's floor. Both fields are orchestrator free
+// text and reach a PR comment, so both are collapsed before rendering — see report.cell.
+type Escalation struct {
+	// Gate is a pointer because the report interpolates it RAW: `{e.get('gate')}` prints the
+	// literal "None" for an escalation that names no gate, and "" would read as an
+	// escalation of nothing rather than as the defective row it is. Absent and null are the
+	// same thing here, and the Python prints "None" for both.
+	Gate   *string `json:"gate"`
+	Reason string  `json:"reason"`
+	// isNull marks an element that was the literal `null`. Kept rather than dropped because
+	// the Python decides the SECTION and the BULLETS separately — `if esc:` on the raw list,
+	// then `if isinstance(e, dict)` per entry — so a list of nothing but nulls emits a heading
+	// with no bullets under it. Dropping nulls at the decode loses the raw count and the
+	// heading with it, measured; the roster needed the same split for the same reason.
+	isNull bool
+}
+
+// UnmarshalJSON records a `null` element instead of silently accepting it as a zero value.
+//
+// encoding/json leaves a non-pointer destination untouched for `null` — but it DOES call
+// UnmarshalJSON when the type implements Unmarshaler, including for null, which is what makes
+// this possible. Without it, `"escalations":[null]` decoded to a zero-value Escalation and the
+// report rendered a fabricated "- `None` — " bullet for an escalation nobody recorded. The
+// exact trap decodeRoster was fixed for one list over, missed there because the roster was the
+// list that had been reported: every sibling of a guarded thing needs looking at.
+//
+// A non-null, non-object element is still a decode ERROR, unchanged — an enumerated divergence.
+func (e *Escalation) UnmarshalJSON(b []byte) error {
+	if string(bytes.TrimSpace(b)) == "null" {
+		e.isNull = true
+		return nil
+	}
+	var p escalationBody
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	// isNull is reset EXPLICITLY. `*e = Escalation(p)` used to do it as a side effect of
+	// overwriting the whole struct, and replacing that with a field-by-field assignment lost
+	// it — encoding/json decodes into an existing slice element without zeroing it when the
+	// slice already has length, which happens for a row carrying `escalations` TWICE. Measured:
+	// `"escalations":[null],"escalations":[{"gate":"a","reason":"b"}]` left isNull set from the
+	// first decode, Render skipped the element, and the oracle's `- `a` — b` bullet vanished
+	// from the one section whose stated purpose is that an escalation cannot be silent.
+	e.Gate, e.Reason, e.isNull = p.Gate, p.Reason, false
+	return nil
+}
+
+// escalationBody is Escalation's fields without the Unmarshaler, so delegating to it does not
+// recurse. A method-local `type plain Escalation` is the usual idiom and was wrong here: the
+// type's NAME reaches the operator. json.UnmarshalTypeError carries it, so an escalation
+// element that is neither null nor an object reported "cannot unmarshal string into Go value
+// of type record.plain" — a type that appears nowhere in the package, against a boundary whose
+// stated contract is that the error names what the operator must go fix. This name is
+// greppable. The field tags must stay in step with Escalation's; nothing but this decode reads
+// them, and TestTheDecodeErrorNamesWhatTheOperatorMustGoFix's "a type the operator can
+// actually grep for" asserts this type's name appears in the error. That subtest was written
+// because the sentence claiming it existed was false when first written: renaming the type
+// left all six packages green.
+type escalationBody struct {
+	Gate   *string `json:"gate"`
+	Reason string  `json:"reason"`
+}
+
+// IsNull reports whether this element was the literal `null`, which the report must skip while
+// still counting it toward whether the section appears.
+func (e Escalation) IsNull() bool { return e.isNull }
 
 // Finish is the terminal row. Agents stays raw because `--agents` is a bare json.loads with
 // no shape validation and the store holds 27 lists and 1 object for it (measured 2026-10-09
@@ -105,6 +232,15 @@ type Finish struct {
 	UnresolvedAsks *int                  `json:"unresolved_asks"`
 	Executed       map[string]GateResult `json:"executed"`
 	Agents         json.RawMessage       `json:"agents"`
+
+	// TierExecuted is derived by runlog, not asserted by the orchestrator — derive_tier
+	// refuses a tier below the plan's floor and forces `partial` when a planned gate went
+	// unaccounted. The report prints it beside TierFloor so a laundered `full` is visible
+	// next to what was planned.
+	TierExecuted string `json:"tier_executed"`
+	// Escalations are gates run ABOVE the plan's floor, with the reason. A list in 30 of
+	// the store's 45 finish rows and absent in 15; never anything else.
+	Escalations []Escalation `json:"escalations"`
 }
 
 // Run is one run's phases, merged the way load() merges them — with one measured, unreachable
@@ -319,7 +455,8 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		}
 		switch phase {
 		case "cycle":
-			if err := foldedKeys([]byte(line), "applied", "asked", "agents", "analysis_changed"); err != nil {
+			if err := foldedKeys([]byte(line), "applied", "asked", "agents", "analysis_changed",
+				"n", "defect_findings", "comment_findings", "subagent_tokens"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
@@ -330,11 +467,12 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			}
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
-			if err := foldedKeys([]byte(line), "agent_cap", "gates"); err != nil {
+			if err := foldedKeys([]byte(line), "agent_cap", "gates", "orchestrator_model",
+				"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
-			if err := foldedEntryKeys([]byte(line), "gates", "planned"); err != nil {
+			if err := foldedEntryKeys([]byte(line), "gates", "planned", "reason"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
@@ -348,11 +486,16 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			}
 			r.Plan = &pl
 		case "finish":
-			if err := foldedKeys([]byte(line), "outcome", "unresolved_asks", "executed", "agents"); err != nil {
+			if err := foldedKeys([]byte(line), "outcome", "unresolved_asks", "executed", "agents",
+				"tier_executed", "escalations"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
-			if err := foldedEntryKeys([]byte(line), "executed", "status"); err != nil {
+			if err := foldedEntryKeys([]byte(line), "executed", "status", "reason"); err != nil {
+				r.setErr(lineNo, phase, err)
+				continue
+			}
+			if err := foldedListEntryKeys([]byte(line), "escalations", "gate", "reason"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
@@ -461,6 +604,35 @@ func foldedEntryKeys(raw []byte, field string, names ...string) error {
 	return nil
 }
 
+// foldedListEntryKeys is foldedEntryKeys for a field whose value is an ARRAY of objects, which
+// `escalations` is and `gates`/`executed` are not. foldedEntryKeys cannot cover it: it decodes
+// the field into a map and returns nil when that fails, so pointing it at a list silently
+// checks nothing — a guard that reads as present and is not.
+//
+// Reached by `{"escalations":[{"Gate":"x"}]}`: encoding/json folds `Gate` onto the `gate` field
+// and renders a gate name the Python's exact `e.get('gate')` never sees, where it prints the
+// literal "None". That is the same forgery this file's other folded-key guards exist for, and
+// `escalations` was the one new entry-shaped field in the report slice that had none.
+func foldedListEntryKeys(raw []byte, field string, names ...string) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	if _, ok := top[field]; !ok {
+		return nil
+	}
+	var entries []json.RawMessage
+	if json.Unmarshal(top[field], &entries) != nil {
+		return nil // not a list; the caller's own decode reports that
+	}
+	for i, e := range entries {
+		if err := foldedKeys(e, names...); err != nil {
+			return fmt.Errorf("%s entry %d: %w", field, i, err)
+		}
+	}
+	return nil
+}
+
 // quoteCapped is %q plus the bound every operator message in this file carries, because the
 // keys and gate names it prints are writer-supplied and unvalidated.
 func quoteCapped(s string) string {
@@ -497,6 +669,18 @@ var runLevelFields = map[string]string{
 	"unresolved_asks": "finish",
 	"executed":        "finish",
 	"cycles":          synthesized,
+	// Added by the pr-report slice, in the commit that first reads them — which is the rule
+	// this map's deferred entry states, and the reason `outcome` joined when the push gate
+	// began reading it. The report renders all seven, so a row carrying one under a phase
+	// that does not own it would otherwise reach the report's merged view here exactly as
+	// it reaches the Python's.
+	"orchestrator_model": "plan",
+	"tier_floor":         "plan",
+	"changed_lines":      "plan",
+	"semantic_lines":     "plan",
+	"sizing_excluded":    "plan",
+	"tier_executed":      "finish",
+	"escalations":        "finish",
 }
 
 // synthesized is the owner for a key load() BUILDS rather than reads off a row, so no row
@@ -887,6 +1071,26 @@ func (r *Run) Disclosure() (string, error) {
 // One return value, not two, so it is deliberately NOT one of the `func() (T, error)`
 // derivations `refusingDerivations` enumerates — it answers a question about the cycle rows
 // rather than a verdict about the run, and it has no decode of its own to refuse.
+// Empty reports whether the record derived NOTHING for this run: no plan row, no cycle row and
+// no finish row. It is the question both halves of the push gate ask, and it lives here so they
+// cannot answer it differently.
+//
+// `r == nil` alone is the narrower, wrong answer, and it shipped once in internal/push before
+// PR #4's review caught it: a row carrying the id under a phase the typed decode does not own —
+// `{"run_id":"x","phase":"nudge"}` — creates a *Run that says nothing, and from that the
+// convergence derives `unknown` (a DISCLOSURE, not a block), no recorded outcome can block, and
+// the report's fingerprint collapses to `0 cycle(s) · 0 agent(s)`. That fingerprint is exactly
+// what push-check requires, so a report rendered off nothing SATISFIES the gate with no forgery.
+// Measured again in the report slice: `looper pr-report` on a nudge-only store printed a
+// complete, plausible report and exited 0.
+//
+// Deliberately NOT the shape ValidRunID takes, which internal/report duplicates on purpose so
+// the writer and the reader of the pending path cannot agree by accident. Here the opposite is
+// wanted — the two must agree — so there is one definition.
+func (r *Run) Empty() bool {
+	return r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
+}
+
 func (r *Run) AgentsSpent() int {
 	var n int
 	for _, c := range r.Cycles {
@@ -940,8 +1144,8 @@ func (r *Run) DroppedGates() (map[string]string, error) {
 		// the status is the whole content of the alarm line.
 		status := "unreported"
 		if r.Finish != nil {
-			if res, ok := r.Finish.Executed[name]; ok && res.Status != nil && *res.Status != "" {
-				status = *res.Status
+			if res, ok := r.Finish.Executed[name]; ok && res.Status.Value != "" {
+				status = res.Status.Value
 			}
 		}
 		if gateOK(status) {

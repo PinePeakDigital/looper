@@ -1,9 +1,9 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
 expect: instead of an error; an empty map here is the clean sweep
-why:    the gate half of the case-folding divergence, and the worse half: a folded key inside an `executed` entry makes this report NOTHING dropped where the Python reports the gate. Measured — `status:"failed"` beside `Status:"done"` gives python={g:failed} and go={} with no error; `planned:"run"` beside `PLANNED:"skip"` gives python={g:unreported} and go={}. A separate entry from the top-level one because the check runs one level down, over each gate's own object.
+why:    the gate half of the case-folding divergence, and the worse half: a folded key inside an `executed` entry makes this report NOTHING dropped where the Python reports the gate. Measured — `status:"failed"` beside `Status:"done"` gives python={g:failed} and go={} with no error; `planned:"run"` beside `PLANNED:"skip"` gives python={g:unreported} and go={}. A separate entry from the top-level one because the check runs one level down, over each gate's own object. (Re-anchored 2026-10-09: the report slice added "reason" to this call.)
 --- old
-			if err := foldedEntryKeys([]byte(line), "executed", "status"); err != nil {
+			if err := foldedEntryKeys([]byte(line), "executed", "status", "reason"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}

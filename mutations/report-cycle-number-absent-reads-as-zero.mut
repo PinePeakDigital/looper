@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the Python interpolates `{c.get('n')}` with no `or`, so a cycle row with no number prints "None". Reading it as 0 hides a defect in the record behind a plausible value — a table reading `| 0 |` says a cycle zero happened, where "None" says the row is malformed. Same distinction as `applied`, which is the one the convergence derivation turns on. (Re-anchored when the field was renamed from N to Number: the record's key is still `n` and the json tag carries it, but a single-letter field beside DefectFindings and SubagentTokens made a reader open the comment to learn it is an ordinal.)
+--- old
+				raw(c.Number), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),
+--- new
+				fmt.Sprintf("%d", orZero(c.Number)), raw(c.Applied), orZero(c.Asked), orZero(c.DefectFindings),

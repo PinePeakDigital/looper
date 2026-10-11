@@ -19,7 +19,7 @@ Reintroduces a known defect into the code, runs the suites that should notice, a
 reports whether they did.
 
 ```text
-looper mutate [-catalog mutations] [-root .]
+looper mutate [-catalog mutations] [-root .] [-check]
 ```
 
 - **caught** — a verify command failed, and failed the way the mutation said it would.
@@ -174,8 +174,9 @@ missing file, a mistyped `-run-id`, or every row for that run torn — the recor
 as empty *with no error*. Convergence then reads `unknown`, which is a disclosure
 rather than a block; no recorded outcome can block, because there is none; and the
 required report fingerprint collapses to `0 cycle(s) · 0 agent(s)`, which is exactly
-what `pr-report.py` renders for a run with no cycle rows — 22 of the 41 runs in the
-author's own store. So a *genuine* report, rendered by the real tool for a real
+what `pr-report.py` renders for a run with no cycle rows — about half the runs in the author's own
+store (22 of 45 when last counted) — a figure given as a ratio because the store lives
+outside the repo and gains runs several times a day, so no commit pin and no date fixes it. So a *genuine* report, rendered by the real tool for a real
 zero-cycle run, satisfies the gate off a record that said nothing, with no forgery at
 all. Measured: changing only `$HOME` turned a recorded `test-failure` refusal into a
 granted push, in both implementations.
@@ -204,6 +205,70 @@ level at which the two agree.
 A port of `push-check.py`, with a parity gate that runs the Python against the same
 store, repo and flags and requires the same JSON — `disclose` wording included,
 since a reworded disclosure is a behaviour change no verdict comparison catches.
+
+## `looper pr-report`
+
+Renders the Step 14 review disclosure from the run record, and publishes it.
+
+```text
+looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+                 [-repo dir] [-branch b] [-store path]
+```
+
+Without `-post` the body goes to stdout and nothing else does. With `-post` it comments
+on this branch's PR and *also* keeps a local copy, or — when it cannot comment — keeps
+only the local copy at `.git/info/review-loop-pending-report.<run-id>.md` for Step 0c to
+flush. The body is never dropped: a report that exists in neither place is what leaves
+`push-check` refusing the push on advice that cannot succeed.
+
+The split the Python states and this keeps: **facts** come from the record and are not
+retyped by the orchestrator, so they cannot drift from what was recorded; the
+**narrative** arrives on stdin or via `-findings-file` and is appended verbatim, because
+what the agents found is not derivable and must not be faked.
+
+**It refuses a run it cannot read.** `record.Load` returns an empty map and no error for
+a mistyped id or a wrong `-store`, and a report rendered from that is not an empty
+report — it is a genuine-looking one reading `0 cycle(s) · 0 agent(s)`, which is exactly
+the fingerprint `push-check` would then accept. Both halves of the gate refuse there, on
+the same measurement.
+
+**"No PR" is no longer asserted from a failed `gh`.** `pr-report.py` reads
+`rc, num, _ = sh("gh", "pr", "view", ...)` and branches on `rc != 0 or not num`, printing
+"no PR yet" — one assertion standing in for three causes, with the only stream that says
+which discarded into `_`. The advice it gives cannot fix the other two, and on the
+author's machine `gh` has already failed with a keychain TLS error while `git push`
+worked. This port asks `gh pr list --head <branch>`, which exits 0 with empty output for
+"there are none" and non-zero only when gh itself failed, and reports five states
+distinctly: a PR was found, gh answered that there is none, gh could not be run at all,
+gh ran and failed, or there was no branch to ask about at all — a detached HEAD, an
+unborn branch, or a git that could not answer, in which case gh is never invoked and
+saying so is the whole point. gh's own stderr is carried for the two that are gh's, and
+git's for the one that is git's. Every one of them still
+keeps the body. Asserted by `TestThePostDiagnosisDivergence`, which also pins that the
+Python still conflates them.
+
+With `-label` it applies `review:<convergence>` to the PR and removes the other three, so
+two cannot stand at once — the at-a-glance half of the signal, so a reader need not open
+a comment to learn whether the review finished. The convergence is derived from the same
+read as the disclosure in the body, not taken as a flag. A label failure never fails a
+publish that already succeeded, and the label is applied whenever a PR was found — including
+when the comment itself failed, since nothing about `gh pr edit` depends on the comment having
+landed. Every local copy carries a note saying the label is still owed, the successful-post
+copy included; that is what the Python writes and Step 0c reads, and narrowing it to the
+deferred case would be a divergence rather than a fix.
+
+Parity with `pr-report.py` is gated two ways, and they do not run in the same places. The
+fixture table is the gate CI enforces: it covers the shapes no real row happens to hold — an executed gate with no `status` key, a roster entry whose
+`id` is a number, a `findings: 0` that renders as *nothing* because `cell()` is
+`str(text or "")`. The second is `TestRealStoreParity`, which renders every run in the
+author's live store through both and diffs them — it runs only where that store exists and
+SKIPS in CI, which has no run record, so it is a local gate and not a claim about CI
+coverage. (CI's `the report parity gate actually ran` step allowlists exactly that one
+name, because a skip reports as success and would otherwise hide a whole table going
+inert.) Where the two cannot agree, the divergence is a test rather than a comment: `TestTheEnumeratedRenderDivergences` names each one with both renderings, and
+`TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three record shapes on which the
+Python tracebacks — dropping the whole report — and this refuses at the typed boundary
+with the offending field named.
 
 ## `looper docs`
 

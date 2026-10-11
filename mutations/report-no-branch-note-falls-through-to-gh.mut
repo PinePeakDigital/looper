@@ -1,0 +1,10 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestFindPRWithNoBranchToAskAbout'
+expect: --- FAIL:
+why:    the NoBranch arm of Note() had no catalog coverage: the only entry touching that test flips the STATE, which trips the subtest's t.Fatalf before either Note() assertion runs, so deleting the arm itself went unguarded. Without it NoBranch falls to the default and says "gh ran and failed (...) Step 0c can flush it once gh works" for a gh that was never invoked — the cause-never-checked defect the state was added to remove, reachable again by deleting four lines. The two assertions this reaches are that the note does not blame gh and that it names `-branch`, which is the only remedy that works.
+--- old
+	case NoBranch:
+		return "no branch to look a PR up by (" + p.Detail + ") — gh was NOT asked, so " +
+			"whether a PR exists is unknown; check out a branch or pass -branch. The report " +
+			"is kept"
+--- new

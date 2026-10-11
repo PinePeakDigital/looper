@@ -1,0 +1,19 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportFlagOutputNeverTouchesStdout'
+expect: --- FAIL:
+why:    the push-check sibling of this entry records the original defect: `-h` is a request that was SERVED, and an undifferentiated `return err` turns it into exit 1, indistinguishable from a mistyped flag. Repeated per subcommand because each parses its own flags, and the second site is where a copy of the first loses the three lines that make -h exit 0.
+--- old
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *runID == "" {
+		return errors.New("pr-report: -run-id is required
+--- new
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *runID == "" {
+		return errors.New("pr-report: -run-id is required

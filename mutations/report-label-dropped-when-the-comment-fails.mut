@@ -1,0 +1,13 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheLabelMovesEvenWhenTheCommentFails'
+expect: --- FAIL:
+why:    the Python's `if a.label:` sits AFTER both the posted and the comment-failed branches, so it runs whenever a PR number is known, and nothing about `gh pr edit` depends on the comment having landed. Returning early instead dropped the at-a-glance signal for exactly the runs whose report is hardest to find — the ones whose comment failed and whose body is now only in `.git/info`.
+--- old
+		if p.Label {
+			applyLabel(p, probe.Number, diag)
+		}
+		return path, nil
+	}
+--- new
+		return path, nil
+	}

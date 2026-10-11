@@ -1,0 +1,14 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportPostDefersAndReportsWhereTo'
+expect: --- FAIL:
+why:    with -post the body goes to the PR, and stdout stays empty so a caller can tell "published" from "rendered". Printing both makes `looper pr-report --post > file` look like it still produces the report locally, and pipes a second copy into whatever Step 14 redirects.
+--- old
+	if !*post {
+		_, err = io.WriteString(out, body)
+		return err
+	}
+--- new
+	_, err = io.WriteString(out, body)
+	if !*post {
+		return err
+	}

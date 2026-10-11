@@ -1,7 +1,8 @@
 target: internal/record/record.go
 verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts'
 expect: the Python's push blocker reads its outcome
-why:    the case-folding mechanism pointed at the field that BLOCKS. `{"outcome":"test-failure","Outcome":"clean"}` folds both keys onto Finish.Outcome and the last wins in Go, so this reads `clean` and permits where the Python's exact `run.get("outcome")` reads `test-failure` and blocks. Dropping `outcome` from the finish arm's folded-key list is invisible to misplacedRunField, because the key folds onto a field the finish phase owns.
+why:    the case-folding mechanism pointed at the field that BLOCKS. `{"outcome":"test-failure","Outcome":"clean"}` folds both keys onto Finish.Outcome and the last wins in Go, so this reads `clean` and permits where the Python's exact `run.get("outcome")` reads `test-failure` and blocks. Dropping `outcome` from the finish arm's folded-key list is invisible to misplacedRunField, because the key folds onto a field the finish phase owns. (Re-anchored 2026-10-09: the report slice added "tier_executed" and "escalations" to this call, so the line no longer ends where the old anchor did.)
 --- old
-			if err := foldedKeys([]byte(line), "outcome", "unresolved_asks", "executed", "agents"); err != nil {--- new
-			if err := foldedKeys([]byte(line), "unresolved_asks", "executed", "agents"); err != nil {
+			if err := foldedKeys([]byte(line), "outcome", "unresolved_asks", "executed", "agents",
+--- new
+			if err := foldedKeys([]byte(line), "unresolved_asks", "executed", "agents",

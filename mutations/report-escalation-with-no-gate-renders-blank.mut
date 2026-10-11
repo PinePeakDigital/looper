@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport'
+expect: --- FAIL:
+why:    the Python interpolates `{e.get('gate')}` RAW, so an escalation naming no gate prints the literal "None". An empty string there reads as an escalation of nothing — a real escalation above the plan, rendered as though the row were blank — where "None" reads as the defective record it is. Same reasoning as the cycle table's absent `n`.
+--- old
+			gate := "None" // interpolated raw by the Python; absent and null both print this
+--- new
+			gate := "" // interpolated raw by the Python; absent and null both print this

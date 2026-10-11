@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/report/ -count=1 -run 'TestParityWithPrReport/a_row_carrying_escalations_twice'
+expect: --- FAIL:
+why:    `*e = Escalation(p)` reset isNull as a side effect of overwriting the whole struct, and a field-by-field assignment loses that. encoding/json decodes into an existing slice element WITHOUT zeroing it when the slice already has length, which is what a row carrying `escalations` twice produces. Measured: `"escalations":[null],"escalations":[{"gate":"a","reason":"b"}]` kept isNull from the first decode, Render's `if e.IsNull() { continue }` skipped the element, and the oracle's "- `a` — b" bullet vanished — from the one section whose stated purpose is that an escalation above the plan cannot be silent. The explicit reset is DROPPED here rather than the whole statement, so the mutation still compiles.
+--- old
+	e.Gate, e.Reason, e.isNull = p.Gate, p.Reason, false
+--- new
+	e.Gate, e.Reason = p.Gate, p.Reason

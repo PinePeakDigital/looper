@@ -934,7 +934,7 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		// The security property, and the reason this blocks rather than disclosing. Everything
 		// the gate reads comes off the record: convergence derives `unknown`, Finish is nil so
 		// no recorded outcome can block, and the required fingerprint collapses to the two
-		// lines pr-report.py renders for a run with no cycle rows — 22 of the 41 runs in the
+		// lines pr-report.py renders for a run with no cycle rows — about HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 19:50 — the store gains runs several times a day, so re-derive rather than trust the figure: group its rows by run_id and count those with no `cycle` row) — in the
 		// live store. So a GENUINE report, rendered by the real tool for a real zero-cycle
 		// run, matches an empty record's fingerprint exactly. No forgery is needed.
 		//

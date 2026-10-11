@@ -1,0 +1,9 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestTheDecodeErrorNamesWhatTheOperatorMustGoFix/a_type'
+expect: --- FAIL:
+why:    json.UnmarshalTypeError carries the TYPE's name, so delegating Escalation's decode through the usual method-local `type plain Escalation` made a non-object element report "cannot unmarshal string into Go struct field Finish.escalations of type record.plain" — a type that appears nowhere in the package, at a boundary whose stated contract is that the error names what the operator must go fix. A named `escalationBody` is greppable, and that name is the ENTIRE reason the type is package-level rather than method-local, which is why it needs its own assertion: a comment claimed this test pinned it while renaming the type left all six packages green. The mutation restores the method-local idiom rather than renaming the declaration, because renaming only the declaration leaves the use undefined and a mutation that does not compile scores broken and tests nothing. `escalationBody` then goes unreferenced, which Go permits for a type.
+--- old
+	var p escalationBody
+--- new
+	type plain Escalation
+	var p plain
