@@ -690,6 +690,31 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
+	t.Run("a held pipe is refused even when the contaminant parses", func(t *testing.T) {
+		// The case the JSON-shape test CANNOT reach, and the only thing left for `!r.Drained`
+		// to catch. Both fixtures above contaminate with a non-JSON spelling ("42"), so the
+		// decode refuses them and the Drained arm is redundant there — measured: with that arm
+		// disabled the whole suite still passed, which is how its catalog entry scored
+		// `survived` at 231/232. Here gh prints NOTHING (so there is no PR) and a descendant
+		// writes a complete, well-formed answer and holds the pipe open past the drain bound.
+		// `Out` is then `[{"number":42}]`, which decodes cleanly to PR #42, and nothing in the
+		// SHAPE of the answer is wrong. Only the fact that the pipe was still held when the
+		// drain bound expired says the bytes cannot be gh's.
+		//
+		// What this does NOT cover, deliberately: a descendant that writes valid JSON and
+		// EXITS leaves `Drained` true and a decodable answer, and no oracle in this output can
+		// separate it from gh having answered. That residue is a deferred finding, not a hole
+		// this test pretends to close.
+		dir := gitRepo(t)
+		shimGh(t, `(printf '[{"number":42}]\n'; sleep 5) &`)
+		_ = exec.Command("gh", "--warm").Run()
+		if got := FindPR(dir, "feature"); got.State == PRFound {
+			t.Errorf("a descendant's well-formed bytes became the PR number: state=%v "+
+				"number=%q — the disclosure would be posted to PR #42, which does not exist",
+				got.State, got.Number)
+		}
+	})
+
 	t.Run("an undrained comment still counts as posted", func(t *testing.T) {
 		// The other half, and the reason Drained is a field rather than a rejection: this call
 		// reads no output, so an undrained `gh pr comment` that exited 0 DID post. Rejecting it
