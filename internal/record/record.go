@@ -345,11 +345,12 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	for {
 		line, err := br.ReadString('\n')
 		if line != "" {
-			// The \r half is defensive only, and deliberately untested: a trailing \r
-			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
-			// whitespace, so no assertion here can distinguish trimming it from not. A
-			// test for it would pass either way, which is worse than no test.
-			lines = append(lines, strings.TrimRight(line, "\r\n"))
+			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
+			// records to runlog.py. Split here too, or the record writer (loadRaw) and this
+			// reader disagree about one store: measured, finish found a run's plan and then
+			// derived its convergence as unknown from the same file.
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			lines = append(lines, strings.Split(line, "\r")...)
 		}
 		if err != nil {
 			if err == io.EOF {

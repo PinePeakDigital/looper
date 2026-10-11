@@ -222,9 +222,11 @@ var writeScenarios = []wscenario{
 		`{"run_id":"r4","phase":"plan","planned_at":"2026-01-01T00:00:00+00:00","repo":"{REPO}","head":"h"}`,
 		"{\"run_id\":\"r4\",\"phase\":\"finish\",\"finished_at\":\"2026-01-01T00:00:00+00:00\",\"outcome\":\"clean\"}\x1c",
 		"{\"run_id\":\"cr\",\"phase\":\"plan\",\"repo\":\"{REPO}\",\"head\":\"h\"}\r{\"run_id\":\"cr\",\"phase\":\"finish\",\"outcome\":\"clean\"}",
+		"{\"run_id\":\"cv\",\"phase\":\"plan\",\"repo\":\"{REPO}\",\"head\":\"h\"}\r{\"run_id\":\"cv\",\"phase\":\"cycle\",\"n\":1,\"applied\":0,\"agents\":1}",
 	}, steps: []wstep{
 		st("abandon", "--run-id", "r4", "--missing", "x"),
 		st("show", "--run-id", "cr"),
+		st("convergence", "--run-id", "cv"),
 		st("check"),
 	}},
 	{name: "an unexplained gate is refused before a numeric escalations", steps: []wstep{
@@ -703,7 +705,7 @@ func TestANumberForAListArgumentIsRefused(t *testing.T) {
 	if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", "nn"}, &out, &errb); c != 0 {
 		t.Fatalf("plan: %d %s", c, errb.String())
 	}
-	for _, args := range [][]string{{"--escalations", "5"}, {"--agents", "true"}, {"--agents", "7"}} {
+	for _, args := range [][]string{{"--escalations", "5"}, {"--escalations", "true"}, {"--agents", "true"}, {"--agents", "7"}} {
 		errb.Reset()
 		c := Command(append([]string{"finish", "--run-id", "nn", "--outcome", "clean", "--tier", "fast"}, args...), &out, &errb)
 		if c != 1 || !strings.Contains(errb.String(), "must be a JSON list") {
