@@ -161,10 +161,10 @@ exit on a fresh branch whose summary never reached the PR.
 
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
 also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
-run at all, because the gate then fails closed with a reason — "run `pr-report.py
---post` first" — that is the wrong instruction for a missing binary or a killed
+run at all, because the gate then fails closed with a reason — "run `looper pr-report
+--run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
-reason for exact equality against the Python's, which has no second stream. A refusal
+reason for exact equality against what the Python printed, and it had no second stream. A refusal
 for a report that is genuinely unposted stays silent, so the note's presence is the
 signal.
 
@@ -174,20 +174,18 @@ missing file, a mistyped `-run-id`, or every row for that run torn — the recor
 as empty *with no error*. Convergence then reads `unknown`, which is a disclosure
 rather than a block; no recorded outcome can block, because there is none; and the
 required report fingerprint collapses to `0 cycle(s) · 0 agent(s)`, which is exactly
-what `pr-report.py` renders for a run with no cycle rows — about half the runs in the author's own
+what `looper pr-report` renders for a run with no cycle rows — about half the runs in the author's own
 store (22 of 45 when last counted) — a figure given as a ratio because the store lives
 outside the repo and gains runs several times a day, so no commit pin and no date fixes it. So a *genuine* report, rendered by the real tool for a real
 zero-cycle run, satisfies the gate off a record that said nothing, with no forgery at
 all. Measured: changing only `$HOME` turned a recorded `test-failure` refusal into a
 granted push, in both implementations.
 
-`push-check.py` still permits there, faithfully following the design's own split. This
+`push-check.py` permitted there, faithfully following the design's own split. This
 port refuses, because an empty record is not a run that stopped looking — it is the
 absence of any evidence that a run happened, and misresolving the store is otherwise
 the cheapest way to make this gate say yes. The divergence is asserted rather than
-left to drift, by `TestTheEmptyRecordDivergence`, which also pins that the Python still
-permits: if that ever changes, the divergence has closed and the case goes back in the
-agreement table.
+left to drift, by `TestTheEmptyRecordDivergence`, against the Python's frozen output.
 
 stderr still carries a note naming the run and the store that was read, because the
 refusal cannot say *why* nothing was readable. A run whose rows were all torn is
@@ -196,15 +194,19 @@ absent from the loaded record exactly as a run that was never written is, and
 that `grep` finds the run id in. Distinguishing the two needs `Load` to report how
 many rows it dropped.
 
-A note on comparing the two implementations by hand: their stdout is **not** byte-
-identical and never has been. `json.dumps` defaults to `ensure_ascii=True`, so the
+A note on reading the frozen oracle output: it is **not** byte-identical to this
+command's stdout and never was. `json.dumps` defaults to `ensure_ascii=True`, so the
 Python escapes the em dash in the common refusal reason as `\u2014` where Go emits it
 literally. The parity gate compares the decoded JSON, field by field, which is the
 level at which the two agree.
 
-A port of `push-check.py`, with a parity gate that runs the Python against the same
-store, repo and flags and requires the same JSON — `disclose` wording included,
-since a reworded disclosure is a behaviour change no verdict comparison catches.
+A port of `push-check.py`, which is now retired. Its parity gate compares against what
+the Python printed for each case before it went — frozen under
+`internal/push/testdata/oracle` — and requires the same JSON, `disclose` wording
+included, since a reworded disclosure is a behaviour change no verdict comparison
+catches. A deliberate change edits the frozen file in the same commit as the code: the
+refusal above said `pr-report.py --post` until the switch commit retired that script, and
+now names the run id, so the command can be run as printed.
 
 ## `looper pr-report`
 
@@ -232,10 +234,10 @@ report — it is a genuine-looking one reading `0 cycle(s) · 0 agent(s)`, which
 the fingerprint `push-check` would then accept. Both halves of the gate refuse there, on
 the same measurement.
 
-**"No PR" is no longer asserted from a failed `gh`.** `pr-report.py` reads
-`rc, num, _ = sh("gh", "pr", "view", ...)` and branches on `rc != 0 or not num`, printing
+**"No PR" is no longer asserted from a failed `gh`.** `pr-report.py` read
+`rc, num, _ = sh("gh", "pr", "view", ...)` and branched on `rc != 0 or not num`, printing
 "no PR yet" — one assertion standing in for three causes, with the only stream that says
-which discarded into `_`. The advice it gives cannot fix the other two, and on the
+which discarded into `_`. The advice it gave cannot fix the other two, and on the
 author's machine `gh` has already failed with a keychain TLS error while `git push`
 worked. This port asks `gh pr list --head <branch>`, which exits 0 with empty output for
 "there are none" and non-zero only when gh itself failed, and reports five states
@@ -245,7 +247,7 @@ unborn branch, or a git that could not answer, in which case gh is never invoked
 saying so is the whole point. gh's own stderr is carried for the two that are gh's, and
 git's for the one that is git's. Every one of them still
 keeps the body. Asserted by `TestThePostDiagnosisDivergence`, which also pins that the
-Python still conflates them.
+retired Python conflated them.
 
 With `-label` it applies `review:<convergence>` to the PR and removes the other three, so
 two cannot stand at once — the at-a-glance half of the signal, so a reader need not open
@@ -254,21 +256,21 @@ read as the disclosure in the body, not taken as a flag. A label failure never f
 publish that already succeeded, and the label is applied whenever a PR was found — including
 when the comment itself failed, since nothing about `gh pr edit` depends on the comment having
 landed. Every local copy carries a note saying the label is still owed, the successful-post
-copy included; that is what the Python writes and Step 0c reads, and narrowing it to the
+copy included; that is what the Python wrote and Step 0c reads, and narrowing it to the
 deferred case would be a divergence rather than a fix.
 
-Parity with `pr-report.py` is gated two ways, and they do not run in the same places. The
-fixture table is the gate CI enforces: it covers the shapes no real row happens to hold — an executed gate with no `status` key, a roster entry whose
-`id` is a number, a `findings: 0` that renders as *nothing* because `cell()` is
-`str(text or "")`. The second is `TestRealStoreParity`, which renders every run in the
-author's live store through both and diffs them — it runs only where that store exists and
-SKIPS in CI, which has no run record, so it is a local gate and not a claim about CI
-coverage. (CI's `the report parity gate actually ran` step allowlists exactly that one
-name, because a skip reports as success and would otherwise hide a whole table going
-inert.) Where the two cannot agree, the divergence is a test rather than a comment: `TestTheEnumeratedRenderDivergences` names each one with both renderings, and
-`TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three record shapes on which the
-Python tracebacks — dropping the whole report — and this refuses at the typed boundary
-with the offending field named.
+Parity with `pr-report.py`, now retired, is gated against what it rendered for each
+fixture before it went, frozen under `internal/report/testdata/oracle` — byte for byte,
+and a missing frozen file fails the test rather than skipping it. The fixtures cover the
+shapes no real row happens to hold — an executed gate with no `status` key, a roster entry
+whose `id` is a number, a `findings: 0` that renders as *nothing* because `cell()` is
+`str(text or "")`. Until the switch, every run in the author's live store was also rendered
+through both and diffed; that comparison went with the oracle, because a store that gains
+runs every day cannot be frozen. Where the two cannot agree, the divergence is a test
+rather than a comment: `TestTheEnumeratedRenderDivergences` names each one with both
+renderings, and `TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three record shapes
+on which the Python tracebacked — dropping the whole report — and this refuses at the
+typed boundary with the offending field named.
 
 ## `looper docs`
 

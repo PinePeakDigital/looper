@@ -1,0 +1,14 @@
+<!-- review-loop:run=report01 -->
+
+## review-loop
+
+Review **converged** — the final cycle found nothing left to apply.
+
+- **Outcome** `converged` · **convergence** `converged` · **tier** `unrecorded` (floor `unrecorded`)
+- **Run** `report01` · orchestrator `?` · 1 cycle(s) · 2 agent(s)
+
+### Cycles
+
+| # | applied | asked | defects | comment-accuracy | agents | analysis |
+|---|---|---|---|---|---|---|
+| 1 | 0 | 0 | 0 | 0 | 2 | clean |

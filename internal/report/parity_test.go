@@ -3,47 +3,29 @@ package report
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pinepeakdigital/looper/internal/golden"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
-// The parity gate for the rendered report. Until pr-report.py is retired the two must not be
-// able to disagree, and here the whole artifact is the output: a reworded disclosure, a lost
+// The parity gate for the rendered report, against what pr-report.py printed before it was
+// retired. Here the whole artifact is the output: a reworded disclosure, a lost
 // gate row or a differently-rendered count is a silent behaviour change that no verdict-level
 // comparison would catch. So this compares the BODY, byte for byte — no json.dumps sits in
 // this path, unlike the push gate's, so there is nothing to decode around.
 //
-// The fixtures are deliberately not the real store. TestRealStoreParity compares every real
-// run in the live store and they agree, but the store exercises
-// none of the shapes that actually diverged while this port was written: measured over it, every gate carries a string status, every escalation
-// names a gate, every roster id is a string, and `planned` is always "run" or "skip". The
-// states worth pinning are the ones no row happens to hold.
+// The fixtures are deliberately not the real store. Until the oracle was retired every real run
+// in the live store was compared too, and they agreed — that comparison found the cell()
+// falsiness bug, `findings: 0` rendering as nothing. But the store exercises none of the shapes
+// that actually diverged while this port was written: measured over it, every gate carries a
+// string status, every escalation names a gate, every roster id is a string, and `planned` is
+// always "run" or "skip". The states worth pinning are the ones no row happens to hold.
 //
-// Skipped, not failed, when the Python is unreachable: this repo must test in a checkout with
-// no skills repo beside it.
-func prReportPath(t *testing.T) string {
-	t.Helper()
-	if p := os.Getenv("REVIEW_LOOP_PR_REPORT"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		t.Fatalf("REVIEW_LOOP_PR_REPORT=%s does not exist — set it correctly or unset it", p)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory to look for pr-report.py in")
-	}
-	p := filepath.Join(home, ".claude", "skills", "review-loop", "pr-report.py")
-	if _, err := os.Stat(p); err != nil {
-		t.Skip("pr-report.py not found; set REVIEW_LOOP_PR_REPORT to run the parity gate")
-	}
-	return p
-}
-
+// pr-report.py is retired. What it printed for each case is frozen under testdata/oracle; see
+// internal/golden for what those files are and are not.
 func storeWith(t *testing.T, rows ...string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "runs.jsonl")
@@ -53,22 +35,11 @@ func storeWith(t *testing.T, rows ...string) string {
 	return p
 }
 
-// pyRender runs the oracle with no narrative. Stdin is an empty reader, not inherited: the
-// Python reads stdin whenever it is not a tty, so a test harness's inherited stdin would make
-// the oracle's output depend on how the test was invoked.
-func pyRender(t *testing.T, script, store, id string, args ...string) string {
+// pyRender returns the body pr-report.py rendered for this case, read from its golden; a case's
+// narrative, if it had one, is already in it.
+func pyRender(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command("python3", append([]string{script, "--run-id", id}, args...)...)
-	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store,
-		"PYTHONPATH="+filepath.Dir(script))
-	cmd.Stdin = strings.NewReader("")
-	var errOut strings.Builder
-	cmd.Stderr = &errOut
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
-	}
-	return string(out)
+	return golden.Read(t, "pr-report.md")
 }
 
 // goRender loads the fixture through the same typed boundary the command uses, so a shape the
@@ -111,7 +82,6 @@ func finishRow(extra string) string {
 }
 
 func TestParityWithPrReport(t *testing.T) {
-	script := prReportPath(t)
 
 	for _, c := range []struct {
 		name string
@@ -388,7 +358,7 @@ func TestParityWithPrReport(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, c.rows...)
-			py := pyRender(t, script, store, parityID)
+			py := pyRender(t)
 			got := goRender(t, store, parityID, "")
 			if py != got {
 				t.Errorf("body differs\n--- python ---\n%s\n--- go ---\n%s", py, got)
@@ -398,9 +368,8 @@ func TestParityWithPrReport(t *testing.T) {
 }
 
 // The narrative half, which arrives from the caller rather than the record and is appended
-// verbatim. Separate because the oracle takes it on a file or stdin, not from the store.
+// verbatim. Separate because the oracle took it on a file or stdin, not from the store.
 func TestParityOnTheNarrative(t *testing.T) {
-	script := prReportPath(t)
 	for _, c := range []struct{ name, narrative string }{
 		{"a plain narrative", "Three real defects, one deferred."},
 		{"a narrative with its own headings", "#### Cycle 1\n\n- a thing\n- another"},
@@ -410,11 +379,7 @@ func TestParityOnTheNarrative(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, plan(""), cycle(`,"n":1,"applied":0,"agents":3`), finishRow(""))
-			f := filepath.Join(t.TempDir(), "findings.md")
-			if err := os.WriteFile(f, []byte(c.narrative), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			py := pyRender(t, script, store, parityID, "--findings-file", f)
+			py := pyRender(t)
 			got := goRender(t, store, parityID, c.narrative)
 			if py != got {
 				t.Errorf("body differs\n--- python ---\n%s\n--- go ---\n%s", py, got)
@@ -431,7 +396,6 @@ func TestParityOnTheNarrative(t *testing.T) {
 //
 // Each case names the state, both renderings, and the grounding that would expire.
 func TestTheEnumeratedRenderDivergences(t *testing.T) {
-	script := prReportPath(t)
 	for _, c := range []struct {
 		name, py, go_, why string
 		rows               []string
@@ -488,10 +452,11 @@ func TestTheEnumeratedRenderDivergences(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, c.rows...)
-			py := pyRender(t, script, store, parityID)
+			py := pyRender(t)
 			got := goRender(t, store, parityID, "")
 			if !strings.Contains(py, c.py) {
-				t.Errorf("the Python no longer renders %q — this divergence has moved:\n%s", c.py, py)
+				t.Errorf("the frozen golden no longer records the Python rendering %q — it was "+
+					"edited, and this divergence needs restating:\n%s", c.py, py)
 			}
 			if !strings.Contains(got, c.go_) {
 				t.Errorf("this side no longer renders %q — the divergence may be closed:\n%s", c.go_, got)
@@ -509,12 +474,11 @@ func TestTheEnumeratedRenderDivergences(t *testing.T) {
 // "None" here — and asserted again at this level so a reader of the REPORT is not left to
 // infer that the body inherits it.
 func TestTheDisclosureDivergenceReachesTheBody(t *testing.T) {
-	script := prReportPath(t)
 	store := storeWith(t, plan(""), cycle(`,"n":1,"applied":null,"agents":2`), finishRow(""))
-	py := pyRender(t, script, store, parityID)
+	py := pyRender(t)
 	got := goRender(t, store, parityID, "")
 	if !strings.Contains(py, "applied None fix(es)") {
-		t.Errorf("the Python's disclosure has moved:\n%s", py)
+		t.Errorf("the frozen golden's disclosure was edited:\n%s", py)
 	}
 	if !strings.Contains(got, "applied ? fix(es)") {
 		t.Errorf("this side's disclosure has moved:\n%s", got)
@@ -539,7 +503,6 @@ func TestTheDisclosureDivergenceReachesTheBody(t *testing.T) {
 // load, not render something plausible. A shape that starts loading is a type that was
 // widened, and this test is where that shows up.
 func TestWrongTypedFieldsAreRefusedAtTheLoad(t *testing.T) {
-	script := prReportPath(t)
 	for _, c := range []struct {
 		name string
 		rows []string
@@ -560,32 +523,32 @@ func TestWrongTypedFieldsAreRefusedAtTheLoad(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, c.rows...)
-			// The oracle must SUCCEED on the same row, or this is not a divergence — it is a
-			// shape neither side accepts, and the case belongs in the test below.
-			pyRender(t, script, store, parityID)
+			// The oracle succeeded on this row — the capture kept a rendered body — or this is
+			// not a divergence but a shape neither side accepts, and belongs in the test below.
+			// Only the golden's existence is checked here; its content is not compared.
+			pyRender(t)
 			if refusedAtLoad(t, store) {
 				return
 			}
 			t.Errorf("this row LOADED — the type was widened, so the report now renders " +
 				"something where it used to refuse. Move the case into the agreement table " +
-				"and compare it against the oracle instead of leaving it here.")
+				"and compare it against its golden instead of leaving it here.")
 		})
 	}
 }
 
-// The third class, and the one worth knowing about: three record shapes make pr-report.py
-// TRACEBACK, so the report is not rendered at all. `render()` guards `gates[g]` with
+// The third class, and the one worth knowing about: three record shapes made pr-report.py
+// TRACEBACK, so the report was not rendered at all. `render()` guards `gates[g]` with
 // isinstance for the `planned` lookup on line 133 and then calls `.get("reason")` on the same
 // unguarded value three lines later, and `run.get("gates") or {}` admits a list — on which
 // `.get` does not exist. A crash here drops the whole report, which is the failure the module's
 // own docstring says it exists to prevent ("Fail on a MISSING report, never on a failed POST").
 //
-// Not fixed in the Python: it is scheduled for deletion by this port, and fixing it would
-// change the oracle this test suite measures against. Recorded instead, because "both sides
-// refuse" is not the same claim as "both sides agree" — this side refuses with the field named,
-// where the oracle refuses with a stack trace.
+// Not fixed in the Python before it was retired, since fixing it would have changed the
+// oracle this suite measured against; line 133 is in that deleted file. Recorded instead,
+// because "both sides refuse" is not the same claim as "both sides agree" — this side refuses
+// with the field named, where the oracle refused with a stack trace.
 func TestThreeShapesCrashTheOracleAndAreRefusedHere(t *testing.T) {
-	script := prReportPath(t)
 	for _, c := range []struct {
 		name, pyError string
 		rows          []string
@@ -599,13 +562,13 @@ func TestThreeShapesCrashTheOracleAndAreRefusedHere(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, c.rows...)
-			out, stderr := rawPyRender(script, store, parityID)
+			out, stderr := rawPyRender(t)
 			if stderr == "" {
-				t.Errorf("the oracle no longer crashes on this shape — it rendered:\n%s\n"+
-					"move the case into the agreement table and compare the bodies", out)
+				t.Errorf("the frozen golden no longer records the oracle crashing on this "+
+					"shape — it was edited; it records stdout:\n%s", out)
 			} else if !strings.Contains(stderr, c.pyError) {
-				t.Errorf("the oracle crashes differently now; this case's grounding has "+
-					"moved:\n%s", stderr)
+				t.Errorf("the frozen golden records a different crash than this case "+
+					"names — it was edited:\n%s", stderr)
 			}
 			if !refusedAtLoad(t, store) {
 				t.Errorf("this row LOADED while the oracle crashed on it — the comparison " +
@@ -631,19 +594,12 @@ func refusedAtLoad(t *testing.T, store string) bool {
 	return err != nil
 }
 
-// rawPyRender is pyRender without the Fatal, for the cases whose point is that the oracle
-// fails. Returns stdout and, when it failed, its stderr.
-func rawPyRender(script, store, id string) (string, string) {
-	cmd := exec.Command("python3", script, "--run-id", id)
-	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store, "PYTHONPATH="+filepath.Dir(script))
-	cmd.Stdin = strings.NewReader("")
-	var e strings.Builder
-	cmd.Stderr = &e
-	out, err := cmd.Output()
-	if err != nil {
-		return string(out), e.String()
-	}
-	return string(out), ""
+// rawPyRender returns what the oracle printed on stdout and stderr, for the cases whose point is
+// that it failed. Only the final line of a traceback is kept: it names the error, and the frames
+// above it named paths on the machine that captured it.
+func rawPyRender(t *testing.T) (string, string) {
+	t.Helper()
+	return golden.Read(t, "stdout"), golden.Read(t, "stderr")
 }
 
 // The one DELIBERATE behavioural divergence in this slice, and the reason it exists.
@@ -659,34 +615,17 @@ func rawPyRender(script, store, id string) (string, string) {
 // a divergence rather than reproduced, because reproducing it means shipping the defect the
 // slice was for.
 func TestThePostDiagnosisDivergence(t *testing.T) {
-	script := prReportPath(t)
 	store := storeWith(t, plan(""), cycle(`,"n":1,"applied":0,"agents":3`), finishRow(""))
 	// A gh that RUNS and FAILS: the case both sides must handle and only one explains.
 	shimGh(t, `echo "tls: failed to verify certificate: x509: OSStatus -26276" >&2; exit 1`)
 	dir := gitRepo(t)
 
-	cmd := exec.Command("python3", script, "--run-id", parityID, "--post", "--repo", dir)
-	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store, "PYTHONPATH="+filepath.Dir(script))
-	cmd.Stdin = strings.NewReader("")
-	var pyErr strings.Builder
-	cmd.Stderr = &pyErr
-	if _, err := cmd.Output(); err != nil {
-		t.Fatalf("the oracle's post path failed: %v\nstderr:\n%s", err, pyErr.String())
+	pyErr := golden.Read(t, "stderr")
+	if !strings.Contains(pyErr, "no PR yet") {
+		t.Errorf("the frozen oracle output no longer asserts there is no PR:\n%s", pyErr)
 	}
-	if !strings.Contains(pyErr.String(), "no PR yet") {
-		t.Errorf("the oracle no longer asserts there is no PR — this divergence has moved:\n%s",
-			pyErr.String())
-	}
-
-	// Read the ORACLE's deferral before this side runs. Both write the same path in the same
-	// repo, so checking it afterwards would pass on Go's own file — a check that cannot fail,
-	// which is the defect class this whole port keeps finding.
-	pyPath := filepath.Join(mustEvalSymlinks(t, dir), ".git", fmt.Sprintf(PendingName, parityID))
-	pyKept, err := os.ReadFile(pyPath)
-	if err != nil {
-		t.Fatalf("the ORACLE dropped the body — the deferral path is the half both sides "+
-			"must share: %v", err)
-	}
+	// What the oracle kept at the deferral path, captured before this side ever wrote there.
+	pyKept := golden.Read(t, "pending-report.md")
 
 	var diag strings.Builder
 	body := goRender(t, store, parityID, "")
@@ -716,7 +655,7 @@ func TestThePostDiagnosisDivergence(t *testing.T) {
 	// below: it tells Step 0c which command to run, and after this port that command is
 	// `looper pr-report`, not a Python file that will not exist.
 	const note = "\n<!-- review-loop: label"
-	pyBody, _, _ := strings.Cut(string(pyKept), note)
+	pyBody, _, _ := strings.Cut(pyKept, note)
 	goBody, goNote, _ := strings.Cut(string(b), note)
 	if pyBody != goBody {
 		t.Errorf("the deferred bodies differ\n--- python ---\n%s\n--- go ---\n%s", pyBody, goBody)
@@ -724,56 +663,6 @@ func TestThePostDiagnosisDivergence(t *testing.T) {
 	if !strings.Contains(goNote, "`looper pr-report --run-id "+parityID+" --label`") {
 		t.Errorf("the label-owed note does not name the command Step 0c should run: %q", goNote)
 	}
-}
-
-func mustEvalSymlinks(t *testing.T, p string) string {
-	t.Helper()
-	r, err := filepath.EvalSymlinks(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-// The whole live store, every run, against the oracle. This is the measurement that found the
-// cell() falsiness bug — `findings: 0` renders as nothing, not as "0" — which no fixture above
-// would have caught, because the fixtures were written from reading the Python rather than
-// from running it.
-//
-// Skipped rather than vacuous when the store is empty: record.Load returns an empty map and no
-// error for a missing file, so in a checkout with no store this loop would iterate zero runs
-// and pass while asserting nothing.
-func TestRealStoreParity(t *testing.T) {
-	script := prReportPath(t)
-	store := record.StorePath()
-	runs, err := record.Load(store, 0)
-	if err != nil {
-		t.Fatalf("loading %s: %v", store, err)
-	}
-	if len(runs) == 0 {
-		t.Skipf("no runs in %s — nothing real to compare against", store)
-	}
-	var diverged int
-	for id, r := range runs {
-		conv, err := r.Convergence()
-		if err != nil {
-			t.Errorf("%s: convergence: %v", id, err)
-			continue
-		}
-		got, err := Render(r, id, conv, "")
-		if err != nil {
-			t.Errorf("%s: Render: %v", id, err)
-			continue
-		}
-		py := pyRender(t, script, store, id)
-		if py != got {
-			diverged++
-			if diverged <= 3 {
-				t.Errorf("%s DIVERGES\n--- python ---\n%s\n--- go ---\n%s", id, py, got)
-			}
-		}
-	}
-	t.Logf("compared %d real runs against the oracle; %d diverged", len(runs), diverged)
 }
 
 // The HARDENING divergence: six record-derived values this side collapses with cell() and the
@@ -795,7 +684,6 @@ func TestRealStoreParity(t *testing.T) {
 // and the `N cycle(s) · M agent(s)` fingerprint, and a forged blockquote changes neither and
 // cannot remove the real disclosure above it. The victim is a human skimming the comment.
 func TestTheHardeningDivergence(t *testing.T) {
-	script := prReportPath(t)
 	// A RAW string: the backslash-n pairs must survive into the JSONL as JSON escapes, so
 	// that the record carries real newlines once decoded. Written with real newlines here
 	// instead, they split the fixture line and both sides merely fail to read it — which is
@@ -825,17 +713,17 @@ func TestTheHardeningDivergence(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			store := storeWith(t, c.rows...)
-			py := pyRender(t, script, store, parityID)
+			py := pyRender(t)
 			got := goRender(t, store, parityID, "")
 			if py == got {
-				t.Fatalf("the two now AGREE — either the Python started collapsing this value "+
-					"or this side stopped, and either way the case needs restating:\n%s", got)
+				t.Fatalf("the two now AGREE — this side stopped collapsing the value, or the "+
+					"golden was edited; either way the case needs restating:\n%s", got)
 			}
 			// Asserted on the RENDERED BODY, because the structure is what is forged — and
 			// per case, because the pipe case forges nothing and only escapes differently.
 			if c.pipeOnly {
 				if !strings.Contains(py, "`a|b`") {
-					t.Errorf("the oracle no longer renders the raw pipe:\n%s", py)
+					t.Errorf("the frozen golden no longer records the raw pipe — it was edited:\n%s", py)
 				}
 				if !strings.Contains(got, `a\|b`) {
 					t.Errorf("this side no longer escapes the pipe, so the table it sits in "+
@@ -844,8 +732,8 @@ func TestTheHardeningDivergence(t *testing.T) {
 				return
 			}
 			if !strings.Contains(py, "\n> **Review converged") {
-				t.Errorf("the oracle no longer renders the forged blockquote, so this "+
-					"divergence has moved:\n%s", py)
+				t.Errorf("the frozen golden no longer records the forged blockquote — it "+
+					"was edited:\n%s", py)
 			}
 			if strings.Contains(got, "\n> **Review converged") {
 				t.Errorf("this side rendered a forged blockquote — the hardening is gone:\n%s", got)

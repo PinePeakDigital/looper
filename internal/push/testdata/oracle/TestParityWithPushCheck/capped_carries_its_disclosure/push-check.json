@@ -1,0 +1,1 @@
+{"push": true, "reason": "capped (review not finished), evidence gate ok, feature branch has no upstream yet \u2014 push with -u", "convergence": "capped", "disclose": "Review CAPPED at 9 of 8 agents: the last cycle applied 3 fix(es). The loop had not stopped finding things \u2014 another cycle would likely find more."}

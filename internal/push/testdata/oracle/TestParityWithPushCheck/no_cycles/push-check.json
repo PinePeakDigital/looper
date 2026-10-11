@@ -1,0 +1,1 @@
+{"push": true, "reason": "unknown (review not finished), evidence gate ok, feature branch has no upstream yet \u2014 push with -u", "convergence": "unknown", "disclose": "Review completeness UNKNOWN: this run recorded no cycles, so nothing can say whether the loop still had findings when it stopped. Treat as unreviewed."}

@@ -3,60 +3,25 @@ package push
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pinepeakdigital/looper/internal/golden"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
-// The parity gate for the push decision. Until push-check.py is retired, the two must not
-// be able to disagree: this runs the Python against the same store, the same git repo and
-// the same flags, and requires the same JSON.
+// The parity gate for the push decision. Each case compares the whole JSON verdict against
+// what push-check.py printed for the same store, git repo and flags before it was retired —
+// frozen under testdata/oracle; see internal/golden for what those files are and are not.
 //
-// A port is the one refactor with a free oracle — the thing being replaced still runs — and
-// the previous slice's worst defects were all found by running it rather than reading it.
-// Here the oracle covers more than the verdict: `disclose` is prose an operator reads, and
-// a reworded disclosure is a silent behaviour change that no verdict comparison catches.
-//
-// Skipped, not failed, when the Python is unreachable: this repo must test in a checkout
-// with no skills repo beside it. REVIEW_LOOP_PUSH_CHECK names the script; otherwise the
-// default sibling path is tried.
-func pushCheckPath(t *testing.T) string {
+// The oracle covers more than the verdict: `disclose` is prose an operator reads, and a
+// reworded disclosure is a silent behaviour change that no verdict comparison catches.
+func pyPushCheck(t *testing.T) Result {
 	t.Helper()
-	if p := os.Getenv("REVIEW_LOOP_PUSH_CHECK"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		t.Fatalf("REVIEW_LOOP_PUSH_CHECK=%s does not exist — set it correctly or unset it", p)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory to look for push-check.py in")
-	}
-	p := filepath.Join(home, ".claude", "skills", "review-loop", "push-check.py")
-	if _, err := os.Stat(p); err != nil {
-		t.Skip("push-check.py not found; set REVIEW_LOOP_PUSH_CHECK to run the parity gate")
-	}
-	return p
-}
-
-// pyPushCheck runs the Python and returns its parsed JSON.
-func pyPushCheck(t *testing.T, script, store string, args ...string) Result {
-	t.Helper()
-	cmd := exec.Command("python3", append([]string{script}, args...)...)
-	cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+store)
-	var errOut strings.Builder
-	cmd.Stderr = &errOut
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("python side failed: %v\nstderr:\n%s", err, errOut.String())
-	}
+	out := golden.Read(t, "push-check.json")
 	var got Result
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("python printed %q: %v\nstderr:\n%s", out, err, errOut.String())
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("frozen oracle output %q: %v", out, err)
 	}
 	return got
 }
@@ -94,9 +59,9 @@ func deref(s *string) string {
 }
 
 func TestParityWithPushCheck(t *testing.T) {
-	script := pushCheckPath(t)
-	// Both sides see the same failing gh, so neither can satisfy the report gate from a PR
-	// and both fall through to the pending file. Shimmed rather than left to the real
+	// The same failing gh the goldens were captured under, so this side cannot satisfy the
+	// report gate from a PR either and falls through to the pending file. Shimmed rather than
+	// left to the real
 	// binary: gh's outcome would otherwise depend on a login, the network, and which
 	// directory the test happened to run in.
 	shimGh(t, "exit 1")
@@ -111,10 +76,8 @@ func TestParityWithPushCheck(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		rows []string
-		// The three flag values and the one switch, defaulted below. Named fields rather
-		// than a flag slice both sides have to parse: the Go side would otherwise be
-		// reading the Python's argv to decide what to pass itself, which is a second
-		// implementation of the thing under comparison.
+		// The three flag values and the one switch, defaulted below — the inputs each
+		// case's golden was captured with.
 		gateState, branch, defaultBranch string
 		unresolvedSkip                   bool
 		// land says whether this run's report is written to the pending file first.
@@ -209,10 +172,10 @@ func TestParityWithPushCheck(t *testing.T) {
 			dir, gitdir := repo(t)
 			store := writeStore(t, c.rows...)
 			if c.land {
-				// Rendered from the Go side's reading of the record, which is also the
-				// Python's: the fingerprint is len(cycles) and the agent sum, so if the two
-				// disagreed about either, the Python would not find its own report and the
-				// case would fail on `push` rather than silently agreeing.
+				// Rendered from the Go side's reading of the record. The goldens were captured
+				// with a report rendered the same way, which the Python found, so a Fingerprint
+				// that drifted from len(cycles) and the agent sum shows up as a `push` that no
+				// longer matches the golden rather than as silent agreement.
 				runs, err := record.Load(store, 0)
 				if err != nil {
 					t.Fatal(err)
@@ -224,12 +187,7 @@ func TestParityWithPushCheck(t *testing.T) {
 				landReport(t, gitdir, id, Fingerprint(r))
 			}
 
-			args := []string{"--run-id", id, "--repo", dir, "--gate-state", gateState,
-				"--branch", branch, "--default-branch", defaultBranch}
-			if c.unresolvedSkip {
-				args = append(args, "--unresolved-skip")
-			}
-			py := pyPushCheck(t, script, store, args...)
+			py := pyPushCheck(t)
 
 			got, err := Check(CheckParams{Store: store, RunID: id, GateState: gateState,
 				UnresolvedSkip: c.unresolvedSkip, Branch: branch, DefaultBranch: defaultBranch,
@@ -249,10 +207,9 @@ func TestParityWithPushCheck(t *testing.T) {
 // the same thing, and the alternative is three-state decoding on the field every verdict
 // turns on.
 //
-// Stated as a TEST, not a comment, so the day the Python's wording is what matters, or the
-// day someone makes the pointer three-state, this says which half moved.
+// Stated as a TEST, not a comment, so the day someone makes the pointer three-state this
+// says which half moved. The Python half is frozen; it changes only by editing its golden.
 func TestTheDisclosureWordingDivergence(t *testing.T) {
-	script := pushCheckPath(t)
 	shimGh(t, "exit 1")
 	const id = "parity02"
 	dir, gitdir := repo(t)
@@ -265,8 +222,7 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 	}
 	landReport(t, gitdir, id, Fingerprint(runs[id]))
 
-	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
-		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
+	py := pyPushCheck(t)
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
 		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {
@@ -281,9 +237,8 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 		t.Fatalf("both sides owe a disclosure here: py=%v go=%v", deref(py.Disclose), deref(got.Disclose))
 	}
 	if !strings.Contains(*py.Disclose, "applied None fix(es)") {
-		t.Errorf("the Python no longer renders a null applied as None: %q — if it now renders "+
-			"something else, this divergence has moved and the comparison above should cover it",
-			*py.Disclose)
+		t.Errorf("the frozen golden no longer records the Python rendering a null applied as "+
+			"None: %q — it was edited, and this enumerated divergence needs restating", *py.Disclose)
 	}
 	if !strings.Contains(*got.Disclose, "applied ? fix(es)") {
 		t.Errorf("this side no longer renders a null applied as ?: %q", *got.Disclose)
@@ -295,21 +250,20 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 }
 
 // The second enumerated divergence, and the only one that changes a VERDICT rather than a
-// word: a run id that resolves to no readable record. The Python permits with an `unknown`
+// word: a run id that resolves to no readable record. The Python permitted with an `unknown`
 // disclosure, because the design's split says "we stopped looking" discloses and pushes. This
 // side refuses, because an empty record is not a run that stopped looking — it is the absence
 // of any evidence that a run happened, and every input the gate reads comes off it.
 //
 // Deliberate, approved, and asserted here rather than left to drift. Both halves are pinned:
-// that the Python still permits (if it ever starts refusing, this divergence has closed and
-// the case belongs back in the agreement table), and that this side refuses for the empty-
-// record reason specifically rather than incidentally via the report or convergence checks.
+// that the frozen golden records the Python permitting, and that this side refuses for the
+// empty-record reason specifically rather than incidentally via the report or convergence
+// checks.
 //
 // The report is LANDED and genuinely satisfying, which is the whole point: Fingerprint of an
 // empty record is the two lines pr-report.py renders for a run with no cycle rows, so no
-// forgery is needed to reach the state the Python permits.
+// forgery is needed to reach the state the Python permitted.
 func TestTheEmptyRecordDivergence(t *testing.T) {
-	script := pushCheckPath(t)
 	shimGh(t, "exit 1")
 	const id = "parity03"
 	dir, gitdir := repo(t)
@@ -320,8 +274,7 @@ func TestTheEmptyRecordDivergence(t *testing.T) {
 		`{"run_id":"other1","phase":"cycle","n":1,"applied":1,"agents":2}`)
 	landReport(t, gitdir, id, Fingerprint(&record.Run{ID: id}))
 
-	py := pyPushCheck(t, script, store, "--run-id", id, "--repo", dir,
-		"--gate-state", "passed", "--branch", "feat/x", "--default-branch", "main")
+	py := pyPushCheck(t)
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
 		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {
@@ -329,9 +282,8 @@ func TestTheEmptyRecordDivergence(t *testing.T) {
 	}
 
 	if !py.Push {
-		t.Errorf("the Python now REFUSES an empty record (%q) — this divergence has closed; "+
-			"move the case back into TestParityWithPushCheck's table and delete this test",
-			py.Reason)
+		t.Errorf("the frozen golden no longer records the Python permitting an empty record "+
+			"(%q) — it was edited, and this enumerated divergence needs restating", py.Reason)
 	}
 	if got.Push {
 		t.Fatalf("this side permitted a push off an empty record with a matching report: %+v", got)

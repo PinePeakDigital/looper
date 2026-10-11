@@ -674,9 +674,9 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 
 // The diagnostic channel. A genuinely unposted report, a missing `gh`/`git`, and a fired
 // timeout all refuse the push identically and correctly — the gate fails closed — but the
-// refusal says "run pr-report.py --post first", which is the wrong instruction for two of the
-// three. The reason string cannot say more, because parity_test.go compares it for exact
-// equality against the Python's, so the distinction goes to Diag.
+// refusal says "run looper pr-report --run-id <id> --post first", which is the wrong instruction for two of the
+// three. The reason string cannot say more, because parity_test.go pins it exactly against
+// push-check.py's frozen output, so the distinction goes to Diag.
 func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	shimGh(t, "exit 1")
 	st := writeStore(t, cappedRun("run1")...)
@@ -693,8 +693,8 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		if res.Push {
 			t.Fatalf("expected a refusal: %+v", res)
 		}
-		// The refusal itself is unchanged, which is what keeps parity.
-		if !strings.Contains(res.Reason, "pr-report.py --post") {
+		// The refusal itself stays the one the parity golden pins; only Diag says more.
+		if !strings.Contains(res.Reason, "looper pr-report --run-id run1 --post") {
 			t.Errorf("reason = %q, want the unchanged owed-report refusal", res.Reason)
 		}
 		if !strings.Contains(diag.String(), "could not be determined") {
@@ -858,7 +858,7 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 
 // The second refusal whose stated reason is the wrong instruction: the run is not in the
 // store. Measured before this existed — a wrong -store produced exit 0, an EMPTY stderr, and
-// "run pr-report.py --post first", which re-renders the same empty record and cannot fix it.
+// "run looper pr-report --run-id <id> --post first", which re-renders the same empty record and cannot fix it.
 //
 // Kept separate from TestCheckDiagnosesBeingUnableToAsk because the two notes answer different
 // questions and only this one can name the store path.
@@ -940,7 +940,7 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		//
 		// This subtest asserted the opposite for one commit: it was written to prove the Diag
 		// note fired on the grant path, which documented the hole instead of closing it.
-		// push-check.py still grants here; see the enumerated divergence in parity_test.go.
+		// push-check.py granted here; see the enumerated divergence in parity_test.go.
 		shimGh(t, "exit 1")
 		var diag strings.Builder
 		dir, gitdir := repo(t)

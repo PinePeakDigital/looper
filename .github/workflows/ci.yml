@@ -110,14 +110,11 @@ jobs:
             echo "$c $t parity subtests compared against the Python"
           done
 
-      # internal/push is the same situation one slice later: its parity gate compares the
-      # whole push decision, disclosure wording included, against push-check.py. Same
-      # oracle checkout, same skip-is-success problem, so the same three steps rather than
-      # being folded into "everything else" — where a skip would be invisible again.
-      - name: go test (push, with the oracle)
-        env:
-          REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
-          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+      # internal/push's parity gate compares the whole push decision, disclosure wording
+      # included, against what push-check.py printed before it was retired — frozen under
+      # internal/push/testdata/oracle, so no checkout is needed. A missing golden fails rather
+      # than skips; the floors below are what catch a table that SHRANK, which no golden can.
+      - name: go test (push)
         run: |
           go test -count=1 -v ./internal/push/ > push.log 2>&1 || { cat push.log; exit 1; }
           tail -5 push.log
@@ -126,7 +123,7 @@ jobs:
         run: |
           [ -r push.log ] || { echo "push.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
           if grep -q -- '--- SKIP' push.log; then
-            echo "the push parity gate SKIPPED — push-check.py was not reachable:"; cat push.log; exit 1
+            echo "the push parity gate SKIPPED:"; cat push.log; exit 1
           fi
           # The decision table and the enumerated divergences, counted separately. A
           # divergence test is NOT a subtest of the table, and each is the only thing
@@ -142,16 +139,13 @@ jobs:
           [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
           for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence; do
             grep -q -- "--- PASS: $d" push.log || {
-              echo "enumerated divergence $d was not compared against the Python"; cat push.log; exit 1; }
+              echo "enumerated divergence $d did not pass"; cat push.log; exit 1; }
           done
-          echo "$c push parity subtests compared against the Python, plus 2 enumerated divergences"
+          echo "$c push parity subtests compared against the frozen oracle, plus 2 enumerated divergences"
 
-      # internal/report is the third in the same situation: its parity gate renders the whole
-      # report body against pr-report.py. Same oracle checkout, same skip-is-success problem.
-      - name: go test (report, with the oracle)
-        env:
-          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
-          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+      # internal/report is the same: the whole report body against what pr-report.py
+      # rendered before it was retired, frozen under internal/report/testdata/oracle.
+      - name: go test (report)
         run: |
           go test -count=1 -v ./internal/report/ > report.log 2>&1 || { cat report.log; exit 1; }
           tail -5 report.log
@@ -159,16 +153,11 @@ jobs:
       - name: the report parity gate actually ran
         run: |
           [ -r report.log ] || { echo "report.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
-          # ONE skip is expected here and nowhere else: TestRealStoreParity renders every run
-          # in the author's live store, which CI does not have and must not be given. Checked
-          # as an allowlist of exactly one name rather than by relaxing the grep, so a second
-          # test going inert still fails — which is the whole point of this step.
-          unexpected=$(grep -- '--- SKIP' report.log | grep -v 'TestRealStoreParity' || true)
-          if [ -n "$unexpected" ]; then
-            echo "the report parity gate SKIPPED — pr-report.py was not reachable:"; cat report.log; exit 1
+          # No skip is expected. TestRealStoreParity, the one that used to skip here for want
+          # of a live store, went with the oracle: a store that grows every run cannot be frozen.
+          if grep -q -- '--- SKIP' report.log; then
+            echo "the report parity gate SKIPPED:"; cat report.log; exit 1
           fi
-          grep -q -- '--- SKIP: TestRealStoreParity' report.log || \
-            echo "note: TestRealStoreParity did not skip — CI appears to have a run store"
           # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
           # table and the narrative table are different widths and measure different halves,
           # and one aggregate would let the narrative table vanish under a table that grew.
@@ -180,7 +169,7 @@ jobs:
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' report.log)
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
-            echo "$c $t subtests compared against the Python"
+            echo "$c $t subtests compared against the frozen oracle"
           done
           # The divergences with no subtests of their own — FOUR, not the two an earlier
           # version of this comment claimed while looping over four names. Each is the only
@@ -188,12 +177,12 @@ jobs:
           for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
                    TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
             grep -q -- "--- PASS: $d" report.log || {
-              echo "enumerated divergence $d was not compared against the Python"; cat report.log; exit 1; }
+              echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
           done
 
       - name: go test (everything else)
-        # mapfile, not a bare $(...): the two packages above are excluded because they need the
-        # oracle, and the word splitting that reassembles the rest is the mechanism, not an
+        # mapfile, not a bare $(...): the three packages above are excluded because they run
+        # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
         # accident — so quoting the substitution would pass the whole list as ONE argument and
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
@@ -253,13 +242,13 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 236 ] || { echo "only $n mutations, expected at least 236 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 238 ] || { echo "only $n mutations, expected at least 238 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
       # mutations/ and requires the suite to notice. A survivor is a hole: the
       # defect could ship with CI green.
-      # The oracle paths are exported HERE too, not just for the two parity steps. A catalog
+      # The oracle path is exported HERE too, not just for the record parity step. A catalog
       # entry whose `verify:` runs a parity test needs the oracle, and without it that test
       # calls t.Skip — which `go test` reports as SUCCESS, so the mutation SURVIVES and the
       # entry silently guards nothing. Measured the first time this step ever ran in CI (it
@@ -269,7 +258,5 @@ jobs:
       # one level down — in the catalog rather than in a test step.
       - name: mutation score
         env:
-          REVIEW_LOOP_PUSH_CHECK: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/push-check.py
-          REVIEW_LOOP_PR_REPORT: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/pr-report.py
           REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
         run: go run ./cmd/looper mutate

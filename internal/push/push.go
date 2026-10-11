@@ -168,7 +168,7 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // could RUN. A genuinely unposted report, a missing or non-executable `gh`/`git`, and a fired
 // timeout all mean "not landed" — correctly, the gate fails closed — but they call for
 // different actions, and the refusal text cannot distinguish them, because parity_test.go
-// compares it for exact equality against push-check.py's. So the distinction goes to stderr,
+// pins it exactly against push-check.py's frozen output. So the distinction goes to stderr,
 // where neither implementation writes anything and nothing parses.
 //
 // attributable is whether the not-landed answer has a cause the refusal text already covers:
@@ -424,7 +424,7 @@ func Check(p CheckParams) (Result, error) {
 	var unreported string
 	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
-			"run pr-report.py --post first"
+			"run looper pr-report --run-id " + p.RunID + " --post first"
 		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe
