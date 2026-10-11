@@ -78,7 +78,7 @@ func tailLines() int {
 // loadRaw is runlog.load(limit). limit <= 0 reads the whole store. The tail counts LINES, blank
 // ones included, the way deque(fh, maxlen=limit) does. Only a missing store reads as empty, as
 // runlog.load's `except FileNotFoundError` has it: an unreadable one is an error, never "no runs",
-// or `check` tells the Stop hook nothing is open and `finish` skips its plan-based refusals.
+// or `check` reports no open run and `finish` skips its plan-based refusals.
 func loadRaw(path string, limit int) (runStore, error) {
 	s := runStore{runs: map[string]map[string]any{}}
 	b, err := os.ReadFile(path)

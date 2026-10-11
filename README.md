@@ -288,7 +288,7 @@ looper record {convergence,show,nudge} --run-id <id>
 looper record abandon --run-id <id> --missing <gates>
 looper record skipped --reason <r>
 looper record carried --from <sha> --to <sha> --how reviewed|skipped
-looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open
+looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open, or the store is unreadable (stdout empty)
 looper record pending                                                     # this branch's pending reports
 ```
 
