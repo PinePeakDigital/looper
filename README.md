@@ -162,7 +162,7 @@ exit on a fresh branch whose summary never reached the PR.
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
 also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
 run at all, because the gate then fails closed with a reason — "run `looper pr-report
---post` first" — that is the wrong instruction for a missing binary or a killed
+--run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
 reason for exact equality against what the Python printed, and it had no second stream. A refusal
 for a report that is genuinely unposted stays silent, so the note's presence is the
@@ -205,7 +205,8 @@ the Python printed for each case before it went — frozen under
 `internal/push/testdata/oracle` — and requires the same JSON, `disclose` wording
 included, since a reworded disclosure is a behaviour change no verdict comparison
 catches. A deliberate change edits the frozen file in the same commit as the code: the
-refusal above said `pr-report.py --post` until the switch commit retired that script.
+refusal above said `pr-report.py --post` until the switch commit retired that script, and
+now names the run id, so the command can be run as printed.
 
 ## `looper pr-report`
 

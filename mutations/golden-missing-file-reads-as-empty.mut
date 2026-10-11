@@ -1,0 +1,8 @@
+target: internal/golden/golden.go
+verify: go test ./internal/golden/ -count=1 -run 'TestAMissingGoldenFailsAndNeverSkips'
+expect: want failed and not skipped
+why:    the quiet variant, and the one the parity gates cannot see: three report goldens are legitimately empty (the oracle crashed and printed nothing on stdout), so a Read that answers "" for a missing file leaves those cases passing with their goldens deleted. Measured before the test existed: TestThreeShapes passed all three subtests with a stdout golden removed.
+--- old
+		t.Fatalf("no frozen oracle output for this case: %v", err)
+--- new
+		return ""

@@ -59,8 +59,9 @@ func deref(s *string) string {
 }
 
 func TestParityWithPushCheck(t *testing.T) {
-	// Both sides see the same failing gh, so neither can satisfy the report gate from a PR
-	// and both fall through to the pending file. Shimmed rather than left to the real
+	// The same failing gh the goldens were captured under, so this side cannot satisfy the
+	// report gate from a PR either and falls through to the pending file. Shimmed rather than
+	// left to the real
 	// binary: gh's outcome would otherwise depend on a login, the network, and which
 	// directory the test happened to run in.
 	shimGh(t, "exit 1")
@@ -75,10 +76,8 @@ func TestParityWithPushCheck(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		rows []string
-		// The three flag values and the one switch, defaulted below. Named fields rather
-		// than a flag slice both sides have to parse: the Go side would otherwise be
-		// reading the Python's argv to decide what to pass itself, which is a second
-		// implementation of the thing under comparison.
+		// The three flag values and the one switch, defaulted below — the inputs each
+		// case's golden was captured with.
 		gateState, branch, defaultBranch string
 		unresolvedSkip                   bool
 		// land says whether this run's report is written to the pending file first.
@@ -173,10 +172,10 @@ func TestParityWithPushCheck(t *testing.T) {
 			dir, gitdir := repo(t)
 			store := writeStore(t, c.rows...)
 			if c.land {
-				// Rendered from the Go side's reading of the record, which is also the
-				// Python's: the fingerprint is len(cycles) and the agent sum, so if the two
-				// disagreed about either, the Python would not find its own report and the
-				// case would fail on `push` rather than silently agreeing.
+				// Rendered from the Go side's reading of the record. The goldens were captured
+				// with a report rendered the same way, which the Python found, so a Fingerprint
+				// that drifted from len(cycles) and the agent sum shows up as a `push` that no
+				// longer matches the golden rather than as silent agreement.
 				runs, err := record.Load(store, 0)
 				if err != nil {
 					t.Fatal(err)
@@ -208,8 +207,8 @@ func TestParityWithPushCheck(t *testing.T) {
 // the same thing, and the alternative is three-state decoding on the field every verdict
 // turns on.
 //
-// Stated as a TEST, not a comment, so the day the Python's wording is what matters, or the
-// day someone makes the pointer three-state, this says which half moved.
+// Stated as a TEST, not a comment, so the day someone makes the pointer three-state this
+// says which half moved. The Python half is frozen; it changes only by editing its golden.
 func TestTheDisclosureWordingDivergence(t *testing.T) {
 	shimGh(t, "exit 1")
 	const id = "parity02"
@@ -238,9 +237,8 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 		t.Fatalf("both sides owe a disclosure here: py=%v go=%v", deref(py.Disclose), deref(got.Disclose))
 	}
 	if !strings.Contains(*py.Disclose, "applied None fix(es)") {
-		t.Errorf("the Python no longer renders a null applied as None: %q — if it now renders "+
-			"something else, this divergence has moved and the comparison above should cover it",
-			*py.Disclose)
+		t.Errorf("the frozen golden no longer records the Python rendering a null applied as "+
+			"None: %q — it was edited, and this enumerated divergence needs restating", *py.Disclose)
 	}
 	if !strings.Contains(*got.Disclose, "applied ? fix(es)") {
 		t.Errorf("this side no longer renders a null applied as ?: %q", *got.Disclose)
@@ -252,19 +250,19 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 }
 
 // The second enumerated divergence, and the only one that changes a VERDICT rather than a
-// word: a run id that resolves to no readable record. The Python permits with an `unknown`
+// word: a run id that resolves to no readable record. The Python permitted with an `unknown`
 // disclosure, because the design's split says "we stopped looking" discloses and pushes. This
 // side refuses, because an empty record is not a run that stopped looking — it is the absence
 // of any evidence that a run happened, and every input the gate reads comes off it.
 //
 // Deliberate, approved, and asserted here rather than left to drift. Both halves are pinned:
-// that the Python still permits (if it ever starts refusing, this divergence has closed and
-// the case belongs back in the agreement table), and that this side refuses for the empty-
-// record reason specifically rather than incidentally via the report or convergence checks.
+// that the frozen golden records the Python permitting, and that this side refuses for the
+// empty-record reason specifically rather than incidentally via the report or convergence
+// checks.
 //
 // The report is LANDED and genuinely satisfying, which is the whole point: Fingerprint of an
 // empty record is the two lines pr-report.py renders for a run with no cycle rows, so no
-// forgery is needed to reach the state the Python permits.
+// forgery is needed to reach the state the Python permitted.
 func TestTheEmptyRecordDivergence(t *testing.T) {
 	shimGh(t, "exit 1")
 	const id = "parity03"
@@ -284,9 +282,8 @@ func TestTheEmptyRecordDivergence(t *testing.T) {
 	}
 
 	if !py.Push {
-		t.Errorf("the Python now REFUSES an empty record (%q) — this divergence has closed; "+
-			"move the case back into TestParityWithPushCheck's table and delete this test",
-			py.Reason)
+		t.Errorf("the frozen golden no longer records the Python permitting an empty record "+
+			"(%q) — it was edited, and this enumerated divergence needs restating", py.Reason)
 	}
 	if got.Push {
 		t.Fatalf("this side permitted a push off an empty record with a matching report: %+v", got)

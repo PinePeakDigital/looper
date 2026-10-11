@@ -6,7 +6,7 @@ why:    the other half of the same unwiring. The report check can be correct in 
 	var unreported string
 	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
-			"run looper pr-report --post first"
+			"run looper pr-report --run-id " + p.RunID + " --post first"
 --- new
 	var unreported string
 	if _, attributable := reportProbe(p.RunID, r, p.Repo); false {

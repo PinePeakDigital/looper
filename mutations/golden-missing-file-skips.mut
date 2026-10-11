@@ -1,0 +1,8 @@
+target: internal/golden/golden.go
+verify: go test ./internal/golden/ -count=1 -run 'TestAMissingGoldenFailsAndNeverSkips'
+expect: want failed and not skipped
+why:    a missing golden must FAIL, because `go test` reports a skip as success and a skipped parity case guards nothing. CI greps the push and report logs for SKIP, so this variant is also caught there — but only in CI, and only for those two packages.
+--- old
+		t.Fatalf("no frozen oracle output for this case: %v", err)
+--- new
+		t.Skipf("no frozen oracle output for this case: %v", err)
