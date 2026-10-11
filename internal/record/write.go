@@ -63,6 +63,8 @@ func tailLines() int {
 		return DefaultTail
 	}
 	// Python's int() takes one underscore BETWEEN digits ("1_000") and refuses "1__0" or "_5".
+	// ponytail: ASCII digits and int range only; int() also takes Arabic-Indic digits and
+	// unbounded values, which fall back to 4000 here. Nobody sets a tail that way.
 	if !pyIntRE.MatchString(v) {
 		return DefaultTail
 	}
@@ -89,7 +91,7 @@ func loadRaw(path string, limit int) runStore {
 		lines = lines[len(lines)-limit:]
 	}
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
+		line = pyStrip(line) // str.strip(): a trailing \x1c would otherwise fail atEOF and drop the row
 		if line == "" {
 			continue
 		}
@@ -494,6 +496,12 @@ func listArg(raw *string, what string) (any, error) {
 	v, err := decodeJSON(*raw, what)
 	if err != nil || !truthy(v) {
 		return []any{}, err
+	}
+	switch v.(type) {
+	case json.Number, bool:
+		// runlog.py iterates it and dies with TypeError, recording nothing; a number is no
+		// shape any reader decodes, so say so instead of writing an unreadable finish.
+		return nil, fail("runlog: --%s must be a JSON list", what)
 	}
 	return v, nil
 }

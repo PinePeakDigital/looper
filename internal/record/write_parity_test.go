@@ -96,9 +96,8 @@ var writeScenarios = []wscenario{
 		st("show", "--run-id", "c1"),
 	}},
 	// Halted, not converged, so the guard's purpose is visible: without it the 0/0 cycle row
-	// below flips the finished run to converged. The name keeps the substring
-	// "converged,_then_no_cycle_after_finish" that record-cycle-after-finish-accepted.mut's
-	// -run pattern selects.
+	// below flips the finished run to converged. record-cycle-after-finish-accepted.mut selects
+	// this scenario by its full name.
 	{name: "halted, not converged, then no cycle after finish", steps: []wstep{
 		st("plan", "--tier", "full", "--model", "m", "--gates", okGates, "--run-id", "k1"),
 		st("cycle", "--run-id", "k1", "--n", "1", "--applied", "3", "--agents", "5"),
@@ -211,6 +210,7 @@ var writeScenarios = []wscenario{
 		files: []string{"review-loop-pending-report.mine.md"}, steps: []wstep{st("pending")}},
 	{name: "usage errors exit 2", steps: []wstep{
 		st("plan", "--model", "m"),
+		st("plan", "--tier", "full", "--model", "m", "extra"),
 		st("plan", "--tier", "huge", "--model", "m"),
 		st("finish", "--run-id", "x", "--outcome", "carried"),
 		st("cycle", "--run-id", "x", "--n", "one", "--applied", "0", "--agents", "1"),
@@ -321,8 +321,9 @@ print("\n".join(m.BANNED_REASON))`, script).Output()
 	}
 	sc := wscenario{name: "every banned phrase, from the oracle's list"}
 	for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		// Uppercased and wrapped, so the case and whitespace folding are exercised per phrase.
-		sc.steps = append(sc.steps, st("skipped", "--reason", "12 lines; "+strings.ToUpper(p)+"\n now"))
+		// Uppercased, and every space inside the phrase widened to space-newline-tab, so case
+		// folding AND whitespace folding are exercised for every phrase, not just one.
+		sc.steps = append(sc.steps, st("skipped", "--reason", "12 lines; "+strings.ToUpper(strings.ReplaceAll(p, " ", " \n\t"))+" now"))
 	}
 	if len(sc.steps) < 20 {
 		t.Fatalf("runlog.py's BANNED_REASON read as %d phrases — the extraction is broken", len(sc.steps))
@@ -379,7 +380,7 @@ var (
 	// argparse's and the port's usage errors. Their texts are not the contract (argparse's
 	// wording even varies by Python version); the status is. Anything else on exit 2 —
 	// `convergence` on an unknown run — is compared as written.
-	usageRE = regexp.MustCompile(`(?m)^usage: |^Usage of |: the following arguments are required: |: argument -|: error: | for flag -`)
+	usageRE = regexp.MustCompile(`(?m)^usage: |^Usage of |: the following arguments are required: |: argument -|: error: | for flag -|: unrecognized arguments: `)
 )
 
 // canon replaces every timestamp, and every id the implementation GENERATED, numbering ids by
@@ -672,5 +673,30 @@ func TestAnUnreadableFinishSaysWhy(t *testing.T) {
 	errb.Reset()
 	if c := Command([]string{"convergence", "--run-id", "ur"}, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot be read") {
 		t.Errorf("convergence on an unreadable run: exit %d, stderr %q", c, errb.String())
+	}
+}
+
+// Where runlog.py dies iterating a number or a bool as --agents or --escalations (TypeError,
+// nothing recorded), the port refuses with a message and also records nothing. Recorded as given
+// it would be a finish the typed reader cannot decode.
+func TestANumberForAListArgumentIsRefused(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", "nn"}, &out, &errb); c != 0 {
+		t.Fatalf("plan: %d %s", c, errb.String())
+	}
+	for _, args := range [][]string{{"--escalations", "5"}, {"--agents", "true"}, {"--agents", "7"}} {
+		errb.Reset()
+		c := Command(append([]string{"finish", "--run-id", "nn", "--outcome", "clean", "--tier", "fast"}, args...), &out, &errb)
+		if c != 1 || !strings.Contains(errb.String(), "must be a JSON list") {
+			t.Errorf("%v: exit %d, stderr %q", args, c, errb.String())
+		}
+	}
+	if b, _ := os.ReadFile(store); strings.Count(string(b), "\n") != 1 {
+		t.Errorf("a refused finish wrote a row:\n%s", b)
 	}
 }

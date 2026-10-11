@@ -298,13 +298,13 @@ already finished — read the store the way `runlog.load()` does, as merged dict
 row elsewhere in a shared store never blocks a write. Convergence, for `finish`'s warning and
 the `convergence` subcommand, comes from the typed read half above, so it has one definition.
 
-`TestWriteMatchesThePython` runs 25 scenarios through `runlog.py` and `looper record` against
+`TestWriteMatchesThePython` runs 35 scenarios through `runlog.py` and `looper record` against
 copies of one seeded store and requires the same exit status, stdout, stderr and decoded
-records; only timestamps and generated run ids are normalised. Each scenario is a sequence of
+records. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, and the wording of argparse's and Go's usage errors (exit 2 is still compared); everything else is compared as written. CI runs it in a non-UTC zone, where a port writing UTC timestamps would fail. Each scenario is a sequence of
 calls, because most of what the write half guards is a relationship between calls.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
-its own test: a numeric agent id is recorded (the run as partial), and a reason that is not a
+its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
 string — a list, a number — is refused, since stringified it slipped past the precedent ban. A
 truthy non-object `--gates` or `--executed` is refused with a message where `runlog.py` dies
 on `.items()`. And where a finish carries a field the typed reader cannot decode (a numeric gate
@@ -316,7 +316,7 @@ The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-fla
 well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which
 is stricter than Python's on `İ` and never looser. Records carry non-ASCII text as UTF-8 where `runlog.py` writes `\u` escapes; every JSON reader decodes the two to the same value.
 
-`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. The scenarios exercise only three of the twenty-one phrases, and `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import.
+`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import, so the two lists must stay one list after the scenarios can no longer run; one scenario already sends every phrase, read from the oracle at test time, through both.
 
 ## `looper docs`
 
