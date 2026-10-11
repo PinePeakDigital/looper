@@ -223,10 +223,13 @@ var writeScenarios = []wscenario{
 		"{\"run_id\":\"r4\",\"phase\":\"finish\",\"finished_at\":\"2026-01-01T00:00:00+00:00\",\"outcome\":\"clean\"}\x1c",
 		"{\"run_id\":\"cr\",\"phase\":\"plan\",\"repo\":\"{REPO}\",\"head\":\"h\"}\r{\"run_id\":\"cr\",\"phase\":\"finish\",\"outcome\":\"clean\"}",
 		"{\"run_id\":\"cv\",\"phase\":\"plan\",\"repo\":\"{REPO}\",\"head\":\"h\"}\r{\"run_id\":\"cv\",\"phase\":\"cycle\",\"n\":1,\"applied\":0,\"agents\":1}",
+		`{"run_id":"fs","phase":"plan","repo":"{REPO}","head":"h"}`,
+		"{\"run_id\":\"fs\",\"phase\":\"cycle\",\"n\":1,\"applied\":0,\"agents\":1}\x1c",
 	}, steps: []wstep{
 		st("abandon", "--run-id", "r4", "--missing", "x"),
 		st("show", "--run-id", "cr"),
 		st("convergence", "--run-id", "cv"),
+		st("convergence", "--run-id", "fs"),
 		st("check"),
 	}},
 	{name: "an unexplained gate is refused before a numeric escalations", steps: []wstep{

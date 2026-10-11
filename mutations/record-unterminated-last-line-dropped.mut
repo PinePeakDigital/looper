@@ -13,7 +13,12 @@ why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, 
 			// reader disagree about one store: measured, finish found a run's plan and then
 			// derived its convergence as unknown from the same file.
 			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-			lines = append(lines, strings.Split(line, "\r")...)
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
+				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
+				// saw was invisible here.
+				lines = append(lines, pyStrip(l))
+			}
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -36,7 +41,12 @@ why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, 
 			// reader disagree about one store: measured, finish found a run's plan and then
 			// derived its convergence as unknown from the same file.
 			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-			lines = append(lines, strings.Split(line, "\r")...)
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
+				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
+				// saw was invisible here.
+				lines = append(lines, pyStrip(l))
+			}
 		}
 		if err != nil {
 			if err == io.EOF {

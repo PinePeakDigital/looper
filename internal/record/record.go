@@ -350,7 +350,12 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			// reader disagree about one store: measured, finish found a run's plan and then
 			// derived its convergence as unknown from the same file.
 			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-			lines = append(lines, strings.Split(line, "\r")...)
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
+				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
+				// saw was invisible here.
+				lines = append(lines, pyStrip(l))
+			}
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -359,8 +364,9 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			return nil, err // a real I/O error still surfaces; only size does not
 		}
 	}
-	// How many lines the tail dropped, so the number in an error is the line an operator
-	// can `sed -n Np` out of the real file. Computed before the slice, because after it
+	// How many lines the tail dropped, so the number in an error counts lines as Python's
+	// universal newlines do (\n, \r\n or a bare \r) — the line `sed -n Np` prints whenever
+	// the store has no bare \r. Computed before the slice, because after it
 	// the index is relative to the window and names the wrong row.
 	dropped := 0
 	if limit > 0 && len(lines) > limit {
@@ -714,7 +720,7 @@ func misplacedRunField(line, phase string) error {
 		// replacing this return with a panic decodes all 40 real runs and passes the whole
 		// suite, and every wrong-typed-run_id line above reports mapErr == nil. Deleting it
 		// also survives, which is why it is labelled — an unreachable branch that scores as
-		// covered is worth saying so about, the same way the \r trim above is.
+		// covered is worth saying so about.
 		return nil
 	}
 	var bad []string
