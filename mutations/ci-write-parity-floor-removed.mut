@@ -1,8 +1,8 @@
 target: .github/workflows/ci.yml
-verify: bash -c 'grep -qE "^ *for spec in .*Write:25" .github/workflows/ci.yml || { echo "the write parity gate has no floor"; exit 1; }'
+verify: bash -c 'grep -qE "^ *for spec in .*Write:35" .github/workflows/ci.yml || { echo "the write parity gate has no floor"; exit 1; }'
 expect: the write parity gate has no floor
 why:    TestWriteMatchesThePython can go inert two ways CI would otherwise report green: the oracle unreachable, so every scenario SKIPs and go test counts a skip as success, or the scenario table emptied. The per-test floor catches both, but only while Write is in the floor loop. Anchored to the `for spec in` line for the reason the StorePath entry gives: an unanchored grep is satisfied by the comment above the loop, which names the Write floor too.
 --- old
-          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:25; do
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:35; do
 --- new
           for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11; do

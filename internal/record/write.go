@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,11 +53,17 @@ type runStore struct {
 
 func (s runStore) get(id string) map[string]any { return s.runs[id] }
 
+var pyIntRE = regexp.MustCompile(`^[+-]?[0-9]+(_[0-9]+)*$`)
+
 // tailLines is runlog.TAIL_LINES: REVIEW_LOOP_TAIL, at least 1, and 4000 when it does not
 // parse, because a fat-fingered override must not break every invocation.
 func tailLines() int {
 	v := strings.TrimSpace(os.Getenv("REVIEW_LOOP_TAIL"))
 	if v == "" {
+		return DefaultTail
+	}
+	// Python's int() takes one underscore BETWEEN digits ("1_000") and refuses "1__0" or "_5".
+	if !pyIntRE.MatchString(v) {
 		return DefaultTail
 	}
 	n, err := strconv.Atoi(strings.ReplaceAll(v, "_", ""))
@@ -89,7 +96,7 @@ func loadRaw(path string, limit int) runStore {
 		var rec map[string]any
 		d := json.NewDecoder(strings.NewReader(line))
 		d.UseNumber()
-		if d.Decode(&rec) != nil || rec == nil {
+		if d.Decode(&rec) != nil || rec == nil || !atEOF(d) {
 			continue // a torn line never invalidates the rest of the store
 		}
 		rid, _ := rec["run_id"].(string)
@@ -191,8 +198,14 @@ func pyRepr(v any) string {
 
 func strip(v any) string {
 	s, _ := v.(string)
-	return strings.TrimSpace(s)
+	return pyStrip(s)
 }
+
+// pyStrip is str.strip(), whose whitespace includes \x1c-\x1f; strings.TrimSpace's does not,
+// so a reason of only those bytes passed every "carries no reason" guard here.
+func pyStrip(s string) string { return strings.TrimFunc(s, pySpace) }
+
+func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
 
 // ---- environment, the way runlog reads it -----------------------------------------------
 
@@ -340,15 +353,21 @@ func reasonsIn(gates, executed *orderedObj, escalations []any, fields map[string
 // pyFields is str.split() with no argument. Python counts \x1c-\x1f as whitespace and Go's
 // unicode.IsSpace does not; a phrase split by one would otherwise pass here and be refused there.
 func pyFields(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool {
-		return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
-	})
+	return strings.FieldsFunc(s, pySpace)
 }
 
 // rejectBanned refuses a reason that cites precedent. Whitespace-normalised, not just
 // lowercased: a phrase wrapped across a line is the ordinary case, not an evasion.
+//
+// A reason that is not a string is refused outright. Stringified, a list's newlines come back
+// as the two characters `\n`, which split nothing, so `["matches an\nexisting pattern"]` as an
+// escalation reason was recorded — measured. runlog.py dies on it with AttributeError at
+// .lower(), which also records nothing; this says why instead of printing a traceback.
 func rejectBanned(rs []reason) error {
 	for _, r := range rs {
+		if _, ok := r.text.(string); !ok && truthy(r.text) {
+			return fail("runlog: refusing to record %s — its reason is not a string", r.where)
+		}
 		low := strings.Join(pyFields(strings.ToLower(pyStrOrEmpty(r.text))), " ")
 		for _, phrase := range BannedReason {
 			if strings.Contains(low, phrase) {
@@ -376,8 +395,11 @@ func pyStrOrEmpty(v any) string {
 // appendRec writes one record as one line. A single write() to a file opened O_APPEND does not
 // interleave with other writers on the local filesystems this store lives on, which is what
 // lets concurrent worktree sessions share it without a lock (not over NFS, and not the PIPE_BUF
-// guarantee, which is about pipes). Keys sorted and compact, as runlog writes them. Non-ASCII
-// is written as UTF-8 where runlog writes \u escapes: the same value to every reader.
+// guarantee, which is about pipes). os.File.Write retries a short write with a second write(2),
+// which could interleave; a short write to a regular file takes ENOSPC or a signal, and
+// loadRaw tolerates a torn line rather than assuming one cannot happen. Keys sorted and compact,
+// as runlog writes them. Valid UTF-8 is written as UTF-8 where runlog writes \u escapes, the same
+// value to every reader; invalid UTF-8 becomes U+FFFD where runlog keeps a lone surrogate.
 func appendRec(rec map[string]any, rs []reason) error {
 	if err := rejectBanned(rs); err != nil {
 		return err
@@ -414,13 +436,19 @@ func decodeJSON(raw, what string) (any, error) {
 	d.UseNumber()
 	var v any
 	err := d.Decode(&v)
-	if err == nil && d.More() {
-		err = errors.New("extra data")
+	if err == nil && !atEOF(d) {
+		err = errors.New("extra data") // json.loads refuses "{}]"; d.More() is false before a `]`
 	}
 	if err != nil {
 		return nil, fail("runlog: --%s is not valid JSON: %v", what, err)
 	}
 	return v, nil
+}
+
+// atEOF reports whether nothing but whitespace follows the decoded value.
+func atEOF(d *json.Decoder) bool {
+	_, err := d.Token()
+	return err == io.EOF
 }
 
 // objectArg is `parse_json_arg(raw) or {}`, with key order kept. A falsy value is {}; a
@@ -456,7 +484,10 @@ func objectArg(raw *string, what string) (*orderedObj, error) {
 	return o, nil
 }
 
-func listArg(raw *string, what string) ([]any, error) {
+// listArg is `parse_json_arg(raw) or []`. A truthy non-list is kept and recorded as given,
+// as runlog does; asList then iterates it as runlog would, which for an object means over keys
+// that are never dicts, so nothing.
+func listArg(raw *string, what string) (any, error) {
 	if raw == nil {
 		return []any{}, nil
 	}
@@ -464,11 +495,12 @@ func listArg(raw *string, what string) ([]any, error) {
 	if err != nil || !truthy(v) {
 		return []any{}, err
 	}
-	l, ok := v.([]any)
-	if !ok {
-		return nil, fail("runlog: --%s must be a JSON list", what)
-	}
-	return l, nil
+	return v, nil
+}
+
+func asList(v any) []any {
+	l, _ := v.([]any)
+	return l
 }
 
 func anyArg(raw *string, what string) (any, error) {
@@ -590,20 +622,20 @@ func deriveTier(claimed *string, executed *orderedObj, agents []any, planned map
 
 // storedConvergence is the typed derivation, read fresh, so finish's warning and the
 // `convergence` subcommand say what the push gate and the report will say.
-func storedConvergence(id string) (string, bool) {
+//
+// Where runlog.py derives a verdict from a field the typed reader cannot decode (a numeric
+// reason, a folded key), this answers unknown and returns why: the push gate reads the typed
+// record, so a verdict it cannot reproduce is not one to report. The error is the diagnosis.
+func storedConvergence(id string) (string, error) {
 	runs, err := Load(StorePath(), 0)
 	if err != nil {
-		return Unknown, false
+		return Unknown, err
 	}
 	r, ok := runs[id]
 	if !ok {
-		return Unknown, false
+		return Unknown, nil
 	}
-	c, err := r.Convergence()
-	if err != nil {
-		return Unknown, true
-	}
-	return c, true
+	return r.Convergence()
 }
 
 // ---- the subcommands --------------------------------------------------------------------
@@ -646,6 +678,9 @@ func (s *sub) flagBool(name, usage string) { s.bools[name] = s.fs.Bool(name, fal
 
 func (s *sub) parse(args []string, choices map[string][]string) error {
 	if err := s.fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return &exitErr{0, ""} // argparse's -h exits 0 after printing help
+		}
 		return &exitErr{2, ""}
 	}
 	if s.fs.NArg() > 0 {
@@ -941,7 +976,10 @@ func cmdConvergence(id string, out, errOut io.Writer) int {
 		fmt.Fprintln(errOut, "unknown")
 		return 2
 	}
-	c, _ := storedConvergence(id)
+	c, err := storedConvergence(id)
+	if err != nil {
+		fmt.Fprintf(errOut, "runlog: this run's record cannot be read, so its convergence is unknown: %v\n", err)
+	}
 	fmt.Fprintln(out, c)
 	if c == Converged {
 		return 0
@@ -975,7 +1013,7 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 			"at all):\n  %s\nA status says what happened; the reason is the part anyone reading "+
 			"this later actually needs. Give each one a measurable reason.", strings.Join(unexplained, ", "))
 	}
-	missing := unaccounted(planned, executed, escalations)
+	missing := unaccounted(planned, executed, asList(escalations))
 	allow := *s.bools["allow-unaccounted"]
 	if len(missing) > 0 && !allow {
 		return fail("runlog: refusing to finish — the plan said to run these gates and the "+
@@ -991,7 +1029,7 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 	for _, g := range missing {
 		executed.set(g, map[string]any{"status": "failed", "reason": "unaccounted at finish"})
 	}
-	tier, err := deriveTier(s.strs["tier"], executed, agents, planned, plan["tier_floor"], errOut)
+	tier, err := deriveTier(s.strs["tier"], executed, asList(agents), planned, plan["tier_floor"], errOut)
 	if err != nil {
 		return err
 	}
@@ -1006,16 +1044,19 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 		"agents": agents, "findings": findings, "unresolved_asks": intVal(s.ints["asks"]),
 		"head_at_finish": git("rev-parse", "HEAD"),
 	}
-	if err := appendRec(rec, reasonsIn(nil, executed, escalations, rec)); err != nil {
+	if err := appendRec(rec, reasonsIn(nil, executed, asList(escalations), rec)); err != nil {
 		return err
 	}
 	// Said at finish, where it can still be fixed, rather than at the push gate.
-	conv, _ := storedConvergence(id)
+	conv, cerr := storedConvergence(id)
 	hasCycles := false
 	if cy, ok := loadRaw(StorePath(), 0).get(id)["cycles"].([]any); ok && len(cy) > 0 {
 		hasCycles = true
 	}
 	switch {
+	case cerr != nil:
+		fmt.Fprintf(errOut, "runlog: WARNING — this run's record cannot be read, so its "+
+			"convergence is unknown and the push gate will read it that way: %v\n", cerr)
 	case !hasCycles:
 		fmt.Fprintln(errOut, "runlog: WARNING — no cycle rows for this run, so convergence is "+
 			"unknown, which every consumer reads as 'did not converge'. Record each cycle with "+
@@ -1094,7 +1135,7 @@ func cmdAbandon(s *sub, out io.Writer) error {
 	if o := loadRaw(StorePath(), 0).get(id)["outcome"]; truthy(o) {
 		return fail("runlog: %s already finished as %s — not overwriting", id, pyRepr(o))
 	}
-	if strings.TrimSpace(missing) == "" {
+	if pyStrip(missing) == "" {
 		return fail("runlog: --missing needs the gates that did not run — an abandonment with " +
 			"nothing named is the silent skip this record exists to prevent")
 	}

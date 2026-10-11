@@ -276,8 +276,9 @@ typed boundary with the offending field named.
 
 ## `looper record`
 
-The run record's writer: every `runlog.py` subcommand, with the same flags, records,
-refusals and exit statuses.
+The run record's writer: every `runlog.py` subcommand, with the same records, refusals and
+exit statuses for the flag syntax the skill uses (`--flag value` and `--flag=value`; argparse's
+prefix abbreviations such as `--run` for `--run-id` are not accepted).
 
 ```text
 looper record plan --tier <fast|full|skipped> --model <m> [--gates json] [--inputs json] ...
@@ -300,9 +301,22 @@ the `convergence` subcommand, comes from the typed read half above, so it has on
 `TestWriteMatchesThePython` runs 25 scenarios through `runlog.py` and `looper record` against
 copies of one seeded store and requires the same exit status, stdout, stderr and decoded
 records; only timestamps and generated run ids are normalised. Each scenario is a sequence of
-calls, because most of what the write half guards is a relationship between calls. One
-divergence is recorded on purpose: a numeric agent id crashes `runlog.py finish` with
-`TypeError` and records nothing, and `looper record` records the run as partial.
+calls, because most of what the write half guards is a relationship between calls.
+
+Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
+its own test: a numeric agent id is recorded (the run as partial), and a reason that is not a
+string — a list, a number — is refused, since stringified it slipped past the precedent ban. A
+truthy non-object `--gates` or `--executed` is refused with a message where `runlog.py` dies
+on `.items()`. And where a finish carries a field the typed reader cannot decode (a numeric gate
+reason, an escalations object), `finish` and `convergence` report `unknown` with the decode
+error, where `runlog.py` derived a verdict from the dict: the push gate reads the typed record,
+so that verdict is one it would never reproduce.
+
+The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-flag` works as
+well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which
+is stricter than Python's on `İ` and never looser. Records carry non-ASCII text as UTF-8 where `runlog.py` writes `\u` escapes; every JSON reader decodes the two to the same value.
+
+`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. The scenarios exercise only three of the twenty-one phrases, and `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import.
 
 ## `looper docs`
 
