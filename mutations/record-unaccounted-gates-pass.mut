@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython/finish_refuses_unaccounted_and_unexplained_gates'
+expect: --- FAIL:
+why:    the invariant the whole record exists for: a gate the plan said to run that the finish neither ran nor escalated. Without the refusal, finish records whatever the orchestrator chose to mention, and a dropped gate is once again only as visible as the orchestrator's honesty.
+--- old
+	if len(missing) > 0 && !allow {
+--- new
+	if len(missing) > 0 && !allow && false {

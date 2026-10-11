@@ -321,7 +321,7 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// own comment says records are unbounded, so a ceiling here is a parity break too.
 	//
 	// What this does NOT match is RETENTION, and the parity argument above covers only
-	// record size. `runlog.py:136` is `deque(fh, maxlen=limit)`, which streams and holds at
+	// record size. `runlog.load()` iterates `deque(fh, maxlen=limit)`, which streams and holds at
 	// most `limit` lines; this holds every line and applies the limit afterwards, so
 	// retention is O(file) rather than O(limit).
 	//
@@ -345,11 +345,17 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	for {
 		line, err := br.ReadString('\n')
 		if line != "" {
-			// The \r half is defensive only, and deliberately untested: a trailing \r
-			// sits OUTSIDE the JSON object, where encoding/json already tolerates it as
-			// whitespace, so no assertion here can distinguish trimming it from not. A
-			// test for it would pass either way, which is worse than no test.
-			lines = append(lines, strings.TrimRight(line, "\r\n"))
+			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
+			// records to runlog.py. Split here too, or the record writer (loadRaw) and this
+			// reader disagree about one store: measured, finish found a run's plan and then
+			// derived its convergence as unknown from the same file.
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
+				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
+				// saw was invisible here.
+				lines = append(lines, pyStrip(l))
+			}
 		}
 		if err != nil {
 			if err == io.EOF {
@@ -358,8 +364,9 @@ func Load(path string, limit int) (map[string]*Run, error) {
 			return nil, err // a real I/O error still surfaces; only size does not
 		}
 	}
-	// How many lines the tail dropped, so the number in an error is the line an operator
-	// can `sed -n Np` out of the real file. Computed before the slice, because after it
+	// How many lines the tail dropped, so the number in an error counts lines as Python's
+	// universal newlines do (\n, \r\n or a bare \r) — the line `sed -n Np` prints whenever
+	// the store has no bare \r. Computed before the slice, because after it
 	// the index is relative to the window and names the wrong row.
 	dropped := 0
 	if limit > 0 && len(lines) > limit {
@@ -713,7 +720,7 @@ func misplacedRunField(line, phase string) error {
 		// replacing this return with a panic decodes all 40 real runs and passes the whole
 		// suite, and every wrong-typed-run_id line above reports mapErr == nil. Deleting it
 		// also survives, which is why it is labelled — an unreachable branch that scores as
-		// covered is worth saying so about, the same way the \r trim above is.
+		// covered is worth saying so about.
 		return nil
 	}
 	var bad []string

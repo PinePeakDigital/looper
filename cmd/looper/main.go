@@ -24,6 +24,8 @@ const usage = `usage: looper version
                          [-repo dir] [-store path]
        looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
                         [-repo dir] [-branch b] [-store path]
+       looper record {plan,cycle,finish,convergence,carried,skipped,nudge,abandon,
+                      check,show,pending} [flags]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
@@ -63,6 +65,10 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		err = runPushCheck(args[1:], out, errOut)
 	case "pr-report":
 		err = runPrReport(args[1:], in, out, errOut)
+	case "record":
+		// The run record's writer, and runlog.py's exit statuses with it: check's 1 means an
+		// open run, convergence's 1 means not converged. Returned as is, not mapped to 1/2.
+		return record.Command(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2

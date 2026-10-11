@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython/check_reports_every_open_run,_newest_first,_in_this_repo_only'
+expect: --- FAIL:
+why:    the Stop hook reads the TOP-LEVEL run_id of check's payload and nudges about that one; also_open carries the rest. Sorted oldest first, it would nudge about a run abandoned weeks ago while the run this session just planned sat in also_open.
+--- old
+		return pyStrOrEmpty(out[i]["planned_at"]) > pyStrOrEmpty(out[j]["planned_at"])
+--- new
+		return pyStrOrEmpty(out[i]["planned_at"]) < pyStrOrEmpty(out[j]["planned_at"])

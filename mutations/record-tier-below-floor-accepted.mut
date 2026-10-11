@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython/finish_refuses_a_tier_below_the_floor'
+expect: --- FAIL:
+why:    the floor exists so a run cannot be reviewed less than the rule says, and the recorded tier is what the PR comment and review-stats report. A claim below the floor would describe the run falsely even with every gate accounted for; nothing downstream enforces it, which is why it is refused here.
+--- old
+	if fl, ok := floor.(string); ok && truthy(floor) && tierRank[cl] < tierRank[fl] {
+--- new
+	if fl, ok := floor.(string); ok && truthy(floor) && tierRank[cl] < tierRank[fl] && false {

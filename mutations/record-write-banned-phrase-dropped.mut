@@ -1,0 +1,7 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython/a_cycle_needs_a_plan_and_a_non-negative_count'
+expect: --- FAIL:
+why:    the precedent ban is a fixed list, so a phrase that falls out of it is accepted silently: a width reason reading "mirrors the existing loop" then licenses a narrower fan-out, which is the one argument the record exists to refuse. The list is copied from runlog.py; TestWriteConstantsMatchThePython compares the two lists directly, and the parity scenarios exercise each phrase against the oracle.
+--- old
+	"mirrors the existing",
+--- new

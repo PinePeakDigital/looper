@@ -274,6 +274,53 @@ renderings, and `TestThreeShapesCrashTheOracleAndAreRefusedHere` pins three reco
 on which the Python tracebacked — dropping the whole report — and this refuses at the
 typed boundary with the offending field named.
 
+## `looper record`
+
+The run record's writer: every `runlog.py` subcommand, with the same records, refusals and
+exit statuses for the flag syntax the skill uses (`--flag value` and `--flag=value`; argparse's
+prefix abbreviations such as `--run` for `--run-id` are not accepted).
+
+```text
+looper record plan --tier <fast|full|skipped> --model <m> [--gates json] [--inputs json] ...
+looper record cycle --run-id <id> --n <k> --applied <n> --agents <n> [--asked n] ...
+looper record finish --run-id <id> --outcome <o> [--tier t] [--executed json] [--agents json] ...
+looper record {convergence,show,nudge} --run-id <id>
+looper record abandon --run-id <id> --missing <gates>
+looper record skipped --reason <r>
+looper record carried --from <sha> --to <sha> --how reviewed|skipped
+looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open, or the store is unreadable (stdout empty)
+looper record pending                                                     # this branch's pending reports
+```
+
+It appends to the same store (`$REVIEW_LOOP_RUNS`, default `~/.claude/review-loop/runs.jsonl`)
+one record per line, in a single `O_APPEND` write. Its guards — is there a plan, is the run
+already finished — read the store the way `runlog.load()` does, as merged dicts, so a malformed
+row elsewhere in a shared store never blocks a write. Convergence, for `finish`'s warning and
+the `convergence` subcommand, comes from the typed read half above, so it has one definition.
+
+`TestWriteMatchesThePython` runs 37 scenarios through `runlog.py` and `looper record` against
+copies of one seeded store and requires the same exit status, stdout, stderr and decoded
+records. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); everything else is compared as written. CI runs it in a non-UTC zone, where a port writing UTC timestamps would fail. Each scenario is a sequence of
+calls, because most of what the write half guards is a relationship between calls.
+
+Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
+its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
+string — a list, a number — is refused, since stringified it slipped past the precedent ban. A
+truthy non-object `--gates` or `--executed` is refused with a message where `runlog.py` dies
+on `.items()`. A store holding invalid UTF-8 inside a JSON string is read, the bad bytes as U+FFFD, where
+`runlog.py` dies decoding it on every subcommand that reads the store (`cycle`, `convergence`,
+`finish`, `abandon`, `check`, `show`, `pending`) — one stray byte would brick the gate; a bad
+byte outside a string makes its row unparseable, and that row is skipped as a torn line is. And where a finish carries a field the typed reader cannot decode (a numeric gate
+reason, an escalations object), `finish` and `convergence` report `unknown` with the decode
+error, where `runlog.py` derived a verdict from the dict: the push gate reads the typed record,
+so that verdict is one it would never reproduce.
+
+The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-flag` works as
+well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which
+is stricter than Python's on `İ` and never looser. Records carry non-ASCII text as UTF-8 where `runlog.py` writes `\u` escapes; every JSON reader decodes the two to the same value.
+
+`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import, so the two lists must stay one list after the scenarios can no longer run; one scenario already sends every phrase, read from the oracle at test time, through both.
+
 ## `looper docs`
 
 ```text

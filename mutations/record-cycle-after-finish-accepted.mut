@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython/halted,_not_converged,_then_no_cycle_after_finish'
+expect: --- FAIL:
+why:    a cycle row appended after finish rewrites a convergence that has already been disclosed on a PR and already cleared a push. Measured on runlog.py when the guard was added: one cycle --applied 0 --agents 0 flipped a finished halted run to converged with push true. It is --clean-exit by another name.
+--- old
+	if truthy(prior["finished_at"]) || truthy(prior["outcome"]) {
+--- new
+	if false {
