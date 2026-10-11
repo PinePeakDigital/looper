@@ -94,11 +94,11 @@ jobs:
           # comment no longer guesses at it, and the agent count that was here belongs in a commit
           # message, not in the tree.) The floor
           # of 11 pins the table's WIDTH as well as the test's existence. Write is the write half's
-          # gate (looper record against runlog.py): 35 scenarios, each a SEQUENCE of calls, so its
+          # gate (looper record against runlog.py): 37 scenarios, each a SEQUENCE of calls, so its
           # floor pins the scenario table and not the number of calls. The per-case `expect:`
           # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
           # entry, because two of the five store-path entries share one `expect:` string.
-          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:35; do
+          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:37; do
             t=${spec%:*}; min=${spec#*:}
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
             # Two reasons written here before were wrong, and the third is deliberately

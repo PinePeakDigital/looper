@@ -218,6 +218,20 @@ var writeScenarios = []wscenario{
 		st("abandon", "--run-id", "x"),
 		st("nudge"),
 	}},
+	{name: "store lines are split and stripped the way Python reads them", seed: []string{
+		`{"run_id":"r4","phase":"plan","planned_at":"2026-01-01T00:00:00+00:00","repo":"{REPO}","head":"h"}`,
+		"{\"run_id\":\"r4\",\"phase\":\"finish\",\"finished_at\":\"2026-01-01T00:00:00+00:00\",\"outcome\":\"clean\"}\x1c",
+		"{\"run_id\":\"cr\",\"phase\":\"plan\",\"repo\":\"{REPO}\",\"head\":\"h\"}\r{\"run_id\":\"cr\",\"phase\":\"finish\",\"outcome\":\"clean\"}",
+	}, steps: []wstep{
+		st("abandon", "--run-id", "r4", "--missing", "x"),
+		st("show", "--run-id", "cr"),
+		st("check"),
+	}},
+	{name: "an unexplained gate is refused before a numeric escalations", steps: []wstep{
+		st("plan", "--tier", "fast", "--model", "m", "--run-id", "ue"),
+		st("finish", "--run-id", "ue", "--outcome", "clean", "--tier", "fast",
+			"--executed", `{"g1":{"status":"failed"}}`, "--escalations", "5"),
+	}},
 	{name: "a non-list agents is recorded as given", steps: []wstep{
 		st("plan", "--tier", "fast", "--model", "m", "--gates", `{"g":{"planned":"run","reason":"x"}}`, "--run-id", "nl"),
 		st("finish", "--run-id", "nl", "--outcome", "clean", "--tier", "fast", "--executed", `{"g":{"status":"done"}}`,

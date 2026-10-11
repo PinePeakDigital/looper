@@ -298,9 +298,9 @@ already finished — read the store the way `runlog.load()` does, as merged dict
 row elsewhere in a shared store never blocks a write. Convergence, for `finish`'s warning and
 the `convergence` subcommand, comes from the typed read half above, so it has one definition.
 
-`TestWriteMatchesThePython` runs 35 scenarios through `runlog.py` and `looper record` against
+`TestWriteMatchesThePython` runs 37 scenarios through `runlog.py` and `looper record` against
 copies of one seeded store and requires the same exit status, stdout, stderr and decoded
-records. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, and the wording of argparse's and Go's usage errors (exit 2 is still compared); everything else is compared as written. CI runs it in a non-UTC zone, where a port writing UTC timestamps would fail. Each scenario is a sequence of
+records. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); everything else is compared as written. CI runs it in a non-UTC zone, where a port writing UTC timestamps would fail. Each scenario is a sequence of
 calls, because most of what the write half guards is a relationship between calls.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has

@@ -83,7 +83,9 @@ func loadRaw(path string, limit int) runStore {
 	if err != nil {
 		return s
 	}
-	lines := strings.SplitAfter(string(b), "\n")
+	// Python's text mode splits on \n, \r\n AND a bare \r, so a bare \r ends a record there too.
+	text := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n")
+	lines := strings.SplitAfter(text, "\n")
 	if n := len(lines); n > 0 && lines[n-1] == "" {
 		lines = lines[:n-1]
 	}
@@ -1001,9 +1003,14 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	escalations, err := listArg(s.strs["escalations"], "escalations")
+	// Parsed now, type-checked later: runlog.py only trips over a number here when
+	// unaccounted() iterates it, after the unexplained-gate refusal, so that refusal comes first.
+	escalations, err := anyArg(s.strs["escalations"], "escalations")
 	if err != nil {
 		return err
+	}
+	if m, ok := escalations.(map[string]any); ok && len(m) == 0 {
+		escalations = []any{}
 	}
 	plan := loadRaw(StorePath(), 0).get(id)
 	planned := plannedGates(plan)
@@ -1020,6 +1027,10 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 			"other than \"done\" with no reason, or not a {\"status\":..,\"reason\":..} object "+
 			"at all):\n  %s\nA status says what happened; the reason is the part anyone reading "+
 			"this later actually needs. Give each one a measurable reason.", strings.Join(unexplained, ", "))
+	}
+	switch escalations.(type) {
+	case json.Number, bool:
+		return fail("runlog: --escalations must be a JSON list")
 	}
 	missing := unaccounted(planned, executed, asList(escalations))
 	allow := *s.bools["allow-unaccounted"]
