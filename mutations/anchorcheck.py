@@ -22,7 +22,13 @@ import glob, sys
 OLD, NEW = "--- old\n", "--- new\n"
 KEYS = {"target", "verify", "why", "expect"}  # catalog.go's switch, same spellings
 bad = 0
-files = sorted(glob.glob("mutations/*.mut"))
+# RECURSIVE, because ParseCatalog uses filepath.WalkDir: a nested mutations/sub/one.mut is
+# loaded and run by the real runner and was never anchor-checked here. Measured in a scratch
+# catalog -- catalog.go loaded it, this script reported "0 entries" and exited 0.
+files = sorted(glob.glob("mutations/**/*.mut", recursive=True))
+if not files:
+    print("FAIL: no .mut files found at all — the directory or the glob is gone")
+    sys.exit(1)
 for path in files:
     text = open(path).read()
     o, n = text.find(OLD), text.find(NEW)
@@ -63,8 +69,19 @@ for path in files:
     block = text[o + len(OLD):n]
     if block.endswith("\n"):
         block = block[:-1]
+    new = text[n + len(NEW):]
+    if new.endswith("\n"):
+        new = new[:-1]
     if not block:
         print(f"{path}: empty old block")
+        bad += 1
+        continue
+    # catalog.go:165 rejects old == new ("so it mutates nothing") and that error aborts
+    # ParseCatalog for the WHOLE catalog. Without this the script said ok and the fifteen-
+    # minute step failed to load anything -- the same shape as the wrapped `why:` this header
+    # parsing was added for. Measured side by side against a probe calling ParseCatalog.
+    if block == new:
+        print(f"{path}: old and new are identical, so it mutates nothing")
         bad += 1
         continue
     try:
@@ -77,5 +94,5 @@ for path in files:
     if c != 1:
         print(f"{path}: anchor occurs {c} time(s) in {target}")
         bad += 1
-print(f"{'FAIL' if bad else 'ok'}: {len(files)} entries, {bad} unparseable or with a non-unique anchor")
+print(f"{'FAIL' if bad else 'ok'}: {len(files)} entries, {bad} that catalog.go would reject or whose anchor is not unique")
 sys.exit(1 if bad else 0)

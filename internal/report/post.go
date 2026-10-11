@@ -205,10 +205,17 @@ type PRState int
 const (
 	// PRFound: gh answered and named a PR.
 	PRFound PRState = iota
-	// NoPR: gh answered and said there are none. `gh pr list` is what makes this knowable —
-	// it exits 0 with empty output for "no PRs" where `gh pr view` exits 1, the same code it
-	// uses for every other failure. Verified against the live repo: `--head` on a branch with
-	// no PR gives rc 0 and no output; on a branch with one it gives the number.
+	// NoPR: gh answered and said there are none — meaning it printed an EMPTY JSON ARRAY,
+	// `[]`. Not empty stdout: `gh pr list --json number` is what the probe runs, and empty
+	// output from it reaches json.Unmarshal("") and comes back GhFailed, because a descendant
+	// sharing the fd can produce empty output just as easily as gh can. This comment said the
+	// opposite for one commit — "it exits 0 with empty output for no PRs" — which was true of
+	// the pre-`--json` command and was left standing when the probe changed. Verified against
+	// the live repo: `--head` on a branch with no PR gives rc 0 and `[]`; on this branch it
+	// gives `[{"number":5}]`. The bare `gh pr list` without `--json` does print nothing for no
+	// PR, which is where the stale sentence came from, and is not the command used here.
+	// `gh pr view` is the other contrast: it exits 1 for no PR, the same code it uses for
+	// every other failure, which is why the probe does not use it.
 	NoPR
 	// GhUnrunnable: gh never started — not installed, not executable, or the wrong binary
 	// format. NOT a kill: this said "or was killed" and no kill has reached it since shTimeout

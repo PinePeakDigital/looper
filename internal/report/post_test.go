@@ -715,9 +715,12 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// EXITS leaves `Drained` true and a decodable answer, and no oracle in this output can
 		// separate it from gh having answered. That residue is a deferred finding, not a hole
 		// this test pretends to close.
+		// No warm-up here, unlike the two subtests above, and that is the point of saying so:
+		// FindPR goes through the production 20s budget, where first-exec cost (134-304ms
+		// measured, p50 ~142ms) cannot lose the race to the `&`. A warm-up copied here would
+		// read as load-bearing in a file whose comments are the reviewed artifact.
 		dir := gitRepo(t)
 		shimGh(t, `(printf '[{"number":42}]\n'; sleep 5) &`)
-		_ = exec.Command("gh", "--warm").Run()
 		if got := FindPR(dir, "feature"); got.State == PRFound {
 			t.Errorf("a descendant's well-formed bytes became the PR number: state=%v "+
 				"number=%q — the disclosure would be posted to PR #42, which does not exist",

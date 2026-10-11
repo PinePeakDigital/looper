@@ -119,10 +119,13 @@ func TestParityWithPrReport(t *testing.T) {
 	}{
 		// The floor: a plan row and nothing else. Zero cycles is the `unknown` disclosure,
 		// which both must word identically because the push gate reads it as a DISCLOSURE
-		// rather than a block, and most of the real store is this shape — 22 of its 44 runs at
-		// 22d086e. Pinned to a commit because the store is append-only, so an unqualified
-		// count goes stale on the next run and this file carried two different totals for the
-		// same store at once.
+		// rather than a block, and most of the real store is this shape — 22 of its 44 runs as
+		// of 2026-10-10. DATED, not pinned to a commit: the store is append-only and lives
+		// outside the repo, so a repo sha never identified a state of it. The pin here read
+		// `22d086e` for several passes and was provably wrong — that commit is dated
+		// 2026-10-09 and the 44th run arrived on the 10th — while report.go:95 carried `42 at
+		// 22d086e` for the same store, which is the two-different-totals condition this
+		// comment exists to prevent, surviving the correction that renumbered one of them.
 		{"plan only", []string{plan("")}},
 		{"plan and finish, no cycles", []string{plan(""), finishRow("")}},
 

@@ -92,8 +92,9 @@ func isEmptyContainer(b []byte, trimmed string) bool {
 // cellJSON is cell() over a raw JSON scalar, reproducing the Python's `str(text or "")` —
 // which is FALSINESS, not emptiness. `cell(0)` is "" there, because `0 or ""` is "", and the
 // store's roster really does carry `findings: 0`: it renders as "ok,  finding(s)" with the
-// value simply gone. Measured against every run in the live record (42 at 22d086e, and the
-// store is append-only so the figure only grows); reading `0` as "0" was the first
+// value simply gone. Measured against every run in the live record (44 as of 2026-10-10 —
+// dated, not pinned to a commit: the store is append-only and lives OUTSIDE the repo, so no
+// repo sha ever identified a state of it); reading `0` as "0" was the first
 // divergence this port produced, and it is the kind a reader would never notice because the
 // output still looks plausible.
 //
