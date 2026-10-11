@@ -22,7 +22,7 @@ const usage = `usage: looper version
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
                          [-repo dir] [-store path]
-       looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+       looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
                         [-repo dir] [-branch b] [-store path]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
@@ -363,6 +363,12 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		_, err = io.WriteString(out, body)
 		return err
 	}
+	if *findingsFile == "" && stdinOffered(in) {
+		// Stdin is not read without the flag, and a narrative piped in without it is otherwise
+		// lost without a trace: the report posts, exit 0, and reads like a run with nothing to say.
+		fmt.Fprintln(errOut, "pr-report: stdin is piped but not read, so the report carries no "+
+			"narrative — pass -findings-file - to include it")
+	}
 	_, err = report.Post(report.PostParams{
 		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
 		Body: body, Label: *label, Diag: errOut,
@@ -386,6 +392,20 @@ func readNarrative(path string, in io.Reader) (string, error) {
 	}
 	b, err := os.ReadFile(path)
 	return string(b), err
+}
+
+// stdinOffered reports whether stdin LOOKS like it carries a narrative — a pipe or a file —
+// from its mode alone. Stat never blocks, which is the difference from reading it: an idle
+// inherited pipe is indistinguishable from a real one by mode, so this can only warn, never
+// read. A terminal or </dev/null is a character device and stays quiet. A reader that is not
+// an *os.File is something a caller handed over on purpose, so it counts as offered.
+func stdinOffered(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return true
+	}
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice == 0
 }
 
 // version is the module version `go install ...@vX.Y.Z` stamped into the binary. Other

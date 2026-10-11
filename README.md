@@ -213,7 +213,7 @@ now names the run id, so the command can be run as printed.
 Renders the Step 14 review disclosure from the run record, and publishes it.
 
 ```text
-looper pr-report -run-id <id> [-post] [-label] [-findings-file f]
+looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
                  [-repo dir] [-branch b] [-store path]
 ```
 

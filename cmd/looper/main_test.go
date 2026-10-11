@@ -456,6 +456,19 @@ func TestPrReportTakesTheNarrativeFromStdinAndFromAFile(t *testing.T) {
 			t.Errorf("the narrative from stdin is missing:\n%s", out)
 		}
 	})
+	// The RULE end to end, not readNarrative alone: with the flag's default flipped to "-",
+	// every readNarrative test stayed green while the CLI went back to reading stdin unasked,
+	// which is the hang this rule removed. Measured by the cycle-1 reviewer.
+	t.Run("stdin without the flag is not read", func(t *testing.T) {
+		code, out, errOut := doRunIn(t, strings.NewReader("from stdin\n"),
+			"pr-report", "-run-id", "pr1", "-store", store)
+		if code != 0 {
+			t.Fatalf("exit = %d: stderr %q", code, errOut)
+		}
+		if strings.Contains(out, "from stdin") {
+			t.Errorf("stdin was read without -findings-file -:\n%s", out)
+		}
+	})
 	t.Run("a findings file", func(t *testing.T) {
 		f := filepath.Join(t.TempDir(), "findings.md")
 		if err := os.WriteFile(f, []byte("- one thing\n"), 0o644); err != nil {
@@ -648,6 +661,23 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "deferred to") || !strings.Contains(errOut, "no PR for this branch yet") {
 		t.Errorf("stderr does not say where the report went: %q", errOut)
+	}
+	// No -findings-file, so the narrative half is empty, and that must be visible: before
+	// stdin became opt-in a narrative piped in without the flag was read, and after it the
+	// same pipe is silently dropped unless something says so.
+	if !strings.Contains(errOut, "stdin is piped but not read") {
+		t.Errorf("a post with no narrative was silent about it: %q", errOut)
+	}
+	// And quiet when stdin is a character device: a `</dev/null` flush has no narrative to
+	// lose, and a warning on every one of those is noise that buries the real case.
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	if _, _, errOut := doRunIn(t, devnull, "pr-report", "-run-id", "pr1", "-store", store,
+		"-repo", dir, "-branch", "feat/x", "-post"); strings.Contains(errOut, "stdin is piped") {
+		t.Errorf("a </dev/null post warned about a narrative it could not have had: %q", errOut)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ".git", "info", "review-loop-pending-report.pr1.md"))
 	if err != nil {

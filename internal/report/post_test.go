@@ -960,9 +960,10 @@ func TestAFailedLabelRemovalIsReported(t *testing.T) {
 		Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
-	// gh's "'<label>' not found" means the PR never carried it, so nothing is left standing
-	// and a warning would only bury the real one: measured on the first v0.2.2 post, where
-	// every run warned about review:unknown.
+	// gh's "'<label>' not found" means the REPO has no such label (it resolves names before
+	// removing), so the PR cannot carry it and nothing is left standing; a warning would only
+	// bury the real one. Measured on the first v0.2.2 post, where every run warned about
+	// review:unknown, a label applyLabel had never needed to create there.
 	if strings.Contains(diag.String(), "review:capped") {
 		t.Errorf("a label the PR does not carry was reported as a failed removal: %q", diag.String())
 	}

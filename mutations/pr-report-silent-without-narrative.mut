@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportPostDefersAndReportsWhereTo'
+expect: --- FAIL:
+why:    since stdin became opt-in, a narrative piped in without `-findings-file -` is not read, and nothing about the post shows it: exit 0, a report with no findings section, which reads exactly like a run with nothing to say. The stderr note is the only place that loss is visible. Looper cannot READ an inherited pipe to check without risking the hang opt-in removed, but it can Stat it, which never blocks, so the note fires for a pipe or file and stays quiet for a `</dev/null` flush.
+--- old
+	if *findingsFile == "" && stdinOffered(in) {
+--- new
+	if false && *findingsFile == "" && stdinOffered(in) {
