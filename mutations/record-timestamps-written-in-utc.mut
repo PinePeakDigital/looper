@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython'
+expect: --- FAIL:
+why:    runlog.py stamps local time with its offset, and check sorts planned_at as a string, so two writers to one store must agree on the zone. CI used to set TZ=America/Chicago so a UTC-writing port would differ from the oracle; the goldens now carry -05:00 and the test pins time.Local to it, so this must fail on any runner, UTC included.
+--- old
+func now() string { return time.Now().Format("2006-01-02T15:04:05-07:00") }
+--- new
+func now() string { return time.Now().UTC().Format("2006-01-02T15:04:05-07:00") }
