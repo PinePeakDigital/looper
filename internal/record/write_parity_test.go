@@ -10,13 +10,17 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pinepeakdigital/looper/internal/golden"
 )
 
-// The write half's parity gate: every scenario runs through runlog.py and through Command,
-// each against its own copy of the same seeded store, in the same git repo, and must leave the
-// same exit status, the same stdout and stderr, and the same records behind. Timestamps and
-// generated run ids are the only things normalised away, because they are the only things two
-// correct implementations cannot agree on.
+// The write half's parity gate: every scenario ran through runlog.py, and runs through Command,
+// against a copy of the same seeded store in a fresh git repo, and must leave the same exit
+// status, the same stdout and stderr, and the same records behind. runlog.py's side is frozen
+// under testdata/oracle, captured before its CLI was deleted. Timestamps, generated run ids and
+// the temp paths and commit of each run are normalised away, because two correct runs cannot
+// agree on them.
 //
 // A scenario is a SEQUENCE, not one call: most of what the write half guards is a relationship
 // between calls — a cycle before its plan, a cycle after its finish, an abandon over a finish.
@@ -327,25 +331,14 @@ var writeScenarios = []wscenario{
 
 var tail2 = map[string]string{"REVIEW_LOOP_TAIL": "2"}
 
-// bannedPhraseScenario refuses every phrase in the ORACLE's list, read at test time: a phrase
-// added to runlog.py is covered without editing this file, and one dropped from the port's
-// list cannot drop out of the test along with it.
-func bannedPhraseScenario(t *testing.T, script string) wscenario {
-	t.Helper()
-	out, err := exec.Command("python3", "-I", "-c", `import sys, importlib.util as u
-s = u.spec_from_file_location("runlog", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m)
-print("\n".join(m.BANNED_REASON))`, script).Output()
-	if err != nil {
-		t.Fatalf("reading BANNED_REASON from runlog.py: %v", err)
-	}
+// bannedPhraseScenario refuses every phrase in the port's list, uppercased and with every space
+// widened to space-newline-tab, so case folding AND whitespace folding are exercised for every
+// phrase. TestWriteConstantsMatchThePython holds the list equal to runlog.py's, which stays a
+// library, so a phrase added on either side reaches this golden through that test's failure.
+func bannedPhraseScenario() wscenario {
 	sc := wscenario{name: "every banned phrase, from the oracle's list"}
-	for _, p := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		// Uppercased, and every space inside the phrase widened to space-newline-tab, so case
-		// folding AND whitespace folding are exercised for every phrase, not just one.
+	for _, p := range BannedReason {
 		sc.steps = append(sc.steps, st("skipped", "--reason", "12 lines; "+strings.ToUpper(strings.ReplaceAll(p, " ", " \n\t"))+" now"))
-	}
-	if len(sc.steps) < 20 {
-		t.Fatalf("runlog.py's BANNED_REASON read as %d phrases — the extraction is broken", len(sc.steps))
 	}
 	return sc
 }
@@ -432,7 +425,7 @@ func setEnv(t *testing.T, env map[string]string) {
 	}
 }
 
-func runScenario(t *testing.T, sc wscenario, repo, store string, python string) transcript {
+func runScenario(t *testing.T, sc wscenario, store string) transcript {
 	t.Helper()
 	var steps, recs []string
 	generated := map[string]bool{}
@@ -444,21 +437,7 @@ func runScenario(t *testing.T, sc wscenario, repo, store string, python string) 
 		setEnv(t, stp.env)
 		t.Setenv("REVIEW_LOOP_RUNS", store)
 		var out, errb bytes.Buffer
-		code := 0
-		if python != "" {
-			cmd := exec.Command("python3", append([]string{python}, stp.args...)...)
-			cmd.Dir = repo
-			cmd.Stdout, cmd.Stderr = &out, &errb
-			if err := cmd.Run(); err != nil {
-				ee, ok := err.(*exec.ExitError)
-				if !ok {
-					t.Fatalf("python: %v", err)
-				}
-				code = ee.ExitCode()
-			}
-		} else {
-			code = Command(stp.args, &out, &errb)
-		}
+		code := Command(stp.args, &out, &errb)
 		// plan (without --run-id) and skipped print the id they generated.
 		if code == 0 && (stp.args[0] == "plan" || stp.args[0] == "skipped") {
 			if id := strings.TrimSpace(out.String()); ridRE.MatchString(id) && len(id) == 12 {
@@ -505,36 +484,46 @@ func runScenario(t *testing.T, sc wscenario, repo, store string, python string) 
 	return tr
 }
 
+// frozen is a transcript with everything that differs between two runs of one scenario replaced:
+// the temp repo, its git dir, its commit, and the store's path. What is left is what
+// runlog.py printed and wrote, and what the port must still print and write.
+func frozen(tr transcript, repo, common, head, store string) string {
+	text := strings.Join(tr.steps, "\n") + "\n--- store ---\n" + strings.Join(tr.records, "\n") + "\n"
+	for _, r := range []struct{ from, to string }{{common, "<common>"}, {store, "<store>"}, {filepath.Dir(store), "<dir>"}, {repo, "<repo>"}, {head, "<head>"}} {
+		text = strings.ReplaceAll(text, r.from, r.to)
+	}
+	return text
+}
+
+// The write half against what runlog.py printed and stored for each scenario, frozen before its
+// CLI was deleted (internal/golden says what a golden is and is not). The zone is fixed because
+// the goldens were captured at -05:00 and the port stamps in local time: under a real zone
+// they would break at every DST change and on every machine outside it.
 func TestWriteMatchesThePython(t *testing.T) {
-	script := runlogPath(t)
-	for _, sc := range append(append([]wscenario{}, writeScenarios...), bannedPhraseScenario(t, script)) {
+	local := time.Local
+	time.Local = time.FixedZone("capture", -5*3600)
+	t.Cleanup(func() { time.Local = local })
+	for _, sc := range append(append([]wscenario{}, writeScenarios...), bannedPhraseScenario()) {
 		t.Run(sc.name, func(t *testing.T) {
-			repo, _ := scenarioRepo(t, sc)
+			want := golden.Read(t, "transcript") // before the Chdir: its path is relative to this package
+			repo, common := scenarioRepo(t, sc)
 			t.Chdir(repo)
 			id := repoID()
+			head := git("rev-parse", "HEAD")
 			dir := t.TempDir()
-			stores := [2]string{filepath.Join(dir, "py.jsonl"), filepath.Join(dir, "go.jsonl")}
-			for _, s := range stores {
-				var seed string
-				for _, l := range sc.seed {
-					seed += strings.ReplaceAll(l, "{REPO}", id) + "\n"
-				}
-				if seed != "" {
-					if err := os.WriteFile(s, []byte(seed), 0o600); err != nil {
-						t.Fatal(err)
-					}
+			store := filepath.Join(dir, "runs.jsonl")
+			var seed string
+			for _, l := range sc.seed {
+				seed += strings.ReplaceAll(l, "{REPO}", id) + "\n"
+			}
+			if seed != "" {
+				if err := os.WriteFile(store, []byte(seed), 0o600); err != nil {
+					t.Fatal(err)
 				}
 			}
-			py := runScenario(t, sc, repo, stores[0], script)
-			goT := runScenario(t, sc, repo, stores[1], "")
-			for i := range py.steps {
-				if py.steps[i] != goT.steps[i] {
-					t.Errorf("step %d differs\n--- runlog.py ---\n%s\n--- looper record ---\n%s", i+1, py.steps[i], goT.steps[i])
-				}
-			}
-			if strings.Join(py.records, "\n") != strings.Join(goT.records, "\n") {
-				t.Errorf("the stores differ\n--- runlog.py ---\n%s\n--- looper record ---\n%s",
-					strings.Join(py.records, "\n"), strings.Join(goT.records, "\n"))
+			got := frozen(runScenario(t, sc, store), repo, common, head, store)
+			if got != want {
+				t.Errorf("looper record no longer does what runlog.py did\n--- runlog.py (frozen) ---\n%s\n--- looper record ---\n%s", want, got)
 			}
 		})
 	}

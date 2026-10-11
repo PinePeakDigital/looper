@@ -1,0 +1,9 @@
+plan --tier full --model m --gates {"b":{"planned":"run","reason":"  "},"a":{"planned":"skip"}}
+  exit=1
+  out=
+  err=runlog: refusing to plan — these gates carry no reason:
+  a, b
+A gate's reason is what a later run is measured against; an unexplained plan cannot be iterated on.
+
+--- store ---
+

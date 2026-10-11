@@ -1,0 +1,14 @@
+plan --tier fast --model m --tier-reason done this way elsewhere
+  exit=1
+  out=
+  err=runlog: refusing to record this tier — its reason cites precedent ('done this way elsewhere').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+plan --tier fast --model m --sizing-excluded same as what main has
+  exit=1
+  out=
+  err=runlog: refusing to record this sizing exclusion — its reason cites precedent ('same as what').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+--- store ---
+

@@ -2,7 +2,6 @@ package record
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,44 +48,6 @@ func runlogPath(t *testing.T) string {
 		t.Skip("runlog.py not found; set REVIEW_LOOP_RUNLOG to run the parity gate")
 	}
 	return p
-}
-
-// lastLine is the last non-blank line of a captured stderr. The verdict word is what the
-// Python prints LAST; anything above it is noise from the interpreter, and an equality
-// against the whole buffer fails the moment a DeprecationWarning appears at import. That
-// brittleness is the same thing separating stderr from stdout was meant to prevent — a
-// healthy oracle must not turn the gate red — so the comparisons below read the last line,
-// not the buffer.
-func lastLine(s string) string {
-	fields := strings.Split(strings.TrimSpace(s), "\n")
-	// Only the LEFT half of this trim is reachable, and no test can cover the right half:
-	// the outer TrimSpace has already removed trailing whitespace from the buffer, so the
-	// final field cannot end in any. Narrowing it to TrimLeft therefore survives every
-	// mutation and always will. Left as TrimSpace because the symmetry is what a reader
-	// expects; labelled because an unreachable half that scores as covered is worse than
-	// one that is named.
-	return strings.TrimSpace(fields[len(fields)-1])
-}
-
-// saysNoSuchRun reports whether cmd_convergence's failure means "that run is not in this
-// store", as opposed to any other way it can fail. It takes BOTH signals because each alone
-// has been wrong once: the word "unknown" also arrives on STDOUT as the legitimate verdict
-// for a run with no cycles, and exit 2 is also argparse's usage-error code, so a renamed
-// subcommand reported "no such run" for every fixture.
-//
-// A function rather than an inline condition so the cases can be asserted directly — see
-// TestSaysNoSuchRunReadsBothSignals, which is the only thing that exercises the tolerance
-// for noise on stderr, because no fixture produces any.
-func saysNoSuchRun(err error, stderr string) bool {
-	ee, ok := err.(*exec.ExitError)
-	if !ok || ee.ExitCode() != 2 {
-		return false
-	}
-	// Equality, not Contains or HasSuffix. A real argparse failure ends with the word:
-	// `convergence --run-id r --unknown` exits 2 with "runlog.py: error: unrecognized
-	// arguments: --unknown" as its last line, and a suffix test reports that as a missing
-	// run — the wrong-cause failure this guard has already shipped three times.
-	return lastLine(stderr) == "unknown"
 }
 
 // noRun is what an oracle prints when the fixture holds no run "r". Without it the Python
@@ -327,112 +288,6 @@ func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 			t.Errorf("the oracle no longer distinguishes a missing run: got %q", got)
 		}
 	})
-
-	t.Run("convergence exits 2", func(t *testing.T) {
-		cmd := exec.Command("python3", script, "convergence", "--run-id", "r")
-		cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
-		var errOut strings.Builder
-		cmd.Stderr = &errOut
-		out, err := cmd.Output()
-		if !saysNoSuchRun(err, errOut.String()) {
-			t.Errorf("cmd_convergence no longer signals a missing run: err=%v, stdout=%q, stderr=%q",
-				err, out, errOut.String())
-		}
-		// And it must not put the word on stdout, where it would be read as a verdict —
-		// "unknown" on STDOUT with exit 1 is the legitimate answer for a cycle-less run.
-		if strings.TrimSpace(string(out)) != "" {
-			t.Errorf("a missing run printed %q to stdout; it belongs on stderr", out)
-		}
-	})
-}
-
-// The healthy-with-noise case, which four review cycles never ran. Every guard in this file
-// was validated by simulating the break it names and confirming red; not one was validated
-// by perturbing a CORRECT system and confirming green, and that is where each of them failed
-// in turn. No fixture puts noise on stderr, so without this nothing exercises the tolerance
-// and a return to comparing the whole buffer would score as caught by nothing.
-func TestSaysNoSuchRunReadsBothSignals(t *testing.T) {
-	// A real *exec.ExitError, since its ExitCode is what the guard reads.
-	exitWith := func(code int) error {
-		err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
-		// sh always honours an explicit exit, so the mismatch branch is a guard against the
-		// environment, not a case under test — it fires only if sh is missing or broken.
-		if (err == nil) != (code == 0) {
-			t.Fatalf("sh exit %d gave err %v", code, err)
-		}
-		return err
-	}
-	argparse := "usage: runlog.py [-h] {plan,finish} ...\n" +
-		"runlog.py: error: argument cmd: invalid choice: 'convergence'"
-
-	for _, tc := range []struct {
-		name   string
-		err    error
-		stderr string
-		want   bool
-	}{
-		{"exit 2 and the word", exitWith(2), "unknown\n", true},
-		{"a warning above the word is still the word", exitWith(2),
-			"DeprecationWarning: noise\n\nunknown\n", true},
-		{"argparse shares the exit code but not the word", exitWith(2), argparse, false},
-		{"the word without the code is a cycle-less run", exitWith(1), "unknown\n", false},
-		{"a process that never ran is not a missing run", errors.New("exec: not found"), "", false},
-		{"success is not a missing run", nil, "", false},
-		{"the word must be the LAST line, not merely present", exitWith(2),
-			"unknown\nruntime shutdown error\n", false},
-		// The cases below exist because five wrong versions of this guard passed the seven
-		// above. Each is a healthy-OTHER-failure: the process failed for a reason that is
-		// not a missing run, on the same channel, in a shape a loose test accepts.
-		{"a last line that ENDS with the word is not the word", exitWith(2),
-			"usage: runlog.py [-h] ...\nrunlog.py: error: unrecognized arguments: --unknown", false},
-		{"a last line that STARTS with the word is not the word", exitWith(2),
-			"usage: runlog.py [-h] ...\nunknown option --x", false},
-		{"nor is any other non-2 code", exitWith(4), "unknown\n", false},
-		// A strict PREFIX of the word, which is what separates equality from
-		// HasPrefix("unknown", lastLine) — true of every prefix, the empty string included.
-		// This case strictly dominates an empty-stderr one: no mutation is killed by that
-		// and not by this, so there is only this.
-		{"a strict prefix of the word is not the word", exitWith(2), "unk", false},
-		// Case, and punctuation. EqualFold and TrimSuffix(".") both passed the table.
-		{"the word is case-sensitive", exitWith(2), "UNKNOWN", false},
-		{"the word with a full stop is not the word", exitWith(2), "unknown.", false},
-		// The WORD-level form of the suffix bug: splitting on spaces and taking the last
-		// field. The argparse fixture above ends in "--unknown", whose last FIELD is
-		// "--unknown", so it did not catch this — but argparse also produces lines ending in
-		// the bare word, and that is a missing-run report for a subcommand typo.
-		{"a last field that IS the word is still not the word", exitWith(2),
-			"runlog.py: error: argument cmd: invalid choice: unknown", false},
-		// TWO consecutive warnings with no blank line between them. The noise case above has
-		// a blank middle line, which hides a SplitN(..., 2) weakening of lastLine — and two
-		// import warnings on a healthy oracle is the likeliest noise there is.
-		{"two warnings above the word are still the word", exitWith(2),
-			"DeprecationWarning: a\nUserWarning: b\nunknown\n", true},
-		// CRLF, and a non-breaking space. Both trims are TrimSpace, which is unicode-aware;
-		// narrowing either to a " \t\n" cutset survives without these.
-		{"a CRLF line ending does not hide the word", exitWith(2), "warn\r\nunknown\r\n", true},
-		{"unicode whitespace around the word does not hide it", exitWith(2),
-			"warn\n\u00a0unknown\u00a0\n", true},
-		// And these two keep lastLine honest where it CAN be wrong: a weakening of the outer
-		// trim to newlines only breaks the second. The inner trim is a different story —
-		// see its own note at lastLine; only its left half is reachable.
-		// Padding on a line that is NOT the whole buffer: with only one line the outer trim
-		// already strips it, so the inner one is never reached and dropping it survives.
-		{"padding around the word is still the word", exitWith(2), "warn\n  unknown  \n", true},
-		{"a whitespace-only last line does not hide the word", exitWith(2),
-			"unknown\n   \n", true},
-		// The same, but whitespace no ASCII cutset covers. A trailing JUNK LINE is the only
-		// thing that exercises the OUTER trim: when the junk is on the verdict line itself
-		// the inner trim absorbs it, so narrowing the outer one to " \t\n" or " \t\n\r"
-		// survives every other case here.
-		{"a trailing line of unicode whitespace does not hide the word", exitWith(2),
-			"unknown\n\u00a0\n", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := saysNoSuchRun(tc.err, tc.stderr); got != tc.want {
-				t.Errorf("saysNoSuchRun(%v, %q) = %v, want %v", tc.err, tc.stderr, got, tc.want)
-			}
-		})
-	}
 }
 
 // refusedNames is what each refused fixture's error must actually NAME. It is a separate map
@@ -797,34 +652,14 @@ func TestConvergenceMatchesThePython(t *testing.T) {
 				t.Fatalf("Go side could not decode the fixture: %v", err)
 			}
 
-			// The CLI, not pyOracle: convergence has a subcommand, and its exit code is
-			// non-zero for anything but converged by design, so the error is not a signal.
-			// Stderr still has to come off the answer — merged in, one warning at import
-			// would be compared as the verdict.
-			cmd := exec.Command("python3", script, "convergence", "--run-id", "r")
-			cmd.Env = append(os.Environ(), "REVIEW_LOOP_RUNS="+path)
-			var errOut strings.Builder
-			cmd.Stderr = &errOut
-			out, runErr := cmd.Output()
-			want := strings.TrimSpace(string(out))
-			// "No such run" is exit 2 AND the word on stderr, and it takes both. For a
-			// missing run cmd_convergence prints "unknown" to stderr and returns 2; for a
-			// run that exists with no cycles it prints the same word to STDOUT with exit 1
-			// (runlog.py:576-584). Keying on the text alone broke the `no cycles` fixture,
-			// whose correct verdict IS "unknown"; keying on the code alone then swallowed
-			// argparse, which also exits 2 — so a renamed or mistyped subcommand reported
-			// "found no run" for all 36 fixtures while the real cause was `invalid choice`.
-			// Two wrong guards in a row, each asserting a cause it did not check.
-			if saysNoSuchRun(runErr, errOut.String()) {
-				t.Fatalf("Python side found no run %q in the fixture", "r")
-			}
-
+			// The library, not the CLI: the CLI is looper record now. limit=None for the
+			// reason TestCycleCountMatchesThePython gives.
+			want := pyOracle(t, script, path,
+				"run=m['load'](limit=None).get('r');"+
+					"print("+strconv.Quote(noRun)+" if run is None else (m['convergence'](run) or 'unknown'))")
 			if got != want {
-				// runErr is in the message because a non-ExitError failure — python3 absent,
-				// say — leaves stdout and stderr both empty, and without it the report
-				// blames the comparison for a process that never ran.
-				t.Errorf("convergence disagrees: Go %q, Python %q\nrun error: %v\nstderr:\n%s\nfixture:\n%s",
-					got, want, runErr, errOut.String(), strings.Join(rows, "\n"))
+				t.Errorf("convergence disagrees: Go %q, Python %q\nfixture:\n%s",
+					got, want, strings.Join(rows, "\n"))
 			}
 		})
 	}

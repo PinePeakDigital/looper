@@ -1,0 +1,8 @@
+plan --tier full --model m --gates {"a":{"planned":"skip","reason":"it Matches  an\nexisting\tpattern"}}
+  exit=1
+  out=
+  err=runlog: refusing to record gate 'a' as skip — its reason cites precedent ('matches an existing pattern').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+--- store ---
+

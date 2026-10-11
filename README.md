@@ -298,9 +298,9 @@ already finished — read the store the way `runlog.load()` does, as merged dict
 row elsewhere in a shared store never blocks a write. Convergence, for `finish`'s warning and
 the `convergence` subcommand, comes from the typed read half above, so it has one definition.
 
-`TestWriteMatchesThePython` runs 37 scenarios through `runlog.py` and `looper record` against
-copies of one seeded store and requires the same exit status, stdout, stderr and decoded
-records. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); everything else is compared as written. CI runs it in a non-UTC zone, where a port writing UTC timestamps would fail. Each scenario is a sequence of
+`TestWriteMatchesThePython` runs 37 scenarios through `looper record` against a seeded store and
+requires the exit status, stdout, stderr and decoded records that `runlog.py` produced for the
+same scenario, frozen under `internal/record/testdata/oracle` before its command line was deleted. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); the temp repo's path, git dir and commit; everything else is compared as written. The test pins the local zone to the -05:00 the goldens were captured in, so a port writing UTC timestamps fails on any machine. Each scenario is a sequence of
 calls, because most of what the write half guards is a relationship between calls.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
@@ -319,7 +319,7 @@ The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-fla
 well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which
 is stricter than Python's on `İ` and never looser. Records carry non-ASCII text as UTF-8 where `runlog.py` writes `\u` escapes; every JSON reader decodes the two to the same value.
 
-`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import, so the two lists must stay one list after the scenarios can no longer run; one scenario already sends every phrase, read from the oracle at test time, through both.
+`TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import, so the two lists must stay one list now that the scenarios no longer run against it; one scenario sends every phrase in the port's list through `skipped`, and this test is what keeps that list `runlog.py`'s.
 
 ## `looper docs`
 
