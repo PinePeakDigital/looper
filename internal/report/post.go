@@ -454,6 +454,11 @@ func applyLabel(p PostParams, num string, diag func(string, ...any)) {
 			continue
 		}
 		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
+			// gh's answer for a label the PR does not carry, which is most of them on every
+			// run: nothing is left standing, so a warning here only buries the real ones.
+			if strings.Contains(r.Err, "'"+l.Name+"' not found") {
+				continue
+			}
 			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
 		}
 	}

@@ -951,13 +951,20 @@ func TestAFailedLabelRemovalIsReported(t *testing.T) {
 	dir := gitRepo(t)
 	shimGh(t, `case "$*" in
 	  "pr list"*) echo '[{"number":9}]';;
-	  *"--remove-label review:converged"*) echo "label not found" >&2; exit 1;;
+	  *"--remove-label review:converged"*) echo "HTTP 403: Resource not accessible by integration" >&2; exit 1;;
+	  *"--remove-label review:capped"*) echo "'review:capped' not found" >&2; exit 1;;
 	  *) exit 0;;
 	esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
 		t.Fatalf("Post: %v", err)
+	}
+	// gh's "'<label>' not found" means the PR never carried it, so nothing is left standing
+	// and a warning would only bury the real one: measured on the first v0.2.2 post, where
+	// every run warned about review:unknown.
+	if strings.Contains(diag.String(), "review:capped") {
+		t.Errorf("a label the PR does not carry was reported as a failed removal: %q", diag.String())
 	}
 	if !strings.Contains(diag.String(), "review:converged not removed") {
 		t.Errorf("a failed removal was silent, so a PR can carry two convergences at once: %q",

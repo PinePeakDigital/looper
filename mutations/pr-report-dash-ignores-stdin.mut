@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestStdinIsReadOnlyWhenAskedFor/a_real_pipe'
+expect: --- FAIL:
+why:    `-findings-file -` is now the only way a piped narrative reaches the report, and it is how the skill's Step 14 hands the orchestrator's findings over. If "-" stopped meaning stdin it would be opened as a file literally named "-", so the report would either fail or carry whatever that file held, and the half of the report the record cannot derive would be lost.
+--- old
+	if path == "-" {
+--- new
+	if false && path == "-" {
