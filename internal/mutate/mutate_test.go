@@ -979,11 +979,19 @@ func TestCheckReportsEverythingThatWouldAbortARun(t *testing.T) {
 		}
 	})
 
-	t.Run("an absolute target resolves against Root, as a run resolves it", func(t *testing.T) {
-		// filepath.Join(Root, "/abs/path") cannot be escaped by the leading slash, so a
-		// run reads a path that does not exist and scores Stale. The Python shadow
-		// open()ed the absolute path verbatim and counted the anchor successfully — the
-		// one case where it was LESS strict about a path than the thing it stood in for.
+	t.Run("an absolute target is refused, and by the check that actually refuses it", func(t *testing.T) {
+		// The mechanism matters here because the first version of this subtest asserted the
+		// wrong one. `filepath.Join(Root, "/abs/path")` cannot be escaped by the leading
+		// slash, so the commit introducing this said a run "reads a path that does not
+		// exist and scores Stale". It does not: `git ls-files --error-unmatch` refuses a
+		// path outside the repo FIRST, so `Run` aborts and scores nothing at all. Measured
+		// with a probe calling both. The old assertion was `len(got) != 1`, which passed
+		// under either mechanism and still passed with the tracked-target loop deleted.
+		//
+		// What is asserted now: BOTH problems are reported, the tracked one leading, since
+		// Check deliberately continues past a precondition failure. The Python shadow
+		// open()ed the absolute path verbatim and counted the anchor successfully — the one
+		// case where it was LESS strict about a path than the thing it stood in for.
 		other := t.TempDir()
 		abs := filepath.Join(other, "src.txt")
 		if err := os.WriteFile(abs, []byte("x = 1\n"), 0o644); err != nil {
@@ -994,8 +1002,16 @@ func TestCheckReportsEverythingThatWouldAbortARun(t *testing.T) {
 			Source: "c/x.mut", Target: abs, Verify: []string{"true"},
 			Why: "w", Old: "x = 1", New: "y",
 		}})
-		if len(got) != 1 {
-			t.Fatalf("an absolute target was not reported: %q", got)
+		if len(got) != 2 {
+			t.Fatalf("want both the tracked-target refusal and the unreadable-path "+
+				"report, got %d: %q", len(got), got)
+		}
+		if !strings.Contains(got[0], "git does not track") {
+			t.Errorf("the tracked check is what refuses an absolute path first, and this "+
+				"says otherwise: %q", got[0])
+		}
+		if !strings.Contains(got[1], "target unreadable") {
+			t.Errorf("Join(Root, abs) should then read a path that does not exist: %q", got[1])
 		}
 	})
 

@@ -19,7 +19,7 @@ Reintroduces a known defect into the code, runs the suites that should notice, a
 reports whether they did.
 
 ```text
-looper mutate [-catalog mutations] [-root .]
+looper mutate [-catalog mutations] [-root .] [-check]
 ```
 
 - **caught** — a verify command failed, and failed the way the mutation said it would.

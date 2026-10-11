@@ -791,3 +791,61 @@ func TestTheNarrativeReadsARealFile(t *testing.T) {
 		}
 	})
 }
+
+// `mutate -check` is what CI runs ahead of the fifteen-minute score, and before this test
+// its non-zero exit was covered by nothing: deleting the three lines that produce the error
+// left `go vet` clean and both packages' tests green, while the binary printed the problems
+// AND a false `ok:` line and exited 0 — green CI on a catalog that cannot run. Every sibling
+// exit path here has a test (TestMutateAllCaughtExitsZero and the two non-zero ones); the
+// gate CI actually depends on had none.
+func TestMutateCheckFailsOnACatalogThatWouldNotRun(t *testing.T) {
+	dir := fixture(t, map[string]string{
+		"app.py": "def f(x):\n    return x > 0\n",
+		"t.sh":   "#!/bin/sh\nexit 0\n",
+		// A stale anchor: the catalog says `x >= 0`, the file says `x > 0`. This is the
+		// rename-rot case, which a full run reports as Stale fifteen minutes in.
+		"mutations/stale.mut": "target: app.py\nverify: ./t.sh\nwhy:    w\n--- old\nx >= 0\n--- new\nx < 0\n",
+	})
+	code, out, errOut := doRun(t, "mutate", "-check", "-root", dir,
+		"-catalog", filepath.Join(dir, "mutations"))
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 — CI would be green on a catalog that cannot run\n%s\n%s",
+			code, out, errOut)
+	}
+	// The problem goes to STDERR and names the entry; `ok:` must not appear anywhere.
+	if !strings.Contains(errOut, "anchor occurs 0 times") {
+		t.Errorf("stderr does not say what is wrong: %q", errOut)
+	}
+	if !strings.Contains(errOut, "stale.mut") {
+		t.Errorf("stderr does not name the entry, so CI says a hole exists without saying "+
+			"which: %q", errOut)
+	}
+	if strings.Contains(out, "ok:") || strings.Contains(errOut, "ok:") {
+		t.Errorf("the ok line was printed for a catalog that would not run: %q / %q", out, errOut)
+	}
+}
+
+// The other direction, and the reason the test above means anything: a catalog that WOULD
+// run exits 0 and says so on stdout. A -check that always failed would satisfy every
+// assertion above while making the gate useless.
+func TestMutateCheckPassesACatalogThatWouldRun(t *testing.T) {
+	dir := fixture(t, map[string]string{
+		"app.py":             "def f(x):\n    return x > 0\n",
+		"t.sh":               "#!/bin/sh\nexit 0\n",
+		"mutations/flip.mut": caughtCatalog,
+	})
+	code, out, errOut := doRun(t, "mutate", "-check", "-root", dir,
+		"-catalog", filepath.Join(dir, "mutations"))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "ok: 1 entries") {
+		t.Errorf("stdout does not report what was checked: %q", out)
+	}
+	// And it must NOT have run the verify command — that is the whole point of -check, and
+	// the fifteen minutes it saves. `t.sh` here exits 0 either way, so the discriminator is
+	// the absence of a score.
+	if strings.Contains(out, "score") {
+		t.Errorf("-check ran the full score instead of stopping: %q", out)
+	}
+}

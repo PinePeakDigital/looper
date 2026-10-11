@@ -15,7 +15,7 @@ import (
 	"github.com/pinepeakdigital/looper/internal/report"
 )
 
-const usage = `usage: looper mutate [-catalog dir] [-root dir]
+const usage = `usage: looper mutate [-catalog dir] [-root dir] [-check]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
@@ -77,8 +77,15 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	catalog := fs.String("catalog", "mutations", "directory of .mut files")
 	root := fs.String("root", ".", "repo root the mutations apply to")
 	check := fs.Bool("check", false,
-		"parse the catalog and verify every anchor, then stop — seconds, not the full run")
+		"parse the catalog, check every target and anchor, then stop — seconds, not the full run")
 	if err := fs.Parse(args); err != nil {
+		// `-h` is a request that was SERVED, not a failure — same handling the two
+		// sibling subcommands have had. It mattered less when this command had no flag
+		// worth discovering; `-h` is now the only place -check is documented besides the
+		// usage banner, and it exited 1 printing `flag: help requested`.
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -98,9 +105,23 @@ func runMutate(args []string, out, errOut io.Writer) error {
 			fmt.Fprintln(errOut, p)
 		}
 		if len(problems) > 0 {
-			return fmt.Errorf("%d of %d catalog entr(ies) would not run", len(problems), len(muts))
+			// "%d problem(s) across %d entries", NOT "%d of %d entries would not run". The
+			// earlier wording was false whenever a precondition failed: a symlinked or
+			// untracked target aborts Run WHOLESALE, so "1 of 4 would not run" described a
+			// catalog where the true answer is none of the four. A problem count is also not
+			// an entry count — one entry can contribute a target problem and an anchor
+			// problem — and the thing the operator needs is that the catalog will not run.
+			return fmt.Errorf("%d problem(s) across %d catalog entries; this catalog would not run",
+				len(problems), len(muts))
 		}
-		fmt.Fprintf(out, "ok: %d entries parse and every anchor matches exactly once\n", len(muts))
+		// Deliberately narrow, and the one claim here that is exactly true. It does NOT say
+		// the catalog will run: -check never executes a `verify:` command, so an entry whose
+		// verify is already failing (ALREADY RED) or matches no test (VACUOUS) scores Broken
+		// in a full run and is invisible here. Measured: a `-run` pattern naming a renamed
+		// test — the same rename the anchor half exists for — passes this gate and scores
+		// 0/2 in the run.
+		fmt.Fprintf(out, "ok: %d entries parse, every target is usable, and every anchor "+
+			"matches exactly once\n", len(muts))
 		return nil
 	}
 

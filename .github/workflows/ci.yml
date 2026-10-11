@@ -222,7 +222,13 @@ jobs:
       # as fatally). A fifth patch buys a fifth round. Reusing ParseCatalog and Runner.Check
       # makes the fast gate the same code as the slow one, so divergence is impossible by
       # construction rather than by review.
-      - name: every catalog entry would actually run
+      #
+      # The step name is narrow on purpose. -check never executes a `verify:` command, so an
+      # entry whose verify is already failing or matches no test scores Broken in a full run
+      # and is invisible here — measured: a `-run` pattern naming a renamed test, the same
+      # rename the anchor half exists for, passes this gate and scores 0/2 in the run. What
+      # this proves is that the catalog LOADS and every target and anchor is usable.
+      - name: every catalog entry parses, and its target and anchor are usable
         run: go run ./cmd/looper mutate -check
 
       # A deleted catalog entry is silently accepted: the score is computed against
@@ -247,7 +253,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 234 ] || { echo "only $n mutations, expected at least 234 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 236 ] || { echo "only $n mutations, expected at least 236 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

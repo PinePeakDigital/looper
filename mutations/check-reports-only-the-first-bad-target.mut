@@ -1,0 +1,12 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCheckReportsEverythingThatWouldAbortARun/an_absolute'
+expect: want both the tracked-target refusal and the unreadable-path report
+why:    the gate exists to spend ONE CI cycle instead of one per defect, and returning after the first precondition error gives back exactly that serialization. Measured: a catalog with three stale anchors plus one untracked target reported only the untracked target, and removing that entry then surfaced all three anchors — three red runs for four defects. A bad target also says nothing about any OTHER target's anchor, so stopping discards findings that are still valid. `requireTrackedTargets` keeps first-error behaviour because `Run` aborts on it and the rest is noise there; this is the same loop reported differently, not a second copy of the rule.
+--- old
+	for _, err := range r.trackedTargetProblems(muts) {
+		problems = append(problems, err.Error())
+	}
+--- new
+	if probs := r.trackedTargetProblems(muts); len(probs) > 0 {
+		return []string{probs[0].Error()}
+	}

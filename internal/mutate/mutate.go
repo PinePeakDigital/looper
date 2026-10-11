@@ -368,6 +368,23 @@ func firstBad(m Mutation, alreadyBad map[string]string) string {
 // but has no committed baseline, so if the process dies before the restore there is
 // nothing to recover it from. In-repo damage is recoverable; this would not be.
 func (r *Runner) requireTrackedTargets(muts []Mutation) error {
+	if probs := r.trackedTargetProblems(muts); len(probs) > 0 {
+		return probs[0]
+	}
+	return nil
+}
+
+// trackedTargetProblems is requireTrackedTargets' body, reporting EVERY bad target rather
+// than the first. Run wants the first — it aborts, so the rest is noise. Check wants all of
+// them, because it exists to spend one CI cycle instead of one per defect, and returning
+// after the first turned a four-problem catalog into four red runs. Measured: three stale
+// anchors plus one untracked target reported only the untracked target, and removing that
+// entry then surfaced all three anchors.
+//
+// One function, not two implementations, for the reason this whole gate was rewritten: a
+// second copy of a rule is a second rule.
+func (r *Runner) trackedTargetProblems(muts []Mutation) []error {
+	var probs []error
 	seen := map[string]bool{}
 	for _, m := range muts {
 		if seen[m.Target] {
@@ -380,21 +397,22 @@ func (r *Runner) requireTrackedTargets(muts []Mutation) error {
 		// and os.WriteFile both follow it — and the catalog in CI is editable by whoever
 		// opens the pull request. Lstat, so the link itself is what gets inspected.
 		if info, err := os.Lstat(filepath.Join(r.Root, m.Target)); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s names target %q, which is a symlink.\n"+
+			probs = append(probs, fmt.Errorf("%s names target %q, which is a symlink.\n"+
 				"Writes follow it, so a tracked link is a write to wherever it points — "+
 				"outside this repo, if that is where it points. Name the file itself",
-				m.Source, m.Target)
+				m.Source, m.Target))
+			continue
 		}
 
 		out, err := exec.Command("git", "-C", r.Root, "ls-files", "--error-unmatch", "--", m.Target).Output()
 		if err != nil || strings.TrimSpace(string(out)) == "" {
-			return fmt.Errorf("%s names target %q, which git does not track.\n"+
+			probs = append(probs, fmt.Errorf("%s names target %q, which git does not track.\n"+
 				"An untracked target has no committed copy to recover from if this process is "+
 				"killed before the restore, and it does not show up in the clean-tree check either",
-				m.Source, m.Target)
+				m.Source, m.Target))
 		}
 	}
-	return nil
+	return probs
 }
 
 // porcelain runs `git status --porcelain` in the repo root. Both callers go through it so
@@ -498,7 +516,9 @@ func Score(results []Result) (caught, survived, stale, broken int) {
 // ErrHoles is returned when any mutation survived, went stale, or broke.
 var ErrHoles = errors.New("the suite did not catch every reintroduced defect")
 
-// Check reports every problem that would abort or invalidate a run, without running one.
+// Check reports every problem that makes a catalog UNRUNNABLE — a parse the caller already
+// did, a target git will not let a run touch, an anchor that does not match exactly once —
+// without running anything.
 //
 // It exists because the Python shadow of this parser could not be kept faithful. Four
 // consecutive review rounds found divergences in `mutations/anchorcheck.py`, each time in
@@ -518,12 +538,26 @@ var ErrHoles = errors.New("the suite did not catch every reintroduced defect")
 // which is the whole reason a fast gate was wanted.
 //
 // NOT requireCleanTree: this writes nothing, and refusing to run with edits in flight would
-// make it useless at exactly the moment it is wanted — right before a commit.
+// make it useless at exactly the moment it is wanted — right before a commit. One measured
+// cost of that skip: with -root outside a git repo, every target reads as untracked where a
+// full run says "is it a git repo?" — the dropped check was the one that named the cause.
+//
+// And NOT `baseline`, which is the honest limit of this gate rather than an oversight: a
+// mutation whose `verify:` is already failing (ALREADY RED) or names no test (VACUOUS) is a
+// catalog defect too, scores Broken in a full run, and cannot be seen without executing the
+// command. Measured: a `-run` pattern naming a renamed test — the same rot the anchor check
+// exists for — passes here and scores 0/2 in the run. So this says the catalog LOADS and is
+// addressable, never that it will pass.
 func (r *Runner) Check(muts []Mutation) []string {
-	if err := r.requireTrackedTargets(muts); err != nil {
-		return []string{err.Error()}
-	}
+	// EVERY bad target, and then the anchors anyway. Returning after the first precondition
+	// error reported one defect per CI cycle, which is the serialization this gate exists to
+	// remove — and it said "1 of 4 would not run" where the truth is that the precondition
+	// aborts Run wholesale, so none of the four would. The anchors are worth checking even
+	// then: a bad target says nothing about any OTHER target's anchor.
 	var problems []string
+	for _, err := range r.trackedTargetProblems(muts) {
+		problems = append(problems, err.Error())
+	}
 	for _, m := range muts {
 		target := filepath.Join(r.Root, m.Target)
 		original, err := os.ReadFile(target)
