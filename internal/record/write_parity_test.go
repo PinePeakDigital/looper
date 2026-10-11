@@ -719,3 +719,22 @@ func TestANumberForAListArgumentIsRefused(t *testing.T) {
 		t.Errorf("a refused finish wrote a row:\n%s", b)
 	}
 }
+
+// runlog.py opens the store as strict UTF-8 and dies on one bad byte anywhere in it, on every
+// subcommand that loads it. looper reads the row, the byte as U+FFFD, and still gives a verdict.
+func TestInvalidUTF8InTheStoreIsReadNotFatal(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	rows := `{"run_id":"iu","phase":"plan","repo":"r","head":"h"}` + "\n" +
+		`{"run_id":"iu","phase":"cycle","n":1,"applied":0,"agents":1,"width_reason":"a` + "\xff" + `b"}` + "\n"
+	if err := os.WriteFile(store, []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if c := Command([]string{"convergence", "--run-id", "iu"}, &out, &errb); c != 0 || strings.TrimSpace(out.String()) != "converged" {
+		t.Errorf("convergence over invalid UTF-8: exit %d, out %q, err %q", c, out.String(), errb.String())
+	}
+}

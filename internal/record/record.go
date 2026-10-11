@@ -321,7 +321,7 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	// own comment says records are unbounded, so a ceiling here is a parity break too.
 	//
 	// What this does NOT match is RETENTION, and the parity argument above covers only
-	// record size. `runlog.py:136` is `deque(fh, maxlen=limit)`, which streams and holds at
+	// record size. `runlog.load()` iterates `deque(fh, maxlen=limit)`, which streams and holds at
 	// most `limit` lines; this holds every line and applies the limit afterwards, so
 	// retention is O(file) rather than O(limit).
 	//
