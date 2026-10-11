@@ -205,7 +205,7 @@ var writeScenarios = []wscenario{
 		st("show", "--run-id", "done"),
 		st("show", "--run-id", "missing"),
 	}},
-	{name: "pending lists this branch's files only", branch: "feat", seed: []string{
+	{name: "pending lists the files of this branch only", branch: "feat", seed: []string{
 		`{"run_id":"mine","phase":"plan","branch":"feat"}`,
 		`{"run_id":"theirs","phase":"plan","branch":"main"}`,
 	}, files: []string{"review-loop-pending-report.mine.md", "review-loop-pending-report.theirs.md", "review-loop-pending-report.ghost.md"},
@@ -263,7 +263,7 @@ var writeScenarios = []wscenario{
 			"--executed", `{"agent_7":{"status":"passed","reason":"metric plan posted"},"security":{"status":"probably fine","reason":"2 stale claims re-read"}}`),
 		st("show", "--run-id", "v1"),
 	}},
-	{name: "floor: above is allowed, broken outranks below", steps: []wstep{
+	{name: "floor, above is allowed, broken outranks below", steps: []wstep{
 		st("plan", "--tier", "fast", "--model", "m", "--run-id", "f1"),
 		st("finish", "--run-id", "f1", "--outcome", "clean", "--tier", "full"),
 		// A broken gate is recorded partial before the floor is consulted, so a claim below the
@@ -299,7 +299,7 @@ var writeScenarios = []wscenario{
 		stEnv(tail2, "convergence", "--run-id", "rt"),
 		stEnv(tail2, "show", "--run-id", "rt"),
 	}},
-	{name: "session precedence, check's session from the environment, and ties", seed: []string{
+	{name: "session precedence, the check session from the environment, and ties", seed: []string{
 		// One planned_at for all three: check's sort must keep store order on a tie, which is
 		// the ordinary case for two plans written in the same second.
 		`{"run_id":"o1","phase":"plan","planned_at":"2026-01-01T00:00:00+00:00","repo":"{REPO}","head":"h","session_id":"s1"}`,
@@ -336,7 +336,7 @@ var tail2 = map[string]string{"REVIEW_LOOP_TAIL": "2"}
 // phrase. TestWriteConstantsMatchThePython holds the list equal to runlog.py's, which stays a
 // library, so a phrase added on either side reaches this golden through that test's failure.
 func bannedPhraseScenario() wscenario {
-	sc := wscenario{name: "every banned phrase, from the oracle's list"}
+	sc := wscenario{name: "every banned phrase, from the oracle list"}
 	for _, p := range BannedReason {
 		sc.steps = append(sc.steps, st("skipped", "--reason", "12 lines; "+strings.ToUpper(strings.ReplaceAll(p, " ", " \n\t"))+" now"))
 	}
