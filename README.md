@@ -307,8 +307,10 @@ Where `runlog.py` crashes with a traceback, `looper record` decides instead, and
 its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
 string — a list, a number — is refused, since stringified it slipped past the precedent ban. A
 truthy non-object `--gates` or `--executed` is refused with a message where `runlog.py` dies
-on `.items()`. A store holding invalid UTF-8 is read, the bad bytes as U+FFFD, where `runlog.py`
-dies decoding it on every subcommand — one stray byte would brick the gate. And where a finish carries a field the typed reader cannot decode (a numeric gate
+on `.items()`. A store holding invalid UTF-8 inside a JSON string is read, the bad bytes as U+FFFD, where
+`runlog.py` dies decoding it on every subcommand that reads the store (`cycle`, `convergence`,
+`finish`, `abandon`, `check`, `show`, `pending`) — one stray byte would brick the gate; a bad
+byte outside a string makes its row unparseable, and that row is skipped as a torn line is. And where a finish carries a field the typed reader cannot decode (a numeric gate
 reason, an escalations object), `finish` and `convergence` report `unknown` with the decode
 error, where `runlog.py` derived a verdict from the dict: the push gate reads the typed record,
 so that verdict is one it would never reproduce.

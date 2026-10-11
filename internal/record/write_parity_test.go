@@ -737,4 +737,10 @@ func TestInvalidUTF8InTheStoreIsReadNotFatal(t *testing.T) {
 	if c := Command([]string{"convergence", "--run-id", "iu"}, &out, &errb); c != 0 || strings.TrimSpace(out.String()) != "converged" {
 		t.Errorf("convergence over invalid UTF-8: exit %d, out %q, err %q", c, out.String(), errb.String())
 	}
+	// And the lenient reader the write guards use: show sees the cycle row too.
+	out.Reset()
+	errb.Reset()
+	if c := Command([]string{"show", "--run-id", "iu"}, &out, &errb); c != 0 || !strings.Contains(out.String(), "width_reason") {
+		t.Errorf("show over invalid UTF-8: exit %d, out %q, err %q", c, out.String(), errb.String())
+	}
 }
