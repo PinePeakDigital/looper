@@ -291,3 +291,10 @@ that cannot start look flagless.
 Attribution is per line: a flag is checked against the scripts named on the same line.
 Prose spanning lines is skipped rather than guessed at — the aim is a signal worth
 acting on every time it fires, not a complete one.
+
+## `looper version`
+
+Prints the module version `go install …@vX.Y.Z` stamped into the binary, or `(devel)` for
+a build from a checkout. review-loop's Step 0 runs it to tell a looper that has
+`push-check` and `pr-report` from an older one with only `mutate` and `docs`: both pass
+`command -v`, and the older one answers `version` with "unknown command" and exit 2.

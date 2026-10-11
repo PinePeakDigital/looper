@@ -849,3 +849,16 @@ func TestMutateCheckPassesACatalogThatWouldRun(t *testing.T) {
 		t.Errorf("-check ran the full score instead of stopping: %q", out)
 	}
 }
+
+// The skill's Step 0 gate: `looper version` must succeed, print one line on stdout and nothing
+// on stderr. An older looper answers "unknown command" with exit 2, which is how Step 0 tells
+// a binary that has push-check and pr-report from one that does not.
+func TestVersionAnswersOnStdout(t *testing.T) {
+	code, out, errOut := doRun(t, "version")
+	if code != 0 || errOut != "" {
+		t.Fatalf("version: code %d, stderr %q", code, errOut)
+	}
+	if lines := strings.Split(strings.TrimRight(out, "\n"), "\n"); len(lines) != 1 || lines[0] == "" {
+		t.Errorf("version printed %q, want one non-empty line", out)
+	}
+}
