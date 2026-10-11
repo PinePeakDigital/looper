@@ -291,3 +291,14 @@ that cannot start look flagless.
 Attribution is per line: a flag is checked against the scripts named on the same line.
 Prose spanning lines is skipped rather than guessed at — the aim is a signal worth
 acting on every time it fires, not a complete one.
+
+## `looper version`
+
+Prints the module version `go install …@vX.Y.Z` stamped into the binary. A build from a
+checkout depends on how it was built: `go build` prints a pseudo-version
+(`v0.2.2-0.<date>-<hash>`, `+dirty` if modified); `go run` and `-buildvcs=false` print
+`(devel)`. review-loop's Step 0 keys on the exit
+status alone, not the string: a looper too old to have `version` (v0.2.1 and earlier, which
+includes every one without `push-check` and `pr-report`) answers "unknown command" with
+exit 2. That makes it a floor of v0.2.2, not a capability check — when Step 14 comes to need a
+newer subcommand, Step 0 needs a real version comparison, or a probe for that subcommand.

@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestVersionAnswersOnStdout'
+expect: version: code 2
+why:    review-loop's Step 0 runs `looper version` to tell a binary that has push-check and pr-report from an older one with only mutate and docs, which `command -v` cannot. Without the arm, every looper looks like the old one and the skill refuses to start.
+--- old
+	case "version":
+--- new
+	case "version-unreachable":

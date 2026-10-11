@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/mutate"
@@ -15,7 +16,8 @@ import (
 	"github.com/pinepeakdigital/looper/internal/report"
 )
 
-const usage = `usage: looper mutate [-catalog dir] [-root dir] [-check]
+const usage = `usage: looper version
+       looper mutate [-catalog dir] [-root dir] [-check]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
@@ -48,6 +50,11 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	var err error
 	switch args[0] {
+	case "version":
+		// The skill's Step 0 runs this to tell a looper that has push-check and pr-report
+		// from an older one that has only mutate and docs: both pass `command -v`, and the
+		// older one then fails at Step 14 with a usage message and empty stdout.
+		_, err = fmt.Fprintln(out, version())
 	case "mutate":
 		err = runMutate(args[1:], out, errOut)
 	case "docs":
@@ -407,4 +414,13 @@ func shouldReadStdin(in io.Reader) bool {
 		return false // cannot tell, so do not risk hanging
 	}
 	return st.Mode()&os.ModeCharDevice == 0
+}
+
+// version is the module version `go install ...@vX.Y.Z` stamped into the binary. Other
+// builds print a VCS pseudo-version (`go build`) or "(devel)" (`go run`, -buildvcs=false).
+func version() string {
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		return bi.Main.Version
+	}
+	return "(devel)"
 }

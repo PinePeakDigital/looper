@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLanded$'
+expect: a marker alone satisfied the gate
+why:    the report gate must require the run's fingerprint lines as well as its marker: the marker alone is 37 bytes for a known run id, cheaper to forge than the self-report the gate replaced. Ported from the skills catalog's report-marker-alone-suffices when push-check.py was retired; that entry broke the needle list at the call site, which push-fingerprint-is-the-heading-alone (mutating Fingerprint itself) does not cover.
+--- old
+	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
+--- new
+	needles := []string{fmt.Sprintf(reportMarker, runID)}
