@@ -180,6 +180,18 @@ jobs:
               echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
           done
 
+      # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
+      # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
+      # shipped three golden directories named after subtests containing an apostrophe and could
+      # not be installed at all, with every step above green, because nothing here built a zip.
+      # This installs this exact commit the way the skill will, straight from GitHub.
+      - name: the module installs the way the skill installs it
+        env:
+          GOPROXY: direct
+          GONOSUMDB: github.com/pinepeakdigital/looper
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
+
       - name: go test (everything else)
         # mapfile, not a bare $(...): the three packages above are excluded because they run
         # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an

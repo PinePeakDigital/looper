@@ -188,13 +188,13 @@ func TestParityWithPrReport(t *testing.T) {
 		{"an executed entry with an empty status", []string{
 			plan(`,"gates":{"evidence":{"planned":"run"}}`),
 			finishRow(`,"executed":{"evidence":{"status":"","reason":"why"}}`)}},
-		{"a reason on the gate overrides the plan's", []string{
+		{"a reason on the gate overrides the plan reason", []string{
 			plan(`,"gates":{"evidence":{"planned":"skip","reason":"planned reason"}}`),
 			finishRow(`,"executed":{"evidence":{"status":"n/a","reason":"executed reason"}}`)}},
-		{"an empty executed reason falls back to the plan's", []string{
+		{"an empty executed reason falls back to the plan reason", []string{
 			plan(`,"gates":{"evidence":{"planned":"skip","reason":"planned reason"}}`),
 			finishRow(`,"executed":{"evidence":{"status":"n/a","reason":""}}`)}},
-		{"a null executed reason falls back to the plan's", []string{
+		{"a null executed reason falls back to the plan reason", []string{
 			plan(`,"gates":{"evidence":{"planned":"skip","reason":"planned reason"}}`),
 			finishRow(`,"executed":{"evidence":{"status":"n/a","reason":null}}`)}},
 		{"neither side has a reason", []string{
