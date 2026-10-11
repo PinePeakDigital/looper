@@ -489,7 +489,13 @@ func runScenario(t *testing.T, sc wscenario, store string) transcript {
 // runlog.py printed and wrote, and what the port must still print and write.
 func frozen(tr transcript, repo, common, head, store string) string {
 	text := strings.Join(tr.steps, "\n") + "\n--- store ---\n" + strings.Join(tr.records, "\n") + "\n"
-	for _, r := range []struct{ from, to string }{{common, "<common>"}, {store, "<store>"}, {filepath.Dir(store), "<dir>"}, {repo, "<repo>"}, {head, "<head>"}} {
+	// The repo as git resolves it: on macOS t.TempDir() is under /var, a symlink to
+	// /private/var, and git records the resolved form, so replacing only the unresolved path
+	// left "/private<repo>" in the goldens and a Linux runner, which has no such link, failed.
+	// The unresolved path keeps a placeholder of its own, so a port that reported the working
+	// directory instead of git's answer still differs from the golden wherever the two differ.
+	resolved, _ := filepath.EvalSymlinks(repo)
+	for _, r := range []struct{ from, to string }{{common, "<common>"}, {store, "<store>"}, {filepath.Dir(store), "<dir>"}, {resolved, "<repo>"}, {repo, "<repo-raw>"}, {head, "<head>"}} {
 		text = strings.ReplaceAll(text, r.from, r.to)
 	}
 	return text

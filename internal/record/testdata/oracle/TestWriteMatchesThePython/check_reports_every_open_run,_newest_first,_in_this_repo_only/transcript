@@ -101,7 +101,7 @@ show --run-id done
  "outcome": "clean",
  "phase": "nudge",
  "planned_at": "<ts>+00:00",
- "repo": "/private<repo>",
+ "repo": "<repo>",
  "run_id": "done"
 }
 
@@ -112,11 +112,11 @@ show --run-id missing
   err=runlog: no run missing
 
 --- store ---
-{"gates":{"a":{"planned":"run","reason":"y"},"b":{"planned":"run","reason":"x"}},"head":"h1","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"old","session_id":"s1","tier_floor":"full"}
+{"gates":{"a":{"planned":"run","reason":"y"},"b":{"planned":"run","reason":"x"}},"head":"h1","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"old","session_id":"s1","tier_floor":"full"}
 {"head":"h1","phase":"plan","planned_at":"<ts>+00:00","repo":"/some/other/repo","run_id":"elsewhere"}
-{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"new","session_id":"s2","tier_floor":"fast"}
-{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"anon"}
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"new","session_id":"s2","tier_floor":"fast"}
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"anon"}
 not json at all
-{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"done"}
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"done"}
 {"finished_at":"<ts>+00:00","outcome":"clean","phase":"finish","run_id":"done"}
 {"nudged_at":"<ts>+00:00","phase":"nudge","run_id":"done"}

@@ -53,14 +53,14 @@ show --run-id rt
  "head": "h",
  "phase": "plan",
  "planned_at": "<ts>+00:00",
- "repo": "/private<repo>",
+ "repo": "<repo>",
  "run_id": "rt",
  "tier_floor": "full"
 }
 
   err=
 --- store ---
-{"gates":{"t":{"planned":"run","reason":"2 stale"}},"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"rt","tier_floor":"full"}
+{"gates":{"t":{"planned":"run","reason":"2 stale"}},"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"rt","tier_floor":"full"}
 {"phase":"nudge","run_id":"x1"}
 {"phase":"nudge","run_id":"x2"}
 {"phase":"nudge","run_id":"x3"}

@@ -62,9 +62,9 @@ check
 
   err=
 --- store ---
-{"branch":"main","gates":{},"head":"<head>","orchestrator_model":"sonnet","phase":"plan","planned_at":"<ts>-05:00","repo":"/private<repo>","run_id":"<ridA>","session_id":null,"session_kind":"headless","tier_floor":"skipped"}
+{"branch":"main","gates":{},"head":"<head>","orchestrator_model":"sonnet","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"<ridA>","session_id":null,"session_kind":"headless","tier_floor":"skipped"}
 {"executed":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"skipped","phase":"finish","run_id":"<ridA>","skip_reason":"a one-word typo in a comment","tier_executed":"skipped"}
-{"branch":"main","carried_by":"patch-id --verbatim","carried_from":"1234567890abcdef1234","carried_how":"skipped","executed":{},"finished_at":"<ts>-05:00","head":"fedcba0987654321fedc","head_at_finish":"fedcba0987654321fedc","outcome":"carried","phase":"finish","repo":"/private<repo>","run_id":"<ridB>","session_kind":"headless","tier_executed":"carried"}
-{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"/private<repo>","run_id":"n1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"branch":"main","carried_by":"patch-id --verbatim","carried_from":"1234567890abcdef1234","carried_how":"skipped","executed":{},"finished_at":"<ts>-05:00","head":"fedcba0987654321fedc","head_at_finish":"fedcba0987654321fedc","outcome":"carried","phase":"finish","repo":"<repo>","run_id":"<ridB>","session_kind":"headless","tier_executed":"carried"}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"n1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
 {"nudged_at":"<ts>-05:00","phase":"nudge","run_id":"n1"}
 {"abandoned_missing":"agent_7, security: the session ended","finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"abandoned","phase":"finish","run_id":"n1"}

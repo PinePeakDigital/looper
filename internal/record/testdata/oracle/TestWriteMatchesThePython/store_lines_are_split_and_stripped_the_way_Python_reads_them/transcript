@@ -9,7 +9,7 @@ show --run-id cr
  "head": "h",
  "outcome": "clean",
  "phase": "finish",
- "repo": "/private<repo>",
+ "repo": "<repo>",
  "run_id": "cr"
 }
 
@@ -43,9 +43,9 @@ check
 
   err=
 --- store ---
-{"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"/private<repo>","run_id":"r4"}
+{"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"r4"}
 {"run_id":"r4","phase":"finish","finished_at":"<ts>+00:00","outcome":"clean"}
-{"run_id":"cr","phase":"plan","repo":"/private<repo>","head":"h"}{"run_id":"cr","phase":"finish","outcome":"clean"}
-{"run_id":"cv","phase":"plan","repo":"/private<repo>","head":"h"}{"run_id":"cv","phase":"cycle","n":1,"applied":0,"agents":1}
-{"head":"h","phase":"plan","repo":"/private<repo>","run_id":"fs"}
+{"run_id":"cr","phase":"plan","repo":"<repo>","head":"h"}{"run_id":"cr","phase":"finish","outcome":"clean"}
+{"run_id":"cv","phase":"plan","repo":"<repo>","head":"h"}{"run_id":"cv","phase":"cycle","n":1,"applied":0,"agents":1}
+{"head":"h","phase":"plan","repo":"<repo>","run_id":"fs"}
 {"run_id":"fs","phase":"cycle","n":1,"applied":0,"agents":1}

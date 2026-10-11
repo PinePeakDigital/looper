@@ -58,7 +58,7 @@ show --run-id c1
  "orchestrator_model": "m",
  "phase": "plan",
  "planned_at": "<ts>-05:00",
- "repo": "/private<repo>",
+ "repo": "<repo>",
  "run_id": "c1",
  "semantic_lines": null,
  "session_id": null,
@@ -70,5 +70,5 @@ show --run-id c1
 
   err=
 --- store ---
-{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"/private<repo>","run_id":"c1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"c1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
 {"agents":4,"analysis_changed":true,"applied":2,"asked":1,"closed_at":"<ts>-05:00","comment_findings":1,"defect_findings":2,"n":1,"phase":"cycle","run_id":"c1","subagent_tokens":900,"width_reason":"semantic_lines=40"}

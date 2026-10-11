@@ -41,7 +41,7 @@ show --run-id nl
  "outcome": "clean",
  "phase": "finish",
  "planned_at": "<ts>-05:00",
- "repo": "/private<repo>",
+ "repo": "<repo>",
  "run_id": "nl",
  "semantic_lines": null,
  "session_id": null,
@@ -55,5 +55,5 @@ show --run-id nl
 
   err=
 --- store ---
-{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"g":{"planned":"run","reason":"x"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"/private<repo>","run_id":"nl","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"g":{"planned":"run","reason":"x"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"nl","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
 {"agents":{"cycle1":6,"scorers":"batched haiku"},"escalations":[],"executed":{"g":{"status":"done"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"nl","tier_executed":"fast","unresolved_asks":0}
