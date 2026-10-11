@@ -652,15 +652,17 @@ func TestThePostDiagnosisDivergence(t *testing.T) {
 	}
 	// And the two kept the same BODY — the half push-check reads, since the marker and the
 	// fingerprint both live there. The trailing label-owed note differs by one thing, named
-	// below: it tells Step 0c which command to run, and after this port that command is
-	// `looper pr-report`, not a Python file that will not exist.
+	// below: it tells Step 0c which command to run. The Python named itself, and the first
+	// port named `looper pr-report --label`, which applies nothing without -post; the command
+	// that labels a PR is gh's.
 	const note = "\n<!-- review-loop: label"
 	pyBody, _, _ := strings.Cut(pyKept, note)
 	goBody, goNote, _ := strings.Cut(string(b), note)
 	if pyBody != goBody {
 		t.Errorf("the deferred bodies differ\n--- python ---\n%s\n--- go ---\n%s", pyBody, goBody)
 	}
-	if !strings.Contains(goNote, "`looper pr-report --run-id "+parityID+" --label`") {
+	if !strings.Contains(goNote, "`gh pr edit <n> --add-label review:converged`") ||
+		!strings.Contains(goNote, "run "+parityID) {
 		t.Errorf("the label-owed note does not name the command Step 0c should run: %q", goNote)
 	}
 }
