@@ -182,8 +182,9 @@ jobs:
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
             echo "$c $t subtests compared against the Python"
           done
-          # The two divergences with no subtests of their own. Each is the only thing
-          # asserting which side owns which answer, so neither can be left to an aggregate.
+          # The divergences with no subtests of their own — FOUR, not the two an earlier
+          # version of this comment claimed while looping over four names. Each is the only
+          # thing asserting which side owns which answer, so none can be left to an aggregate.
           for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
                    TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
             grep -q -- "--- PASS: $d" report.log || {

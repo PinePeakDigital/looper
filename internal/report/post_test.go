@@ -379,9 +379,19 @@ func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
 		"a*b", "a[b", "a]b", "a(b", "a{b", "a\"b", "a'b", "a\\b", "a~b", "a$b", "a%b", "a&b",
 		"a+b", "a=b", "a:b", "a;b", "a,b", "a?b", "a@b", "a^b",
 	}
-	// And every single byte, so a future widening cannot sneak in on a character nobody listed.
+	// Every single BYTE, and `string([]byte{...})` not `string(rune(b))`, which is the whole
+	// point. `string(rune(0x80))` is the two-byte UTF-8 encoding of U+0080, so the rune form
+	// enumerates U+0000-U+00FF and the raw bytes 0x80-0xFF never appear alone — exactly the
+	// widening the comment claimed to seal. This package ranges over RUNES and the push gate
+	// matches a regexp on the string, so an invalid UTF-8 byte is the one input where the two
+	// could most plausibly disagree, and for 128 of 256 iterations it was never tried.
 	for b := 0; b < 256; b++ {
-		ids = append(ids, "a"+string(rune(b))+"b")
+		ids = append(ids, "a"+string([]byte{byte(b)})+"b")
+	}
+	// Both forms, since the rune spellings are a real input class too (`é` is already in the
+	// table above, and a two-byte sequence is what a UTF-8 terminal actually sends).
+	for r := 0; r < 256; r++ {
+		ids = append(ids, "a"+string(rune(r))+"b")
 	}
 	for _, id := range ids {
 		if got, want := ValidRunID(id), push.ValidRunID(id); got != want {

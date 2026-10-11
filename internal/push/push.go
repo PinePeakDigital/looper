@@ -359,8 +359,12 @@ func Check(p CheckParams) (Result, error) {
 	// The DERIVED emptiness, not the map lookup. `r == nil` misses a run that is present but
 	// says nothing — rows carrying the id under a phase the typed decode does not own, for
 	// instance — and the question the block asks is whether anything was readable, not
-	// whether a key existed. Measured against the live store: every one of the live store's 44 runs carries a plan (as of 2026-10-10)
-	// row, so this cannot fire on a legitimately zero-cycle run, which is 22 of them.
+	// whether a key existed. Measured against the live store (44 runs as of 2026-10-10):
+	// 43 of the 44 carry a plan row, and the one that does not — run id `x`, a single `finish`
+	// row from 2026-09-30 — still has a Finish, so `Empty()` is false for it too. So this
+	// cannot fire on a legitimately zero-cycle run, which is 22 of the 44. An earlier wording
+	// said "all 41 real runs carry a plan row"; the 41->44 correction widened it to "every
+	// one" without re-measuring, and "every one" is false.
 	noRecord := r.Empty()
 	if r == nil {
 		r = &record.Run{ID: p.RunID}

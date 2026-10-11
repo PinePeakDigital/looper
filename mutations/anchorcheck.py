@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every .mut parses, and every anchor occurs EXACTLY once in its target.
 
-Parsing is byte-for-byte internal/mutate/catalog.go's parseFile: the markers are
+Parsing follows internal/mutate/catalog.go's parseFile: the markers are
 found with Index(text, "--- old\n") / Index(text, "--- new\n") ANYWHERE in the
 file -- not anchored to a line start -- and the block is everything between them
 with exactly ONE trailing newline stripped. Both details matter: an anchor may
@@ -45,9 +45,13 @@ for path in files:
             print(f"{path}: unknown header {key!r} — a wrapped `why:` does this")
             bad += 1
             break
-        header.setdefault(key, val.strip())
+        # LAST wins, matching catalog.go's `m.Target = val` — not setdefault. With first-wins
+        # a duplicated `target:` resolved the anchor against a file catalog.go would never
+        # load: measured in a scratch catalog, `target: GOOD.txt` followed by `target:
+        # post.go` passed this check while catalog.go took post.go, where the anchor is absent.
+        header[key] = val.strip()
         if key == "verify":
-            verify.append(val.strip())
+            verify.append(val.strip())  # appended, as catalog.go appends
     else:
         target, why = header.get("target"), header.get("why")
         if not target or not why or not verify:
