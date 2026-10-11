@@ -1,0 +1,17 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestTheTierDoesNotReachTheGate'
+expect: tier_executed changed the push decision
+why:    the push gate does not read the tier — a `partial` run pushes on its convergence and outcome like any other, and the PR report is where the tier is shown. Ported from the skills catalog's push-gate-reads-the-tier when push-check.py was retired: five places in the Python's docs once claimed the gate read the tier, and prose about what another module reads has no failing assertion when it rots. This entry is that assertion.
+--- old
+	var outcome string
+	if r.Finish != nil {
+		outcome = r.Finish.Outcome
+	}
+--- new
+	var outcome string
+	if r.Finish != nil {
+		outcome = r.Finish.Outcome
+		if r.Finish.TierExecuted == "partial" {
+			return Result{Push: false, Reason: "the run was only partially reviewed", Convergence: conv}, nil
+		}
+	}
