@@ -206,13 +206,19 @@ jobs:
       # second. Three commits on the report slice shipped one, every time from an edit that had
       # nothing to do with the entry.
       #
+      # It checks the HEADER by the same rule and for the same reason: catalog.go reads every
+      # non-blank line before `--- old` as `key: value` and rejects an unknown key, so a `why:`
+      # whose prose wraps onto a second line makes that line a header and the whole catalog
+      # fails to LOAD. `go test ./...` does not parse these files, so the only other thing that
+      # notices is the fifteen-minute step below — which is how one shipped this slice.
+      #
       # It is a script and not inline bash because getting the match right needs catalog.go's
       # exact rule: the markers are found with Index(text, "--- old\n") anywhere in the file,
       # NOT anchored to a line start, and exactly one trailing newline is stripped — ten entries
       # here have an anchor that legitimately ends mid-line with `--- new` appended onto it. A
       # `grep -cF` cannot express that at all: with a multi-line anchor it counts matching LINES
       # rather than occurrences of the block.
-      - name: every catalog anchor still matches exactly once
+      - name: every catalog entry parses and its anchor matches exactly once
         run: python3 mutations/anchorcheck.py
 
       # A deleted catalog entry is silently accepted: the score is computed against
