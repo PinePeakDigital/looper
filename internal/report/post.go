@@ -2,12 +2,14 @@ package report
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -292,24 +294,38 @@ func FindPR(repo, branch string) Probe {
 		// failed — the old single detail guessed "detached HEAD?" for an unrunnable git too.
 		return Probe{State: NoBranch, Detail: gitDetail}
 	}
-	r := sh(repo, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number", "-q", ".[0].number")
+	// The FULL JSON, not `-q .[0].number`. Asking gh to reduce its answer to a bare number
+	// makes any byte on stdout a valid answer, and stdout is shared with every descendant that
+	// inherited the fd: measured, a `gh pr list` that exited 0 printing NOTHING — meaning there
+	// is no PR for this branch — next to a descendant that printed "42" yielded "42", and the
+	// public disclosure was commented onto a PR that does not exist. `Drained` does not catch
+	// it, because a descendant that writes and then EXITS leaves Wait with no error at all; it
+	// only catches the one that outlives the drain bound. The oracle has to be the SHAPE of the
+	// answer rather than the liveness of a pipe. A stray "42" makes `[{"number":9}]42` and
+	// `[]42`, neither of which decodes, so contamination is reported as unknown instead of
+	// being believed.
+	r := sh(repo, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number")
 	switch {
 	case !r.Runnable:
 		return Probe{State: GhUnrunnable, Detail: r.Err}
 	case r.Code != 0:
 		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
-	// Checked BEFORE the empty test and before the number is believed. gh exited cleanly here,
-	// so the exit status says nothing is wrong — but a descendant shares the pipe, so `Out` is
-	// whatever the two of them wrote between them. Measured: gh printed nothing, meaning there
-	// is no PR, a descendant printed "42", and this said "PR #42" and commented the disclosure
-	// onto it. Either answer would be a guess, so this reports what it is: unknown.
 	case !r.Drained:
 		return Probe{State: GhFailed, Detail: firstLine(r.Err)}
-	case r.Out == "":
-		return Probe{State: NoPR}
-	default:
-		return Probe{State: PRFound, Number: r.Out}
 	}
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(r.Out), &prs); err != nil {
+		// Unknown, NOT "no PR": the one thing this probe must never do is assert a cause it
+		// has not established, and an answer it cannot read establishes nothing.
+		return Probe{State: GhFailed, Detail: fmt.Sprintf(
+			"gh's answer could not be read as JSON (%v) — output was %q", err, firstLine(r.Out))}
+	}
+	if len(prs) == 0 {
+		return Probe{State: NoPR}
+	}
+	return Probe{State: PRFound, Number: strconv.Itoa(prs[0].Number)}
 }
 
 func firstLine(s string) string {

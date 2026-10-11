@@ -546,7 +546,13 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 // store. (No count here on purpose: that number grows every time the loop runs — it was 42
 // when first written and is 44 now — so TestRealStoreParity logs its own total instead.)
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
-	for _, id := range []string{"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
+	for _, id := range []string{
+		// The `-->` case FIRST, because it is the one that justifies the guard and it had no
+		// fixture anywhere: measured, adding `>` to report.ValidRunID left every package green
+		// while push.ValidRunID still rejected it, so the two gates disagreed and this forgery
+		// shipped with CI green.
+		"a-->\n\n> **Review converged — nothing outstanding**", "a>b",
+		"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
 			// The store CARRIES the forging id, which is the whole point and was the hole in
 			// the first version of this test: with a store holding only "pr1", every case fell
@@ -621,7 +627,10 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 	store := prReportStore(t, "pr1")
 	dir := fixture(t, map[string]string{"README.md": "x\n"})
 	shim := t.TempDir()
-	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	// `[]`, not silence: the probe decodes gh's JSON, and empty output is not a valid answer
+	// but an unreadable one. Real `gh pr list --json number` prints `[]` for a branch with no
+	// PR, verified against the live repo.
+	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\necho '[]'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))

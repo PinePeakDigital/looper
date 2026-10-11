@@ -200,16 +200,6 @@ jobs:
           mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$')
           go test -count=1 "${pkgs[@]}"
 
-      # A deleted catalog entry is silently accepted: the score is computed against
-      # however many .mut files are present, so dropping one gives n-1/n-1 and a green
-      # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
-      # Raise the floor deliberately when adding entries; that edit is the review trail — and
-      # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
-      # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
-      # and an empty record can no longer grant, so its defect is unreachable by construction
-      # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
-      # not left to score `survived` forever.
-      # (The same gap was found and closed in the skills repo's workflow first.)
       # Anchors before behaviour. The mutation score below takes about fifteen minutes, so a
       # stale anchor — an entry whose `--- old` block no longer appears in its target, after a
       # rename or a control-flow edit — costs a whole CI cycle to discover. This finds it in a
@@ -225,6 +215,16 @@ jobs:
       - name: every catalog anchor still matches exactly once
         run: python3 mutations/anchorcheck.py
 
+      # A deleted catalog entry is silently accepted: the score is computed against
+      # however many .mut files are present, so dropping one gives n-1/n-1 and a green
+      # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
+      # Raise the floor deliberately when adding entries; that edit is the review trail — and
+      # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
+      # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
+      # and an empty record can no longer grant, so its defect is unreachable by construction
+      # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
+      # not left to score `survived` forever.
+      # (The same gap was found and closed in the skills repo's workflow first.)
       - name: no catalog entry has gone missing
         run: |
           # A glob array, not `ls | wc -l`: wc counts LINES, so one filename containing a
@@ -237,7 +237,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 231 ] || { echo "only $n mutations, expected at least 231 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 232 ] || { echo "only $n mutations, expected at least 232 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

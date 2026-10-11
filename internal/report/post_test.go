@@ -76,11 +76,14 @@ func TestFindPRDistinguishesTheThreeCauses(t *testing.T) {
 		want       PRState
 		saysInNote string
 	}{
-		{name: "a PR exists", gh: `echo 7`, want: PRFound, saysInNote: "PR #7"},
-		// gh pr list EXITS 0 with no output when there are none — the whole reason the probe
-		// asks `pr list` rather than `pr view`, which exits 1 for this and for every failure
-		// alike. Verified against the live repo before the switch.
-		{name: "no PR for the branch", gh: `exit 0`, want: NoPR, saysInNote: "no PR for this branch yet"},
+		{name: "a PR exists", gh: `echo '[{"number":7}]'`, want: PRFound, saysInNote: "PR #7"},
+		// gh pr list EXITS 0 and prints the empty ARRAY when there are none — the whole reason
+		// the probe asks `pr list` rather than `pr view`, which exits 1 for this and for every
+		// failure alike. Verified against the live repo: `--head` on a branch with no PR gives
+		// rc 0 and `[]`; on this branch it gives `[{"number":5}]`. The shim prints `[]` and not
+		// nothing, because the probe decodes gh's JSON rather than reading a bare number, and
+		// empty output is NOT a valid answer — it is an answer that cannot be read.
+		{name: "no PR for the branch", gh: `echo '[]'`, want: NoPR, saysInNote: "no PR for this branch yet"},
 		{name: "gh is not installed", noGh: true, want: GhUnrunnable, saysInNote: "could not be run"},
 		{name: "gh fails on TLS", gh: `echo "tls: failed to verify certificate: x509: OSStatus -26276" >&2; exit 1`,
 			want: GhFailed, saysInNote: "x509"},
@@ -128,7 +131,7 @@ func TestFindPRWithNoBranchToAskAbout(t *testing.T) {
 	mustGit(t, dir, "-c", "core.hooksPath=/dev/null", "-c", "user.email=t@example.com",
 		"-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x")
 	mustGit(t, dir, "checkout", "-q", "--detach")
-	log := shimGh(t, `echo 7`)
+	log := shimGh(t, `echo '[{"number":7}]'`)
 	got := FindPR(dir, "")
 	// NoBranch, not GhFailed. This asserted GhFailed and so pinned the wrong answer: with gh
 	// never invoked — the very next assertion proves that — Note() read "gh ran and failed …
@@ -181,12 +184,12 @@ func TestPostKeepsTheBodyOnEveryUnpostablePath(t *testing.T) {
 		saysInDiag string
 		commented  bool
 	}{
-		{name: "no PR", gh: `exit 0`, saysInDiag: "no PR for this branch yet"},
+		{name: "no PR", gh: `echo '[]'`, saysInDiag: "no PR for this branch yet"},
 		{name: "gh unrunnable", noGh: true, saysInDiag: "could not be run"},
 		{name: "gh failing", gh: `echo "502 Bad Gateway" >&2; exit 1`, saysInDiag: "502 Bad Gateway"},
 		// A PR exists and the COMMENT fails: the one case where the Python already deferred,
 		// kept here because it is the case a refactor is most likely to drop.
-		{name: "the comment fails", gh: `case "$*" in "pr list"*) echo 9;; *) echo "rate limited" >&2; exit 1;; esac`,
+		{name: "the comment fails", gh: `case "$*" in "pr list"*) echo '[{"number":9}]';; *) echo "rate limited" >&2; exit 1;; esac`,
 			saysInDiag: "rate limited", commented: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -225,7 +228,7 @@ func TestPostKeepsTheBodyOnEveryUnpostablePath(t *testing.T) {
 
 func TestPostCommentsAndStillKeepsALocalCopy(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo 9;; esac`)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	path, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "converged", Body: postBody, Diag: &diag})
@@ -253,7 +256,7 @@ func TestPostCommentsAndStillKeepsALocalCopy(t *testing.T) {
 // to learn whether the review finished. Three removals and one add, so two cannot stand at once.
 func TestPostMovesTheLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo 9;; esac`)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -280,7 +283,7 @@ func TestPostMovesTheLabel(t *testing.T) {
 // to a missing `labels` scope would be the module's own rule inverted.
 func TestALabelFailureDoesNotFailThePost(t *testing.T) {
 	dir := gitRepo(t)
-	shimGh(t, `case "$*" in "pr list"*) echo 9;; "pr comment"*) exit 0;; *) echo "missing scope" >&2; exit 1;; esac`)
+	shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; "pr comment"*) exit 0;; *) echo "missing scope" >&2; exit 1;; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -363,10 +366,24 @@ func TestWritePending(t *testing.T) {
 // this package, or the writer and the reader of the pending path become one package that can
 // agree with itself by accident. This is the assertion that keeps the duplicate honest.
 func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
-	for _, id := range []string{
+	// Enumerated by CHARACTER CLASS, not by a handful of shapes. The table used to hold a few
+	// hostile-looking strings and no `>` at all, which made the assertion unfalsifiable for the
+	// one character that matters most here: adding `>` to this package's allowed set left all
+	// three packages green while the push gate's regex still rejected it, so the two halves of
+	// the gate disagreed and the `-->` comment forgery shipped with CI green. Every byte that
+	// could close an HTML comment, forge markdown, or traverse a path now has a case.
+	ids := []string{
 		"", "abc123", "A-b_9", "../../etc/passwd", "a/b", "a.b", "a b", "a\x00b", "ab;rm -rf /",
 		strings.Repeat("a", 64), strings.Repeat("a", 65), "é", "-",
-	} {
+		"a>b", "a<b", "a-->b", "a--\x3eb", "a!b", "a#b", "a|b", "a`b", "a\nb", "a\r\nb", "a\tb",
+		"a*b", "a[b", "a]b", "a(b", "a{b", "a\"b", "a'b", "a\\b", "a~b", "a$b", "a%b", "a&b",
+		"a+b", "a=b", "a:b", "a;b", "a,b", "a?b", "a@b", "a^b",
+	}
+	// And every single byte, so a future widening cannot sneak in on a character nobody listed.
+	for b := 0; b < 256; b++ {
+		ids = append(ids, "a"+string(rune(b))+"b")
+	}
+	for _, id := range ids {
 		if got, want := ValidRunID(id), push.ValidRunID(id); got != want {
 			t.Errorf("%q: this package says %v, the push gate says %v — the writer and the "+
 				"reader of the pending path now disagree about what a run id is", id, got, want)
@@ -379,7 +396,7 @@ func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
 // would have cost a posted report its label with no note saying why.
 func TestAnUnknownConvergenceAppliesNoLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo 9;; esac`)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "mostly-fine", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -493,7 +510,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// No commit is made: `git branch --show-current` answers on an unborn branch, which
 		// is the measurement that moved FindPR off `rev-parse --abbrev-ref HEAD`.
 		mustGit(t, dir, "checkout", "-q", "-b", "feat/detected")
-		log := shimGh(t, `echo 11`)
+		log := shimGh(t, `echo '[{"number":11}]'`)
 		got := FindPR(dir, "")
 		if got.State != PRFound || got.Number != "11" {
 			t.Fatalf("state %v number %q, want PRFound/11 (detail %q)", got.State, got.Number, got.Detail)
@@ -533,7 +550,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// The deliberate swallow: the report IS posted, so losing the belt-and-braces copy
 		// must not fail the publish — it must say so and carry on.
 		dir := gitRepo(t)
-		shimGh(t, `case "$*" in "pr list"*) echo 9;; esac`)
+		shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
 		// Replace .git with a file, so git can run but reports no common dir.
 		if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 			t.Fatal(err)
@@ -619,6 +636,35 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
+	t.Run("a contaminated answer is unknown, not a PR number", func(t *testing.T) {
+		// THE case `Drained` cannot see, and the reason the probe decodes gh's JSON instead of
+		// asking for a bare number with `-q`. A descendant that writes and then EXITS leaves
+		// Wait with no error at all, so nothing about the pipe's liveness is wrong — the only
+		// signal left is the SHAPE of the answer. Measured before this: `gh pr list` exited 0
+		// printing `[]`, meaning there is no PR, a descendant printed "42", and FindPR said
+		// "PR #42"; the disclosure was then commented onto a PR that does not exist.
+		for _, c := range []struct{ name, gh string }{
+			{"a descendant writes and exits", `echo '[]'; (printf '42\n') &`},
+			{"a descendant appends to a real answer", `echo '[{"number":9}]'; (printf '42\n') &`},
+			{"gh prints nothing at all", `exit 0`},
+			{"gh prints something that is not JSON", `echo 'not json'`},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				dir := gitRepo(t)
+				shimGh(t, c.gh)
+				got := FindPR(dir, "feature")
+				if got.State == PRFound {
+					t.Errorf("believed a number nothing established: %q — the disclosure "+
+						"would be commented onto it", got.Number)
+				}
+				if got.State == NoPR {
+					t.Errorf("asserted there is NO PR from an answer it could not read, " +
+						"which is the cause-never-checked defect this file exists to remove")
+				}
+			})
+		}
+	})
+
 	t.Run("a descendant's bytes never become the answer", func(t *testing.T) {
 		// The first version of the clean-exit arm called the output complete and returned it.
 		// The descendant shares the fd, so it is a CO-WRITER: measured, `gh pr list` exited 0
@@ -651,7 +697,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// post a second public disclosure.
 		dir := gitRepo(t)
 		log := shimGh(t, `case "$*" in
-  "pr list"*) echo 9;;
+  "pr list"*) echo '[{"number":9}]';;
   "pr comment"*) (sleep 5) & exit 0;;
 esac`)
 		_ = exec.Command("gh", "--warm").Run()
@@ -701,21 +747,25 @@ esac`)
 			t.Errorf("the detail does not name the signal, so this cannot tell a killed gh "+
 				"from one that never started: %+v", r)
 		}
-		// No elapsed-time assertion HERE, but NOT for the reason first recorded. That comment
-		// claimed the proposal "could not fail" because /bin/sh tail-execs a lone final command,
-		// so `sleep 5` left no grandchild. That is FALSE: this platform's /bin/sh (bash 3.2)
-		// forks the last command of a script FILE — fork suppression is the `bash -c` path — and
-		// the sleep is reparented to PID 1 and keeps the pipes open. Measured at the commit
-		// before WaitDelay landed: budget 50ms returns in 50ms, budget 300ms in 300ms, budget 1s
-		// in 5.17s; over 20 runs at 50ms, 17 blew past a second. The 0.07s figure that was
-		// offered as the refutation had been measured WITH WaitDelay in place — the one
-		// configuration in which the assertion cannot fire. The reviewer who proposed it was
-		// right.
+		// No elapsed-time assertion HERE. The reason has been wrong twice, so here is what is
+		// actually measured, with cmd.WaitDelay removed and this subtest's own `sleep 5` shim:
 		//
-		// It is omitted because at this budget it is a RACE the kill usually wins, and the
-		// sibling subtest below asserts the same property deterministically by backgrounding
-		// the sleep explicitly. A 17-in-20 assertion here would add flake for coverage that is
-		// already held.
+		//	budget  50ms:  0 of 20 runs blew past 1s   (this subtest's budget)
+		//	budget 300ms: 11 of 20
+		//	budget    1s: 5.17s, every time
+		//
+		// So an elapsed-time assertion at 50ms CANNOT FIRE — which is what the first version of
+		// this comment concluded. But it gave a false mechanism for it ("/bin/sh tail-execs a
+		// lone final command, so there is no grandchild"): bash 3.2 forks the last command of a
+		// script FILE, the sleep is reparented to PID 1, and it does hold the pipes. The second
+		// version fixed the mechanism and broke the conclusion, asserting "17 of 20 at 50ms"
+		// and "300ms in 300ms" — both refuted above. Right conclusion, wrong reason, then wrong
+		// conclusion, right reason.
+		//
+		// What holds: the grandchild is real, and at this budget the kill wins the race to it
+		// deterministically. The drain bound is asserted by the sibling subtest below, which
+		// uses 300ms AND backgrounds the sleep explicitly AND warms the shim — all three,
+		// because at 300ms the race is 11-in-20 rather than settled.
 	})
 
 	t.Run("a grandchild holding the pipes cannot outlive the budget", func(t *testing.T) {
@@ -731,11 +781,13 @@ esac`)
 		//
 		// The shim is WARMED first, and that is load-bearing. Without it this subtest let the
 		// defect through ~29% of the time (4 survivals in 14 runs): the FIRST exec of a freshly
-		// written script on this machine costs 124-268ms against 4ms for a repeat, so a 300ms
-		// budget races shim startup, and when startup loses the shim is killed before `&` ever
-		// forks — no grandchild, no defect, green. That is exactly the hazard the subtest above
-		// documents ("a budget the fork comfortably wins is the deterministic fixture"), and
-		// 300ms does not comfortably win 268ms. The warm-up pays the first-exec cost outside
+		// written script on this machine costs 124-449ms (p50 ~199ms) against 3-8ms for a
+		// repeat, so a 300ms budget races shim startup, and when startup loses the shim is
+		// killed before `&` ever forks — no grandchild, no defect, green. That is exactly the
+		// hazard the subtest above documents ("a budget the fork comfortably wins is the
+		// deterministic fixture"), and 300ms does not win a tail that reaches 449ms — an
+		// earlier version of this comment wrote the range as 124-268ms, which understates the
+		// tail and makes 300ms look like a comfortable margin. The warm-up pays the first-exec cost outside
 		// the timed call instead of raising the budget, so the assertion stays tight.
 		dir := t.TempDir()
 		shimGh(t, "sleep 30 &")
@@ -819,7 +871,7 @@ esac`)
 func TestTheLabelMovesEvenWhenTheCommentFails(t *testing.T) {
 	dir := gitRepo(t)
 	log := shimGh(t, `case "$*" in
-	  "pr list"*) echo 9;;
+	  "pr list"*) echo '[{"number":9}]';;
 	  "pr comment"*) echo "rate limited" >&2; exit 1;;
 	  *) exit 0;;
 	esac`)
@@ -843,7 +895,7 @@ func TestTheLabelMovesEvenWhenTheCommentFails(t *testing.T) {
 func TestAFailedLabelRemovalIsReported(t *testing.T) {
 	dir := gitRepo(t)
 	shimGh(t, `case "$*" in
-	  "pr list"*) echo 9;;
+	  "pr list"*) echo '[{"number":9}]';;
 	  *"--remove-label review:converged"*) echo "label not found" >&2; exit 1;;
 	  *) exit 0;;
 	esac`)

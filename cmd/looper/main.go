@@ -254,8 +254,10 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	// "a-->\n\n> **Review converged — nothing outstanding**": the comment ends after `a` and a
 	// forged blockquote saying the review converged renders directly above the real disclosure,
 	// which says UNKNOWN. A plain newline is milder than first recorded — measured, `a\nb`
-	// splits the marker across two lines but swallows NOTHING, and push.Fingerprint's needle is
-	// built by Sprintf from the same raw id so it still matches. Both earlier claims here
+	// splits the marker across two lines but swallows NOTHING, and the marker needle the push gate
+	// looks for is built by Sprintf from the same raw id, so it still matches. (That needle is
+	// push.reportProbe's, not push.Fingerprint's, which returns only the heading and the
+	// cycle/agent line — the earlier wording named the wrong function.) Both earlier claims here
 	// ("swallowing the first line of the body", "the needle is gone") were consequences nobody
 	// measured; the `-->` case is the one that justifies the guard.
 	//

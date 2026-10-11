@@ -17,9 +17,9 @@ import (
 // comparison would catch. So this compares the BODY, byte for byte — no json.dumps sits in
 // this path, unlike the push gate's, so there is nothing to decode around.
 //
-// The fixtures are deliberately not the real store. TestRealStoreParity compares all 42 real
-// runs and they agree, but the store exercises none of the shapes that actually diverged while
-// this port was written: measured over it, every gate carries a string status, every escalation
+// The fixtures are deliberately not the real store. TestRealStoreParity compares every real
+// run in the live store (44 of them as of 2026-10-10) and they agree, but the store exercises
+// none of the shapes that actually diverged while this port was written: measured over it, every gate carries a string status, every escalation
 // names a gate, every roster id is a string, and `planned` is always "run" or "skip". The
 // states worth pinning are the ones no row happens to hold.
 //
@@ -119,7 +119,7 @@ func TestParityWithPrReport(t *testing.T) {
 	}{
 		// The floor: a plan row and nothing else. Zero cycles is the `unknown` disclosure,
 		// which both must word identically because the push gate reads it as a DISCLOSURE
-		// rather than a block, and most of the real store is this shape — 22 of its 42 runs at
+		// rather than a block, and most of the real store is this shape — 22 of its 44 runs at
 		// 22d086e. Pinned to a commit because the store is append-only, so an unqualified
 		// count goes stale on the next run and this file carried two different totals for the
 		// same store at once.
@@ -418,8 +418,9 @@ func TestParityOnTheNarrative(t *testing.T) {
 	}
 }
 
-// The enumerated divergences, and the whole of them: every shape found by rendering all 42
-// real runs plus a probe over every (site, value) state the Python's duck typing accepts.
+// The enumerated divergences, and the whole of them: every shape found by rendering every
+// real run in the live store (44 as of 2026-10-10; it grows every run) plus a probe over
+// every (site, value) state the Python's duck typing accepts.
 // Stated as tests rather than comments so the day one of them is what matters — or the day
 // someone closes one — this says which half moved.
 //

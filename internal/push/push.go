@@ -69,7 +69,8 @@ type State struct {
 	// is the absence of any evidence that a run happened. Everything the gate reads comes off
 	// it: convergence derives `unknown`, no recorded outcome can block, and the required
 	// report fingerprint collapses to the two lines pr-report.py renders for a run with no
-	// cycle rows, which is 22 of the 41 runs in the live store. Measured: changing only $HOME
+	// cycle rows, which is 22 of the 44 runs in the live store as of
+	// 2026-10-10 (it is append-only, so an undated count goes stale on the next run). Measured: changing only $HOME
 	// turned a recorded `test-failure` refusal into a granted push. That makes misresolving
 	// the store the cheapest way to make this gate say yes, which is the one thing it exists
 	// to prevent.
@@ -358,7 +359,7 @@ func Check(p CheckParams) (Result, error) {
 	// The DERIVED emptiness, not the map lookup. `r == nil` misses a run that is present but
 	// says nothing — rows carrying the id under a phase the typed decode does not own, for
 	// instance — and the question the block asks is whether anything was readable, not
-	// whether a key existed. Measured against the live store: all 41 real runs carry a plan
+	// whether a key existed. Measured against the live store: every one of the live store's 44 runs carries a plan (as of 2026-10-10)
 	// row, so this cannot fire on a legitimately zero-cycle run, which is 22 of them.
 	noRecord := r.Empty()
 	if r == nil {
@@ -368,7 +369,8 @@ func Check(p CheckParams) (Result, error) {
 			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
 			// outcome can block, and the required fingerprint collapses to the two lines
 			// pr-report.py renders for a run with no cycles. On this store that collides
-			// with a real report for 22 of 41 runs, so this can GRANT as easily as refuse.
+			// with a real report for 22 of the live store's 44 runs (as of
+			// 2026-10-10), so this can GRANT as easily as refuse.
 			//
 			// "No readable row", not "not found": the two causes this reaches are a run that
 			// was never written (a wrong -store, a mistyped -run-id) and a run all of whose
