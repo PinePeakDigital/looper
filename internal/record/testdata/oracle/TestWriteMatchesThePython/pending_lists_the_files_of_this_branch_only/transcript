@@ -1,0 +1,9 @@
+pending
+  exit=0
+  out=<common>/info/review-loop-pending-report.mine.md
+
+  err=runlog: no run record for <common>/info/review-loop-pending-report.ghost.md — left in place
+
+--- store ---
+{"branch":"feat","phase":"plan","run_id":"mine"}
+{"branch":"main","phase":"plan","run_id":"theirs"}

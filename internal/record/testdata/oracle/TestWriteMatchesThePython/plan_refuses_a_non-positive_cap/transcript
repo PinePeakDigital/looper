@@ -1,0 +1,12 @@
+plan --tier full --model m --agent-cap 0
+  exit=1
+  out=
+  err=runlog: --agent-cap must be positive (got 0) — a cap of zero or less cannot bind, it only changes which label a stall gets
+
+plan --tier full --model m --agent-cap -3
+  exit=1
+  out=
+  err=runlog: --agent-cap must be positive (got -3) — a cap of zero or less cannot bind, it only changes which label a stall gets
+
+--- store ---
+

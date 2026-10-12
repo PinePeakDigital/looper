@@ -1,0 +1,27 @@
+plan --tier full --model m --run-id g1
+  exit=0
+  out=g1
+
+  err=
+cycle --run-id g1 --n -1 --applied 0 --agents 1
+  exit=1
+  out=
+  err=runlog: --n cannot be negative (got -1) — a negative count pulls cumulative spend back under the cap
+
+cycle --run-id g1 --n 1 --applied 0 --asked -1 --agents 1
+  exit=1
+  out=
+  err=runlog: --asked cannot be negative (got -1) — a negative count pulls cumulative spend back under the cap
+
+cycle --run-id g1 --n 1 --applied 1 --agents -100
+  exit=1
+  out=
+  err=runlog: --agents cannot be negative (got -100) — a negative count pulls cumulative spend back under the cap
+
+convergence --run-id g1
+  exit=1
+  out=unknown
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"g1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}

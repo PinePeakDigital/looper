@@ -1,0 +1,184 @@
+skipped --reason 12 lines; PRECEDENT now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('precedent').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; ALREADY 
+	EXISTS 
+	IN 
+	THE 
+	REPO now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('already exists in the repo').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; MATCHES 
+	AN 
+	EXISTING 
+	PATTERN now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('matches an existing pattern').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; MATCHES 
+	EXISTING 
+	PATTERN now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('matches existing pattern').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; SAME 
+	PATTERN 
+	AS now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('same pattern as').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; PATTERN 
+	COPY now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('pattern copy').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; PATTERN-COPY now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('pattern-copy').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; COPIED 
+	FROM 
+	EXISTING now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('copied from existing').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; CONSISTENT 
+	WITH 
+	EXISTING 
+	CODE now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('consistent with existing code').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; FOLLOWS 
+	THE 
+	EXISTING 
+	PATTERN now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('follows the existing pattern').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; CONSISTENT 
+	WITH 
+	EXISTING 
+	PATTERN now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('consistent with existing pattern').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; ESTABLISHED 
+	PATTERN 
+	IN 
+	THIS 
+	REPO now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('established pattern in this repo').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; HOW 
+	THE 
+	REST 
+	OF 
+	THE 
+	CODEBASE now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('how the rest of the codebase').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; HOW 
+	THE 
+	REST 
+	OF 
+	THIS 
+	CODEBASE now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('how the rest of this codebase').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; IT'S 
+	THE 
+	CONVENTION 
+	HERE now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ("it's the convention here").
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; THE 
+	CONVENTION 
+	IN 
+	THIS 
+	REPO now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('the convention in this repo').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; IDENTICAL 
+	TO 
+	WHAT now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('identical to what').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; SAME 
+	AS 
+	WHAT now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('same as what').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; ALREADY 
+	DONE 
+	THIS 
+	WAY now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('already done this way').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; DONE 
+	THIS 
+	WAY 
+	ELSEWHERE now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('done this way elsewhere').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+skipped --reason 12 lines; MIRRORS 
+	THE 
+	EXISTING now
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('mirrors the existing').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+--- store ---
+

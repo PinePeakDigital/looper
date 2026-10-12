@@ -1,0 +1,7 @@
+carried --from from-sha-0000000 --to to-sha-11111111 --how reviewed
+  exit=0
+  out=runlog: recorded reviewed record carried from-sha-000 -> to-sha-11111
+
+  err=
+--- store ---
+{"branch":"main","carried_by":"patch-id","carried_from":"from-sha-0000000","carried_how":"reviewed","executed":{},"finished_at":"<ts>-05:00","head":"to-sha-11111111","head_at_finish":"to-sha-11111111","outcome":"carried","phase":"finish","repo":"<repo>","run_id":"<ridA>","session_kind":"headless","tier_executed":"carried"}

@@ -1,0 +1,30 @@
+plan --tier full --model m --run-id k2
+  exit=0
+  out=k2
+
+  err=
+cycle --run-id k2 --n 1 --applied 3 --agents 5
+  exit=0
+  out=
+  err=runlog: cycle 1 of k2 (3 applied, 5 agents)
+
+cycle --run-id k2 --n 2 --applied 0 --agents 1
+  exit=0
+  out=
+  err=runlog: cycle 2 of k2 (0 applied, 1 agents)
+
+convergence --run-id k2
+  exit=0
+  out=converged
+
+  err=
+finish --run-id k2 --outcome clean --tier full
+  exit=0
+  out=runlog: finished k2 (clean; convergence: converged)
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"k2","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":5,"analysis_changed":false,"applied":3,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":1,"phase":"cycle","run_id":"k2","subagent_tokens":null,"width_reason":null}
+{"agents":1,"analysis_changed":false,"applied":0,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":2,"phase":"cycle","run_id":"k2","subagent_tokens":null,"width_reason":null}
+{"agents":[],"escalations":[],"executed":{},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"k2","tier_executed":"full","unresolved_asks":0}

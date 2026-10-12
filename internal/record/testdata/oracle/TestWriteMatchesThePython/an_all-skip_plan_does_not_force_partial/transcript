@@ -1,0 +1,14 @@
+plan --tier full --model m --gates {"t":{"planned":"skip","reason":"12 entries"}} --run-id z1
+  exit=0
+  out=z1
+
+  err=
+finish --run-id z1 --outcome clean --tier full --executed {"t":{"status":"skipped","reason":"the plan already skipped it"}}
+  exit=0
+  out=runlog: finished z1 (clean; convergence: unknown)
+
+  err=runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"t":{"planned":"skip","reason":"12 entries"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"z1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":[],"escalations":[],"executed":{"t":{"reason":"the plan already skipped it","status":"skipped"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"z1","tier_executed":"full","unresolved_asks":0}

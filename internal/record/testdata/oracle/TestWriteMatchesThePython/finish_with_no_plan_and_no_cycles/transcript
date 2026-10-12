@@ -1,0 +1,25 @@
+finish --run-id orphan --outcome test-failure --tier fast
+  exit=0
+  out=runlog: finished orphan (test-failure; convergence: unknown)
+
+  err=runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+show --run-id orphan
+  exit=0
+  out={
+ "agents": [],
+ "escalations": [],
+ "executed": {},
+ "findings": {},
+ "finished_at": "<ts>-05:00",
+ "head_at_finish": "<head>",
+ "outcome": "test-failure",
+ "phase": "finish",
+ "run_id": "orphan",
+ "tier_executed": "fast",
+ "unresolved_asks": 0
+}
+
+  err=
+--- store ---
+{"agents":[],"escalations":[],"executed":{},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"test-failure","phase":"finish","run_id":"orphan","tier_executed":"fast","unresolved_asks":0}

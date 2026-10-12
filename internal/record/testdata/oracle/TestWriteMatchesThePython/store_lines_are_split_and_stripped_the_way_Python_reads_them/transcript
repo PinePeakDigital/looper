@@ -1,0 +1,51 @@
+abandon --run-id r4 --missing x
+  exit=1
+  out=
+  err=runlog: r4 already finished as 'clean' — not overwriting
+
+show --run-id cr
+  exit=0
+  out={
+ "head": "h",
+ "outcome": "clean",
+ "phase": "finish",
+ "repo": "<repo>",
+ "run_id": "cr"
+}
+
+  err=
+convergence --run-id cv
+  exit=0
+  out=converged
+
+  err=
+convergence --run-id fs
+  exit=0
+  out=converged
+
+  err=
+check
+  exit=1
+  out={
+ "run_id": "cv",
+ "head": "h",
+ "tier_floor": null,
+ "planned_gates": [],
+ "also_open": [
+  {
+   "run_id": "fs",
+   "head": "h",
+   "tier_floor": null,
+   "planned_gates": []
+  }
+ ]
+}
+
+  err=
+--- store ---
+{"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"r4"}
+{"run_id":"r4","phase":"finish","finished_at":"<ts>+00:00","outcome":"clean"}
+{"run_id":"cr","phase":"plan","repo":"<repo>","head":"h"}{"run_id":"cr","phase":"finish","outcome":"clean"}
+{"run_id":"cv","phase":"plan","repo":"<repo>","head":"h"}{"run_id":"cv","phase":"cycle","n":1,"applied":0,"agents":1}
+{"head":"h","phase":"plan","repo":"<repo>","run_id":"fs"}
+{"run_id":"fs","phase":"cycle","n":1,"applied":0,"agents":1}

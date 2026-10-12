@@ -1,0 +1,122 @@
+check
+  exit=1
+  out={
+ "run_id": "new",
+ "head": "h2",
+ "tier_floor": "fast",
+ "planned_gates": [],
+ "also_open": [
+  {
+   "run_id": "anon",
+   "head": "h2",
+   "tier_floor": null,
+   "planned_gates": []
+  },
+  {
+   "run_id": "old",
+   "head": "h1",
+   "tier_floor": "full",
+   "planned_gates": [
+    "a",
+    "b"
+   ]
+  }
+ ]
+}
+
+  err=
+check --head h2
+  exit=1
+  out={
+ "run_id": "new",
+ "head": "h2",
+ "tier_floor": "fast",
+ "planned_gates": [],
+ "also_open": [
+  {
+   "run_id": "anon",
+   "head": "h2",
+   "tier_floor": null,
+   "planned_gates": []
+  }
+ ]
+}
+
+  err=
+check --session s1
+  exit=1
+  out={
+ "run_id": "anon",
+ "head": "h2",
+ "tier_floor": null,
+ "planned_gates": [],
+ "also_open": [
+  {
+   "run_id": "old",
+   "head": "h1",
+   "tier_floor": "full",
+   "planned_gates": [
+    "a",
+    "b"
+   ]
+  }
+ ]
+}
+
+  err=
+check --run-id anon
+  exit=1
+  out={
+ "run_id": "anon",
+ "head": "h2",
+ "tier_floor": null,
+ "planned_gates": []
+}
+
+  err=
+check
+  exit=0
+  out=runlog: no unfinished run
+
+  err=
+check --head h1
+  exit=1
+  out={
+ "run_id": "old",
+ "head": "h1",
+ "tier_floor": "full",
+ "planned_gates": [
+  "a",
+  "b"
+ ]
+}
+
+  err=
+show --run-id done
+  exit=0
+  out={
+ "finished_at": "<ts>+00:00",
+ "head": "h2",
+ "nudged_at": "<ts>+00:00",
+ "outcome": "clean",
+ "phase": "nudge",
+ "planned_at": "<ts>+00:00",
+ "repo": "<repo>",
+ "run_id": "done"
+}
+
+  err=
+show --run-id missing
+  exit=1
+  out=
+  err=runlog: no run missing
+
+--- store ---
+{"gates":{"a":{"planned":"run","reason":"y"},"b":{"planned":"run","reason":"x"}},"head":"h1","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"old","session_id":"s1","tier_floor":"full"}
+{"head":"h1","phase":"plan","planned_at":"<ts>+00:00","repo":"/some/other/repo","run_id":"elsewhere"}
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"new","session_id":"s2","tier_floor":"fast"}
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"anon"}
+not json at all
+{"head":"h2","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"done"}
+{"finished_at":"<ts>+00:00","outcome":"clean","phase":"finish","run_id":"done"}
+{"nudged_at":"<ts>+00:00","phase":"nudge","run_id":"done"}

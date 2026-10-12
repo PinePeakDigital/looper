@@ -1,0 +1,83 @@
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id u1
+  exit=0
+  out=u1
+
+  err=
+finish --run-id u1 --outcome clean --tier full --executed {"agent_7":{"status":"done"}}
+  exit=1
+  out=
+  err=runlog: refusing to finish — the plan said to run these gates and the finish accounts for none of them:
+  security
+Give each one an `executed` entry (status done/skipped/failed, with a reason for anything but done) or record an escalation. If they genuinely went unrun and you are recording that fact, pass --allow-unaccounted and the run is marked partial.
+
+finish --run-id u1 --outcome clean --tier full --executed {"security":"done","agent_7":{"status":"skipped"}}
+  exit=1
+  out=
+  err=runlog: refusing to finish — these gates carry no usable account (a status other than "done" with no reason, or not a {"status":..,"reason":..} object at all):
+  agent_7, security
+A status says what happened; the reason is the part anyone reading this later actually needs. Give each one a measurable reason.
+
+finish --run-id u1 --outcome clean --tier full --executed {"agent_7":{"status":"done"}} --allow-unaccounted
+  exit=0
+  out=runlog: finished u1 (clean; convergence: unknown)
+
+  err=runlog: recording tier `partial`, not 'full' — did not complete: security
+runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+show --run-id u1
+  exit=0
+  out={
+ "agent_cap": 40,
+ "agents": [],
+ "base": null,
+ "branch": "main",
+ "changed_lines": null,
+ "escalations": [],
+ "executed": {
+  "agent_7": {
+   "status": "done"
+  },
+  "security": {
+   "reason": "unaccounted at finish",
+   "status": "failed"
+  }
+ },
+ "findings": {},
+ "finished_at": "<ts>-05:00",
+ "gates": {
+  "agent_11": {
+   "planned": "skip",
+   "reason": "no spec"
+  },
+  "agent_7": {
+   "planned": "run",
+   "reason": "big"
+  },
+  "security": {
+   "planned": "run",
+   "reason": "every cycle"
+  }
+ },
+ "head": "<head>",
+ "head_at_finish": "<head>",
+ "inputs": {},
+ "orchestrator_model": "m",
+ "outcome": "clean",
+ "phase": "finish",
+ "planned_at": "<ts>-05:00",
+ "repo": "<repo>",
+ "run_id": "u1",
+ "semantic_lines": null,
+ "session_id": null,
+ "session_kind": "headless",
+ "sizing_excluded": null,
+ "tier_executed": "partial",
+ "tier_floor": "full",
+ "tier_reason": null,
+ "unresolved_asks": 0
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"u1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":[],"escalations":[],"executed":{"agent_7":{"status":"done"},"security":{"reason":"unaccounted at finish","status":"failed"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"u1","tier_executed":"partial","unresolved_asks":0}

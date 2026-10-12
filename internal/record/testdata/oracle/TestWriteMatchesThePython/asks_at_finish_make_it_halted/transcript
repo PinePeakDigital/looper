@@ -1,0 +1,25 @@
+plan --tier fast --model m --run-id a1
+  exit=0
+  out=a1
+
+  err=
+cycle --run-id a1 --n 1 --applied 0 --agents 1
+  exit=0
+  out=
+  err=runlog: cycle 1 of a1 (0 applied, 1 agents)
+
+finish --run-id a1 --outcome clean --tier fast --asks 7
+  exit=0
+  out=runlog: finished a1 (clean; convergence: halted)
+
+  err=runlog: WARNING — outcome 'clean' but the cycle rows derive 'halted'. The derivation is what the PR and the push gate read; `clean` here is a self-report that contradicts it. Record the missing cycle or fix the outcome.
+
+convergence --run-id a1
+  exit=1
+  out=halted
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"a1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agents":1,"analysis_changed":false,"applied":0,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":1,"phase":"cycle","run_id":"a1","subagent_tokens":null,"width_reason":null}
+{"agents":[],"escalations":[],"executed":{},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"a1","tier_executed":"fast","unresolved_asks":7}

@@ -1,0 +1,67 @@
+check
+  exit=0
+  out=runlog: no unfinished run
+
+  err=
+check
+  exit=0
+  out=runlog: no unfinished run
+
+  err=
+finish --run-id rt --outcome clean --tier full --executed {}
+  exit=1
+  out=
+  err=runlog: refusing to finish — the plan said to run these gates and the finish accounts for none of them:
+  t
+Give each one an `executed` entry (status done/skipped/failed, with a reason for anything but done) or record an escalation. If they genuinely went unrun and you are recording that fact, pass --allow-unaccounted and the run is marked partial.
+
+cycle --run-id rt --n 1 --applied 0 --agents 1
+  exit=0
+  out=
+  err=runlog: cycle 1 of rt (0 applied, 1 agents)
+
+convergence --run-id rt
+  exit=0
+  out=converged
+
+  err=
+show --run-id rt
+  exit=0
+  out={
+ "cycles": [
+  {
+   "agents": 1,
+   "analysis_changed": false,
+   "applied": 0,
+   "asked": 0,
+   "closed_at": "<ts>-05:00",
+   "comment_findings": 0,
+   "defect_findings": 0,
+   "n": 1,
+   "phase": "cycle",
+   "run_id": "rt",
+   "subagent_tokens": null,
+   "width_reason": null
+  }
+ ],
+ "gates": {
+  "t": {
+   "planned": "run",
+   "reason": "2 stale"
+  }
+ },
+ "head": "h",
+ "phase": "plan",
+ "planned_at": "<ts>+00:00",
+ "repo": "<repo>",
+ "run_id": "rt",
+ "tier_floor": "full"
+}
+
+  err=
+--- store ---
+{"gates":{"t":{"planned":"run","reason":"2 stale"}},"head":"h","phase":"plan","planned_at":"<ts>+00:00","repo":"<repo>","run_id":"rt","tier_floor":"full"}
+{"phase":"nudge","run_id":"x1"}
+{"phase":"nudge","run_id":"x2"}
+{"phase":"nudge","run_id":"x3"}
+{"agents":1,"analysis_changed":false,"applied":0,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":1,"phase":"cycle","run_id":"rt","subagent_tokens":null,"width_reason":null}

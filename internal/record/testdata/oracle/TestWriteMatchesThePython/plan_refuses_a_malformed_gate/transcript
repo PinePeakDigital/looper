@@ -1,0 +1,8 @@
+plan --tier full --model m --gates {"z":"run","a":{"planned":"maybe","reason":"x"},"ok":{"planned":"run","reason":"y"}}
+  exit=1
+  out=
+  err=runlog: refusing to plan — these gates are not {"planned": "run"|"skip", "reason": ...}:
+  a, z
+
+--- store ---
+

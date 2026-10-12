@@ -1,0 +1,43 @@
+plan --tier fast --model m --run-id s1
+  exit=0
+  out=s1
+
+  err=
+plan --tier fast --model m --run-id s2
+  exit=0
+  out=s2
+
+  err=
+plan --tier fast --model m --run-id s3
+  exit=0
+  out=s3
+
+  err=
+plan --tier fast --model m --run-id s4
+  exit=0
+  out=s4
+
+  err=
+plan --tier fast --model m --run-id s5
+  exit=0
+  out=s5
+
+  err=
+plan --tier fast --model m --run-id s6
+  exit=0
+  out=s6
+
+  err=
+plan --tier fast --model m --run-id s7 --session-kind subagent
+  exit=0
+  out=s7
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s1","semantic_lines":null,"session_id":"ao1","session_kind":"ao-worker","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s2","semantic_lines":null,"session_id":null,"session_kind":"subagent","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s3","semantic_lines":null,"session_id":"cc","session_kind":"interactive","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s4","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s5","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s6","semantic_lines":null,"session_id":"","session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"s7","semantic_lines":null,"session_id":null,"session_kind":"subagent","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}

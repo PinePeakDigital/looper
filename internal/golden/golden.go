@@ -3,7 +3,9 @@
 //
 // The files are a record of what the Python DID over these fixtures, not a spec. A deliberate
 // behaviour change edits the golden in the same commit as the code; a fixture change has no
-// oracle left to recapture from, so its golden is written by hand and reviewed as such.
+// oracle left to recapture from, so its golden is written by hand and reviewed as such. A test
+// may replace what differs between two correct runs (a temp path, a commit) with a placeholder
+// before comparing; the golden then holds the placeholder, and the test names what it replaces.
 package golden
 
 import (

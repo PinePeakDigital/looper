@@ -1,0 +1,108 @@
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id p1
+  exit=0
+  out=p1
+
+  err=
+cycle --run-id p1 --n 1 --applied 0 --agents 2
+  exit=0
+  out=
+  err=runlog: cycle 1 of p1 (0 applied, 2 agents)
+
+finish --run-id p1 --outcome clean --tier full --executed {"security":{"status":"failed","reason":"tool crashed"},"agent_7":{"status":"skipped","reason":"tiny"},"agent_11":{"status":"skipped","reason":"planned skip"}} --agents [{"model":"haiku","status":"timeout"},{"id":"seven","status":"failed"},{"id":"x","status":"done"}]
+  exit=0
+  out=runlog: finished p1 (clean; convergence: converged)
+
+  err=runlog: recording tier `partial`, not 'full' — did not complete: security, agent_7, ?, seven
+
+show --run-id p1
+  exit=0
+  out={
+ "agent_cap": 40,
+ "agents": [
+  {
+   "model": "haiku",
+   "status": "timeout"
+  },
+  {
+   "id": "seven",
+   "status": "failed"
+  },
+  {
+   "id": "x",
+   "status": "done"
+  }
+ ],
+ "base": null,
+ "branch": "main",
+ "changed_lines": null,
+ "cycles": [
+  {
+   "agents": 2,
+   "analysis_changed": false,
+   "applied": 0,
+   "asked": 0,
+   "closed_at": "<ts>-05:00",
+   "comment_findings": 0,
+   "defect_findings": 0,
+   "n": 1,
+   "phase": "cycle",
+   "run_id": "p1",
+   "subagent_tokens": null,
+   "width_reason": null
+  }
+ ],
+ "escalations": [],
+ "executed": {
+  "agent_11": {
+   "reason": "planned skip",
+   "status": "skipped"
+  },
+  "agent_7": {
+   "reason": "tiny",
+   "status": "skipped"
+  },
+  "security": {
+   "reason": "tool crashed",
+   "status": "failed"
+  }
+ },
+ "findings": {},
+ "finished_at": "<ts>-05:00",
+ "gates": {
+  "agent_11": {
+   "planned": "skip",
+   "reason": "no spec"
+  },
+  "agent_7": {
+   "planned": "run",
+   "reason": "big"
+  },
+  "security": {
+   "planned": "run",
+   "reason": "every cycle"
+  }
+ },
+ "head": "<head>",
+ "head_at_finish": "<head>",
+ "inputs": {},
+ "orchestrator_model": "m",
+ "outcome": "clean",
+ "phase": "finish",
+ "planned_at": "<ts>-05:00",
+ "repo": "<repo>",
+ "run_id": "p1",
+ "semantic_lines": null,
+ "session_id": null,
+ "session_kind": "headless",
+ "sizing_excluded": null,
+ "tier_executed": "partial",
+ "tier_floor": "full",
+ "tier_reason": null,
+ "unresolved_asks": 0
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"p1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":2,"analysis_changed":false,"applied":0,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":1,"phase":"cycle","run_id":"p1","subagent_tokens":null,"width_reason":null}
+{"agents":[{"model":"haiku","status":"timeout"},{"id":"seven","status":"failed"},{"id":"x","status":"done"}],"escalations":[],"executed":{"agent_11":{"reason":"planned skip","status":"skipped"},"agent_7":{"reason":"tiny","status":"skipped"},"security":{"reason":"tool crashed","status":"failed"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"p1","tier_executed":"partial","unresolved_asks":0}

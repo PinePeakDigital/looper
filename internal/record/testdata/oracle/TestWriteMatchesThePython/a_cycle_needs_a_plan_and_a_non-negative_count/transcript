@@ -1,0 +1,74 @@
+cycle --run-id ghost --n 1 --applied 0 --agents 1
+  exit=1
+  out=
+  err=runlog: no plan for run 'ghost' — record the plan first
+
+plan --tier full --model m --run-id c1
+  exit=0
+  out=c1
+
+  err=
+cycle --run-id c1 --n 1 --applied -1 --agents 1
+  exit=1
+  out=
+  err=runlog: --applied cannot be negative (got -1) — a negative count pulls cumulative spend back under the cap
+
+cycle --run-id c1 --n 1 --applied 1 --agents 1 --tokens -5
+  exit=1
+  out=
+  err=runlog: --tokens cannot be negative (got -5) — a negative count pulls cumulative spend back under the cap
+
+cycle --run-id c1 --n 1 --applied 2 --agents 4 --asked 1 --defect-findings 2 --comment-findings 1 --analysis-changed --tokens 900 --width-reason semantic_lines=40
+  exit=0
+  out=
+  err=runlog: cycle 1 of c1 (2 applied, 4 agents)
+
+cycle --run-id c1 --n 2 --applied 0 --agents 1 --width-reason mirrors the existing loop
+  exit=1
+  out=
+  err=runlog: refusing to record this fan-out width — its reason cites precedent ('mirrors the existing').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+show --run-id c1
+  exit=0
+  out={
+ "agent_cap": 40,
+ "base": null,
+ "branch": "main",
+ "changed_lines": null,
+ "cycles": [
+  {
+   "agents": 4,
+   "analysis_changed": true,
+   "applied": 2,
+   "asked": 1,
+   "closed_at": "<ts>-05:00",
+   "comment_findings": 1,
+   "defect_findings": 2,
+   "n": 1,
+   "phase": "cycle",
+   "run_id": "c1",
+   "subagent_tokens": 900,
+   "width_reason": "semantic_lines=40"
+  }
+ ],
+ "gates": {},
+ "head": "<head>",
+ "inputs": {},
+ "orchestrator_model": "m",
+ "phase": "plan",
+ "planned_at": "<ts>-05:00",
+ "repo": "<repo>",
+ "run_id": "c1",
+ "semantic_lines": null,
+ "session_id": null,
+ "session_kind": "headless",
+ "sizing_excluded": null,
+ "tier_floor": "full",
+ "tier_reason": null
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"c1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":4,"analysis_changed":true,"applied":2,"asked":1,"closed_at":"<ts>-05:00","comment_findings":1,"defect_findings":2,"n":1,"phase":"cycle","run_id":"c1","subagent_tokens":900,"width_reason":"semantic_lines=40"}

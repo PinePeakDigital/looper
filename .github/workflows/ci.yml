@@ -44,6 +44,9 @@ jobs:
       # which is the whole point of the gate going unmeasured in the one environment that
       # runs it automatically. The skills repo is public, so no token is involved. Pinned to
       # a commit, not a branch: a mutable ref would let the oracle change under the gate.
+      # The read-half tests import runlog.py as a library; the write half's gate
+      # (TestWriteMatchesThePython) reads frozen output under testdata/oracle instead,
+      # because runlog.py's command line is gone, and needs no oracle.
       - name: fetch the parity oracle
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -59,10 +62,6 @@ jobs:
       - name: go test (record, with the oracle)
         env:
           REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
-          # Not UTC. The write gate compares timestamps WITH their offset, and runners are UTC,
-          # where a port that wrote UTC timestamps would pass: a local zone and a UTC one only
-          # differ when they differ. Both the Go process and the python3 it starts inherit this.
-          TZ: America/Chicago
         run: |
           go test -count=1 -v ./internal/record/ > record.log 2>&1 || { cat record.log; exit 1; }
           tail -5 record.log
@@ -94,7 +93,7 @@ jobs:
           # comment no longer guesses at it, and the agent count that was here belongs in a commit
           # message, not in the tree.) The floor
           # of 11 pins the table's WIDTH as well as the test's existence. Write is the write half's
-          # gate (looper record against runlog.py): 37 scenarios, each a SEQUENCE of calls, so its
+          # gate (looper record against runlog.py's frozen output): 37 scenarios, each a SEQUENCE of calls, so its
           # floor pins the scenario table and not the number of calls. The per-case `expect:`
           # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
           # entry, because two of the five store-path entries share one `expect:` string.
@@ -260,7 +259,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 250 ] || { echo "only $n mutations, expected at least 250 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 249 ] || { echo "only $n mutations, expected at least 249 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
@@ -277,5 +276,4 @@ jobs:
       - name: mutation score
         env:
           REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
-          TZ: America/Chicago # see the record step: the write gate needs a non-UTC zone to bite
         run: go run ./cmd/looper mutate

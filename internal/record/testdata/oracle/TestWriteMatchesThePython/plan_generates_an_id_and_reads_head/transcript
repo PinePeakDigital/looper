@@ -1,0 +1,17 @@
+plan --tier fast --model m
+  exit=0
+  out=<ridA>
+
+  err=
+check
+  exit=1
+  out={
+ "run_id": "<ridA>",
+ "head": "<head>",
+ "tier_floor": "fast",
+ "planned_gates": []
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"<ridA>","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}

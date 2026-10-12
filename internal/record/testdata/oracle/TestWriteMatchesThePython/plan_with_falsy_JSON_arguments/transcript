@@ -1,0 +1,31 @@
+plan --tier full --model m --gates null --inputs [] --run-id f1
+  exit=0
+  out=f1
+
+  err=
+show --run-id f1
+  exit=0
+  out={
+ "agent_cap": 40,
+ "base": null,
+ "branch": "main",
+ "changed_lines": null,
+ "gates": {},
+ "head": "<head>",
+ "inputs": {},
+ "orchestrator_model": "m",
+ "phase": "plan",
+ "planned_at": "<ts>-05:00",
+ "repo": "<repo>",
+ "run_id": "f1",
+ "semantic_lines": null,
+ "session_id": null,
+ "session_kind": "headless",
+ "sizing_excluded": null,
+ "tier_floor": "full",
+ "tier_reason": null
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"f1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}

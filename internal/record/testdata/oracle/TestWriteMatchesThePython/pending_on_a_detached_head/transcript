@@ -1,0 +1,7 @@
+pending
+  exit=0
+  out=
+  err=runlog: no current branch — pending reports left in place
+
+--- store ---
+{"branch":"HEAD","phase":"plan","run_id":"mine"}

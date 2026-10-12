@@ -1,0 +1,44 @@
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id k1
+  exit=0
+  out=k1
+
+  err=
+cycle --run-id k1 --n 1 --applied 3 --agents 5
+  exit=0
+  out=
+  err=runlog: cycle 1 of k1 (3 applied, 5 agents)
+
+convergence --run-id k1
+  exit=1
+  out=halted
+
+  err=
+finish --run-id k1 --outcome cycle-limit --tier full --executed {"agent_7":{"status":"done"},"security":{"status":"n/a","reason":"no surface"}} --agents [{"id":"a","model":"opus","status":"done"},{"id":"b","status":"ok"}] --findings {"auto_fix":3,"asked":0,"skipped":0}
+  exit=0
+  out=runlog: finished k1 (cycle-limit; convergence: halted)
+
+  err=
+cycle --run-id k1 --n 2 --applied 0 --agents 0
+  exit=1
+  out=
+  err=runlog: run 'k1' is already finished — a cycle row appended now would change a convergence that has already been reported. Start a new run.
+
+convergence --run-id k1
+  exit=1
+  out=halted
+
+  err=
+abandon --run-id k1 --missing nothing
+  exit=1
+  out=
+  err=runlog: k1 already finished as 'cycle-limit' — not overwriting
+
+check
+  exit=0
+  out=runlog: no unfinished run
+
+  err=
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"k1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":5,"analysis_changed":false,"applied":3,"asked":0,"closed_at":"<ts>-05:00","comment_findings":0,"defect_findings":0,"n":1,"phase":"cycle","run_id":"k1","subagent_tokens":null,"width_reason":null}
+{"agents":[{"id":"a","model":"opus","status":"done"},{"id":"b","status":"ok"}],"escalations":[],"executed":{"agent_7":{"status":"done"},"security":{"reason":"no surface","status":"n/a"}},"findings":{"asked":0,"auto_fix":3,"skipped":0},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"cycle-limit","phase":"finish","run_id":"k1","tier_executed":"full","unresolved_asks":0}

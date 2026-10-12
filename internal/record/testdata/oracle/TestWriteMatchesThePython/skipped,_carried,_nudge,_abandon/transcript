@@ -1,0 +1,70 @@
+skipped --reason a one-word typo in a comment --model sonnet
+  exit=0
+  out=<ridA>
+
+  err=
+skipped --reason already done this way
+  exit=1
+  out=
+  err=runlog: refusing to record this skip — its reason cites precedent ('already done this way').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+carried --from 1234567890abcdef1234 --to fedcba0987654321fedc --how skipped --by patch-id --verbatim
+  exit=0
+  out=runlog: recorded skipped record carried 1234567890ab -> fedcba098765
+
+  err=
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id n1
+  exit=0
+  out=n1
+
+  err=
+nudge --run-id n1
+  exit=0
+  out=
+  err=
+check
+  exit=0
+  out=runlog: unfinished run already nudged
+
+  err=
+check --force
+  exit=1
+  out={
+ "run_id": "n1",
+ "head": "<head>",
+ "tier_floor": "full",
+ "planned_gates": [
+  "agent_7",
+  "security"
+ ]
+}
+
+  err=
+abandon --run-id n1 --missing    
+  exit=1
+  out=
+  err=runlog: --missing needs the gates that did not run — an abandonment with nothing named is the silent skip this record exists to prevent
+
+abandon --run-id n1 --missing agent_7, security: the session ended
+  exit=0
+  out=runlog: marked n1 abandoned — agent_7, security: the session ended
+
+  err=
+abandon --run-id n1 --missing again
+  exit=1
+  out=
+  err=runlog: n1 already finished as 'abandoned' — not overwriting
+
+check
+  exit=0
+  out=runlog: no unfinished run
+
+  err=
+--- store ---
+{"branch":"main","gates":{},"head":"<head>","orchestrator_model":"sonnet","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"<ridA>","session_id":null,"session_kind":"headless","tier_floor":"skipped"}
+{"executed":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"skipped","phase":"finish","run_id":"<ridA>","skip_reason":"a one-word typo in a comment","tier_executed":"skipped"}
+{"branch":"main","carried_by":"patch-id --verbatim","carried_from":"1234567890abcdef1234","carried_how":"skipped","executed":{},"finished_at":"<ts>-05:00","head":"fedcba0987654321fedc","head_at_finish":"fedcba0987654321fedc","outcome":"carried","phase":"finish","repo":"<repo>","run_id":"<ridB>","session_kind":"headless","tier_executed":"carried"}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"n1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"nudged_at":"<ts>-05:00","phase":"nudge","run_id":"n1"}
+{"abandoned_missing":"agent_7, security: the session ended","finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"abandoned","phase":"finish","run_id":"n1"}

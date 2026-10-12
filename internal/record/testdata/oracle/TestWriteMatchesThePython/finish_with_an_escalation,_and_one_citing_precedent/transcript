@@ -1,0 +1,20 @@
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id e1
+  exit=0
+  out=e1
+
+  err=
+finish --run-id e1 --outcome clean --tier full --executed {"agent_7":{"status":"done"}} --escalations [{"gate":"security","reason":"precedent says so"}]
+  exit=1
+  out=
+  err=runlog: refusing to record escalation on 'security' — its reason cites precedent ('precedent').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+finish --run-id e1 --outcome clean --tier full --executed {"agent_7":{"status":"done"}} --escalations [{"gate":"security","reason":"ran wider"}]
+  exit=0
+  out=runlog: finished e1 (clean; convergence: unknown)
+
+  err=runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"e1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":[],"escalations":[{"gate":"security","reason":"ran wider"}],"executed":{"agent_7":{"status":"done"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"e1","tier_executed":"full","unresolved_asks":0}

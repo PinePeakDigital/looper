@@ -1,0 +1,46 @@
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id r1 --semantic-lines 12 --changed-lines 20 --sizing-excluded a lockfile --tier-reason logic touched --base main --inputs {"logic":true}
+  exit=0
+  out=r1
+
+  err=
+show --run-id r1
+  exit=0
+  out={
+ "agent_cap": 40,
+ "base": "main",
+ "branch": "main",
+ "changed_lines": 20,
+ "gates": {
+  "agent_11": {
+   "planned": "skip",
+   "reason": "no spec"
+  },
+  "agent_7": {
+   "planned": "run",
+   "reason": "big"
+  },
+  "security": {
+   "planned": "run",
+   "reason": "every cycle"
+  }
+ },
+ "head": "<head>",
+ "inputs": {
+  "logic": true
+ },
+ "orchestrator_model": "m",
+ "phase": "plan",
+ "planned_at": "<ts>-05:00",
+ "repo": "<repo>",
+ "run_id": "r1",
+ "semantic_lines": 12,
+ "session_id": null,
+ "session_kind": "headless",
+ "sizing_excluded": "a lockfile",
+ "tier_floor": "full",
+ "tier_reason": "logic touched"
+}
+
+  err=
+--- store ---
+{"agent_cap":40,"base":"main","branch":"main","changed_lines":20,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{"logic":true},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"r1","semantic_lines":12,"session_id":null,"session_kind":"headless","sizing_excluded":"a lockfile","tier_floor":"full","tier_reason":"logic touched"}

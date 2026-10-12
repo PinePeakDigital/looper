@@ -1,0 +1,39 @@
+plan --tier fast --model m --run-id f1
+  exit=0
+  out=f1
+
+  err=
+finish --run-id f1 --outcome clean --tier full
+  exit=0
+  out=runlog: finished f1 (clean; convergence: unknown)
+
+  err=runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+plan --tier full --model m --gates {"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"},"agent_11":{"planned":"skip","reason":"no spec"}} --run-id f2
+  exit=0
+  out=f2
+
+  err=
+finish --run-id f2 --outcome clean --tier fast --executed {"agent_7":{"status":"failed","reason":"timed out"},"security":{"status":"done"}}
+  exit=0
+  out=runlog: finished f2 (clean; convergence: unknown)
+
+  err=runlog: recording tier `partial`, not 'fast' — did not complete: agent_7
+runlog: WARNING — no cycle rows for this run, so convergence is unknown, which every consumer reads as 'did not converge'. Record each cycle with `looper record cycle`.
+
+plan --tier fast --model m --run-id f3
+  exit=0
+  out=f3
+
+  err=
+finish --run-id f3 --outcome clean --tier skipped
+  exit=1
+  out=
+  err=runlog: refusing to record tier 'skipped' — the plan computed a floor of 'fast'. You may escalate above the floor, never below it. Record 'fast' (or `partial` if something did not complete).
+
+--- store ---
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"f1","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
+{"agents":[],"escalations":[],"executed":{},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"f1","tier_executed":"full","unresolved_asks":0}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{"agent_11":{"planned":"skip","reason":"no spec"},"agent_7":{"planned":"run","reason":"big"},"security":{"planned":"run","reason":"every cycle"}},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"f2","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"full","tier_reason":null}
+{"agents":[],"escalations":[],"executed":{"agent_7":{"reason":"timed out","status":"failed"},"security":{"status":"done"}},"findings":{},"finished_at":"<ts>-05:00","head_at_finish":"<head>","outcome":"clean","phase":"finish","run_id":"f2","tier_executed":"partial","unresolved_asks":0}
+{"agent_cap":40,"base":null,"branch":"main","changed_lines":null,"gates":{},"head":"<head>","inputs":{},"orchestrator_model":"m","phase":"plan","planned_at":"<ts>-05:00","repo":"<repo>","run_id":"f3","semantic_lines":null,"session_id":null,"session_kind":"headless","sizing_excluded":null,"tier_floor":"fast","tier_reason":null}
