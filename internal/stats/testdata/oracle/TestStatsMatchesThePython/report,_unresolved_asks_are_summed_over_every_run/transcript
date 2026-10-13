@@ -1,0 +1,18 @@
+exit=0
+--- stdout ---
+runs: 3  finished: 2  abandoned: 0  in flight (this session): 0  skipped (judged beneath the loop, not a review): 1
+
+outcome: clean=2  skipped=1
+
+tier floor: full=3
+
+tier executed: (unset)=3
+
+session kind: interactive=3
+
+orchestrator model: opus=3
+
+convergence: unknown=2
+
+unresolved ask-bucket items across all runs: 3
+--- stderr ---

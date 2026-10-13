@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    skipped and carried runs count as finished reviews, so a branch rebased ten times reads as ten more reviews than were run
+--- old
+		case in(x.outcome, record.SubcommandStates):
+--- new
+		case false && in(x.outcome, record.SubcommandStates):

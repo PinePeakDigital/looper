@@ -20,3 +20,5 @@ push.log
 # And the same again for the report package's oracle step. The pairing the push.log note
 # names: a step that writes a log into the workspace needs a line here in the same commit.
 report.log
+# And the stats package's oracle step, the same pairing.
+stats.log

@@ -1,0 +1,17 @@
+exit=1
+--- stdout ---
+runs: 4  finished: 3  abandoned: 0  in flight (this session): 1
+
+outcome: clean=3  (unset)=1
+
+tier floor: full=3  (unset)=1
+
+tier executed: full=3  (unset)=1
+
+session kind: interactive=3  (unset)=1
+
+orchestrator model: opus=3  (unset)=1
+
+convergence: unknown=3
+--- stderr ---
+AttributeError: 'list' object has no attribute 'items'

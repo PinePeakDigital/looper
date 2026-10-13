@@ -1,0 +1,14 @@
+exit=0
+--- stdout ---
+runs: 1  finished: 0  abandoned: 0  in flight (this session): 1
+
+outcome: (unset)=1
+
+tier floor: (unset)=1
+
+tier executed: (unset)=1
+
+session kind: (unset)=1
+
+orchestrator model: (unset)=1
+--- stderr ---

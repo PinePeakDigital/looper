@@ -1,0 +1,12 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestAnUnreadableStoreIsAnError'
+expect: --- FAIL:
+why:    a store that exists and cannot be read reports no runs and exits 0, which plan.py prints as a clean alarm
+--- old
+	if err != nil {
+		return nil, 0, err
+	}
+--- new
+	if err != nil {
+		return nil, 0, nil
+	}

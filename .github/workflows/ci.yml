@@ -185,6 +185,36 @@ jobs:
               echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
           done
 
+      # internal/stats is the same again: `looper stats` against what review-stats.py printed for
+      # each store, frozen under internal/stats/testdata/oracle before the skill switches to it.
+      - name: go test (stats)
+        run: |
+          go test -count=1 -v ./internal/stats/ > stats.log 2>&1 || { cat stats.log; exit 1; }
+          tail -5 stats.log
+
+      - name: the stats parity gate actually ran
+        run: |
+          [ -r stats.log ] || { echo "stats.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' stats.log; then
+            echo "the stats parity gate SKIPPED:"; cat stats.log; exit 1
+          fi
+          # Per table, for the reason the record floors are per-oracle: the scenario table and
+          # the enumerated divergences measure different things, and one aggregate would let a
+          # table vanish under another that grew.
+          for spec in TestStatsMatchesThePython:61 TestShapesThisBuildCannotReadAreNamed:34 \
+                      TestStatsUsageExitsLikeThePython:4 TestInvalidUTF8IsReadNotFatal:2 \
+                      TestAnUnreadableStoreIsAnError:2; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' stats.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat stats.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+          for d in TestTheAlarmNamesOnlyUnreadableRunsInItsWindow TestGatesFirstDroppedByOneRunTieByName \
+                   TestTheOverflowLinePointsAtLooper; do
+            grep -q -- "--- PASS: $d" stats.log || {
+              echo "enumerated divergence $d did not pass"; cat stats.log; exit 1; }
+          done
+
       # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
       # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
       # shipped three golden directories named after subtests containing an apostrophe and could
@@ -195,16 +225,27 @@ jobs:
           GOPROXY: direct
           GONOSUMDB: github.com/pinepeakdigital/looper
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Automatic maintenance off. A branch commit (not a tag, not main) makes go shallow-fetch
+          # it, fetch every head and tag, then `fetch --unshallow`; under the runner's git 2.55 the
+          # full fetch starts detached auto-maintenance that rewrites .git/shallow under the
+          # unshallow, which dies with "shallow file has changed since we read it". Measured in a
+          # container on git 2.56: failed 2/2 as before, installed 3/3 with both keys, failed with
+          # either alone. Nothing here wants that maintenance; the module cache is thrown away.
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: maintenance.auto
+          GIT_CONFIG_VALUE_0: "false"
+          GIT_CONFIG_KEY_1: gc.auto
+          GIT_CONFIG_VALUE_1: "0"
         run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
 
       - name: go test (everything else)
-        # mapfile, not a bare $(...): the three packages above are excluded because they run
+        # mapfile, not a bare $(...): the four packages above are excluded because they run
         # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
         # accident — so quoting the substitution would pass the whole list as ONE argument and
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$')
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$')
           go test -count=1 "${pkgs[@]}"
 
       # Anchors and parsing before behaviour. The mutation score below takes about fifteen
@@ -259,7 +300,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 249 ] || { echo "only $n mutations, expected at least 249 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 280 ] || { echo "only $n mutations, expected at least 280 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

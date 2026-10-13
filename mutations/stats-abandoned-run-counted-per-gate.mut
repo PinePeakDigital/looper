@@ -1,0 +1,9 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    an abandoned run also counts against each gate it planned, turning one abandonment into nine gate failures — how three gates once crossed the threshold with no real miss
+--- old
+			abandonWhy.add(flat(why), 1)
+			continue
+--- new
+			abandonWhy.add(flat(why), 1)

@@ -295,6 +295,8 @@ type Run struct {
 	Err error
 	// errN counts every failed row, including those past maxRunErrs that Err does not list.
 	errN int
+	// merged holds the mergedText fields, raw, as the last non-cycle row carrying each set it.
+	merged map[string]json.RawMessage
 }
 
 // DefaultTail matches runlog.TAIL_LINES. Reading the whole store is the right default for
@@ -304,9 +306,35 @@ const DefaultTail = 4000
 
 // Load merges the store into one Run per run_id. limit <= 0 reads everything.
 func Load(path string, limit int) (map[string]*Run, error) {
+	s, err := LoadStore(path, limit)
+	if err != nil {
+		return nil, err
+	}
+	runs := make(map[string]*Run, len(s.Runs))
+	for _, r := range s.Runs {
+		runs[r.ID] = r
+	}
+	return runs, nil
+}
+
+// Store is Load's answer with the two things a map loses. Runs keeps FIRST-SEEN order, which
+// is load()'s dict insertion order: review-stats sorts runs by planned_at with a stable sort,
+// so every tie — and every run with no planned_at at all — keeps the order this gives it, and
+// that order decides which runs fall inside the alarm's window.
+type Store struct {
+	Runs []*Run
+	// Unattributed counts rows whose run_id is truthy but not a string — `7`, `true`, a list.
+	// The Python keys a run by the int 7 (and dies on a list, which is unhashable); this build
+	// has nowhere to hang such a row, so Load drops it as before. Counted so a reader that
+	// reports on the whole store can say the row exists instead of letting it vanish.
+	Unattributed int
+}
+
+// LoadStore is Load, keeping the store order and the unattributable row count.
+func LoadStore(path string, limit int) (*Store, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return map[string]*Run{}, nil
+		return &Store{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -375,6 +403,7 @@ func Load(path string, limit int) (map[string]*Run, error) {
 	}
 
 	runs := map[string]*Run{}
+	st := &Store{}
 	for i, line := range lines {
 		lineNo := dropped + i + 1
 		// Two-stage: the envelope first, so a row for one run can never fail another's
@@ -395,6 +424,9 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		// ran. Skipping only when there is nobody to attribute the row to is the rule the
 		// comment already claimed ("the row belongs to no run"); now the code matches it.
 		if err := json.Unmarshal([]byte(line), &env); err != nil && env.RunID == "" {
+			if truthyNonStringRunID(line) {
+				st.Unattributed++
+			}
 			// A torn line never invalidates the rest of the store. This also swallows
 			// well-formed JSON that has no usable `run_id` — `"run_id": 7`, a top-level
 			// array, a bare string — and for those there is genuinely nowhere to hang an
@@ -413,6 +445,7 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		if r == nil {
 			r = &Run{ID: env.RunID}
 			runs[env.RunID] = r
+			st.Runs = append(st.Runs, r)
 		}
 		// The envelope's own two names fold too: `Run_ID` and `PHASE` both decode here and
 		// are invisible to the Python, which drops such a row for want of a `run_id` or
@@ -446,6 +479,10 @@ func Load(path string, limit int) (map[string]*Run, error) {
 		// It is also forward-compatible, which the word-based guard was not: a NEW phase
 		// runlog.py adds later carries no run-level field, so an older build ignores it
 		// exactly as the Python's merge does, instead of refusing every run containing one.
+		// Before the guards below, because load() merges these from EVERY non-cycle row
+		// whatever else the row carries; a row a guard refuses leaves r.Err set, so nothing
+		// reads them off this run anyway.
+		r.mergeText(line)
 		var phase string
 		if err := json.Unmarshal(env.Phase, &phase); err != nil {
 			// Absent or not a string. phase stays "", which matches no owner below, so a
@@ -530,7 +567,101 @@ func Load(path string, limit int) (map[string]*Run, error) {
 				r.ID, r.errN, maxRunErrs))
 		}
 	}
-	return runs, nil
+	return st, nil
+}
+
+// truthyNonStringRunID reports a row the Python would file under a run and this build cannot:
+// a JSON object whose run_id is truthy and not a string. Falsy ids (0, false, null, "", [],
+// {}) are skipped by both — `if not rid: continue`.
+func truthyNonStringRunID(line string) bool {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &top) != nil {
+		return false
+	}
+	raw, ok := top["run_id"]
+	if !ok {
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return false
+	}
+	if _, isStr := v.(string); isStr {
+		return false
+	}
+	return truthy(v)
+}
+
+// mergedText are the run-level fields read off the MERGED run rather than off a typed phase
+// body. load() merges every non-cycle row into the run dict field-wise, whatever its phase,
+// and these are fields more than one phase writes (`repo` and `session_kind` sit on a plan
+// row and on the finish row `looper record carried` writes) or that only a reporting reader
+// wants (`planned_at`, `session_id`, `abandoned_missing`). Kept raw and merged exactly as the
+// Python merges them — last row wins, exact key match, null overrides — so no phase guard is
+// needed for them: there is no filing-by-phase here for a misplaced row to slip past. That is
+// why none of them is in runLevelFields.
+var mergedText = []string{"planned_at", "session_id", "repo", "session_kind", "abandoned_missing"}
+
+func (r *Run) mergeText(line string) {
+	var top map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &top) != nil {
+		return
+	}
+	// Cycle rows ACCUMULATE and merge nothing: `rec.get("phase") == "cycle"` in load().
+	var phase string
+	if json.Unmarshal(top["phase"], &phase) == nil && phase == "cycle" {
+		return
+	}
+	for _, k := range mergedText {
+		if v, ok := top[k]; ok {
+			if r.merged == nil {
+				r.merged = map[string]json.RawMessage{}
+			}
+			r.merged[k] = v
+		}
+	}
+}
+
+// Text is a merged run-level field as a string: absent and null are "", as the Python's
+// `r.get(k) or ...` reads them. Any other JSON type is an error naming the run and the field,
+// the typed boundary's rule — the Python would stringify, compare or crash on it depending on
+// the reader, and a reader here must not quietly pick one of those.
+func (r *Run) Text(field string) (string, error) {
+	known := false
+	for _, k := range mergedText {
+		known = known || k == field
+	}
+	if !known {
+		return "", fmt.Errorf("record: %q is not a merged run field", field)
+	}
+	raw, ok := r.merged[field]
+	if !ok || string(bytes.TrimSpace(raw)) == "null" {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		kind := "a " + jsonKind(raw)
+		return "", fmt.Errorf("run %q: %s is %s, not a string", r.ID, field, kind)
+	}
+	return s, nil
+}
+
+func jsonKind(raw json.RawMessage) string {
+	switch t := bytes.TrimSpace(raw); {
+	case len(t) == 0:
+		return "nothing"
+	case t[0] == '{':
+		return "object"
+	case t[0] == '[':
+		return "list"
+	case t[0] == '"':
+		return "string"
+	case t[0] == 't' || t[0] == 'f':
+		return "bool"
+	}
+	return "number"
 }
 
 // foldedKeys reports a key that encoding/json would FOLD onto a field this build decodes,
@@ -660,12 +791,13 @@ func quoteCapped(s string) string {
 // be dropped here — the same forgery, through the first field the deferred entry predicted
 // it would reopen through.
 //
-// Still SHORT of what the Python reads off the merged run: `session_id`, `head`, `repo`,
-// `finished_at` and `abandoned_missing` (review-stats reads the last in its abandon-reason
-// reporting, NOT in `is_abandoned`, which reads only `outcome` and `session_id`). Omitting
-// them is safe only because no derivation in this package reads any of them, so a misplaced
-// one cannot change an answer HERE — it can still change the Python's. Each becomes a
-// forgery vector the moment something here reads it, and must join this map in that commit.
+// Still SHORT of what the Python reads off the merged run: `head` and `finished_at`. Omitting
+// them is safe only because nothing in this package reads either, so a misplaced one cannot
+// change an answer HERE — it can still change the Python's. Each becomes a forgery vector the
+// moment something here reads it, and must join this map (or mergedText) in that commit.
+// `session_id`, `repo`, `planned_at`, `session_kind` and `abandoned_missing` were on this list
+// until `looper stats` began reading them; they went to mergedText instead, which merges them
+// from any non-cycle row exactly as load() does, so they have no owning phase to guard.
 //
 // Cycle-owned counts are absent for the opposite reason, which is permanent: load() does not
 // merge cycle rows at all, so `applied` on a finish row is ignored by both implementations.

@@ -1,0 +1,26 @@
+exit=0
+--- stdout ---
+runs: 2  finished: 1  abandoned: 0  in flight (this session): 1
+
+outcome: clean=1  (unset)=1
+
+tier floor: (unset)=2
+
+tier executed: full=1  (unset)=1
+
+session kind: (unset)=2
+
+orchestrator model: (unset)=2
+
+convergence: halted=1
+
+cycles: 1  agents: 4  mean agents/run: 4.0  mean tokens/agent: 100,000
+
+gates planned but not completed:
+    1  threat_model
+
+  by orchestrator model:
+    (unset): threat_model×1
+  by session kind:
+    (unset): threat_model×1
+--- stderr ---

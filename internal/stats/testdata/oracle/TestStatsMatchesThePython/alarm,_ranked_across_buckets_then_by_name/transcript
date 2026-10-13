@@ -1,0 +1,9 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 9 runs:
+  zzz_declined was declined with a reason (skipped) 6x
+  aaa_drop did not complete 3x
+  bbb_drop did not complete 3x
+  mmm_drop did not complete 3x
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

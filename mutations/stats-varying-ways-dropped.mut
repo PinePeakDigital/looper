@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    a gate failing both ways under each threshold goes silent: two drops and two declines are four non-completions and the alarm said nothing
+--- old
+		if !reported[g] && total >= AlarmThreshold {
+--- new
+		if false && !reported[g] && total >= AlarmThreshold {

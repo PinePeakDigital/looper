@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    hits sorted lowest count first, so the printed order no longer reads as the ranking it looks like
+--- old
+			return hits[i].n > hits[j].n
+--- new
+			return hits[i].n < hits[j].n

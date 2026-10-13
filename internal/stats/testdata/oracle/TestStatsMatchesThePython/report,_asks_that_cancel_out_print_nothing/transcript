@@ -1,0 +1,16 @@
+exit=0
+--- stdout ---
+runs: 2  finished: 2  abandoned: 0  in flight (this session): 0
+
+outcome: clean=2
+
+tier floor: full=2
+
+tier executed: (unset)=2
+
+session kind: interactive=2
+
+orchestrator model: opus=2
+
+convergence: unknown=2
+--- stderr ---

@@ -1,0 +1,10 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 6 runs:
+  (run abandoned) did not complete 6x
+      2x cause 4
+      1x cause 1
+      1x cause 2
+      ...and 2 other reason(s) — `review-stats.py` has them all
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

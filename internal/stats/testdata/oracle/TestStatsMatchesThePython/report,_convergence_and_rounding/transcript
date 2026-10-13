@@ -1,0 +1,20 @@
+exit=0
+--- stdout ---
+runs: 6  finished: 6  abandoned: 0  in flight (this session): 0
+
+outcome: clean=3  cycle-limit=2  test-failure=1
+
+tier floor: full=5  (unset)=1
+
+tier executed: full=5  (unset)=1
+
+session kind: interactive=5  (unset)=1
+
+orchestrator model: opus=5  (unset)=1
+
+convergence: converged=2  halted=2  capped=1  unknown=1
+
+cycles: 6  agents: 12  mean agents/run: 2.0  mean tokens/agent: 102,881
+
+unresolved ask-bucket items across all runs: 2
+--- stderr ---

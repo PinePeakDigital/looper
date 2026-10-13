@@ -1,0 +1,8 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 4 runs:
+  (run abandoned) did not complete 4x
+      3x a double space
+      1x 
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

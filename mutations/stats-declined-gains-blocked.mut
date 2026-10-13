@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    blocked added to the declined states, softening a blocked evidence gate into a plan to change; references/finish.md treats blocked as the real problem waived is contrasted with
+--- old
+var DeclinedStates = []string{"skipped", "pending", "deferred", "waived"}
+--- new
+var DeclinedStates = []string{"skipped", "pending", "deferred", "waived", "blocked"}

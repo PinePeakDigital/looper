@@ -1,0 +1,26 @@
+exit=0
+--- stdout ---
+runs: 4  finished: 4  abandoned: 0  in flight (this session): 0
+
+outcome: clean=4
+
+tier floor: full=4
+
+tier executed: full=4
+
+session kind: interactive=4
+
+orchestrator model: opus=4
+
+convergence: unknown=3  halted=1
+
+cycles: 1  agents: 1  mean agents/run: 0.2  tokens: none recorded
+
+gates planned but not completed:
+    3  g
+
+  by orchestrator model:
+    opus: g×3
+  by session kind:
+    interactive: g×3
+--- stderr ---

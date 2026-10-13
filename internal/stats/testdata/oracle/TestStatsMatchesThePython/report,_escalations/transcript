@@ -1,0 +1,21 @@
+exit=0
+--- stdout ---
+runs: 3  finished: 3  abandoned: 0  in flight (this session): 0
+
+outcome: clean=3
+
+tier floor: full=3
+
+tier executed: (unset)=3
+
+session kind: interactive=3
+
+orchestrator model: opus=3
+
+convergence: unknown=3
+
+escalations above the computed floor (thresholds may be too loose):
+    3  (unnamed)
+    2  security
+    1  agent_7
+--- stderr ---

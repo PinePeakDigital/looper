@@ -1,0 +1,14 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    with no session env the reader guesses: every other session's open run reads as abandoned, though nothing can tell it from one still in flight
+--- old
+	if here == "" {
+		return false
+	}
+	return x.sessionID
+--- new
+	if here == "" && false {
+		return false
+	}
+	return x.sessionID

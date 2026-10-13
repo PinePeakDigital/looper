@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    runs keep store order instead of planned_at order, so the window is whatever was appended last rather than the most recent runs
+--- old
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].plannedAt < runs[j].plannedAt })
+--- new
+	sort.SliceStable(runs, func(i, j int) bool { return false })

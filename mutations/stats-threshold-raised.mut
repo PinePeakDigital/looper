@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the alarm needs a fourth non-completion to fire. review-stats.py fires on the third, and a gate dropped three times is the signal Step 0 exists to raise
+--- old
+	AlarmThreshold = 3
+--- new
+	AlarmThreshold = 4

@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+TypeError: cannot use 'list' as a dict key (unhashable type: 'list')

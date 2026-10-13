@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+TypeError: '<' not supported between instances of 'int' and 'str'

@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the threshold compared with > where the Python uses >=, so exactly three drops stay silent — the one count the oracle's own suite pins
+--- old
+		if n := dropped.n[g]; n >= AlarmThreshold {
+--- new
+		if n := dropped.n[g]; n > AlarmThreshold {

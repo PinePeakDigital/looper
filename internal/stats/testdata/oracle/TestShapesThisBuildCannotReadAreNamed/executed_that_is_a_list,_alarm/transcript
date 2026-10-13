@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+AttributeError: 'list' object has no attribute 'get'

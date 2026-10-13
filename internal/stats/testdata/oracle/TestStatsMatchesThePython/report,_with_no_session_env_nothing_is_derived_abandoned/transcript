@@ -1,0 +1,19 @@
+exit=0
+--- stdout ---
+runs: 3  finished: 1  abandoned: 1  open (unknown — run from the session that owns them): 1
+
+outcome: clean=1  (unset)=1  abandoned=1
+
+tier floor: full=3
+
+tier executed: full=2  (unset)=1
+
+session kind: interactive=3
+
+orchestrator model: opus=3
+
+convergence: unknown=1
+
+why runs were abandoned:
+    1  no abandon record — the run stopped and nothing said why
+--- stderr ---

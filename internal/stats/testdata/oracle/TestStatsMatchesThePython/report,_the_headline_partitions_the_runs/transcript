@@ -1,0 +1,19 @@
+exit=0
+--- stdout ---
+runs: 11  finished: 2  abandoned: 2  in flight (this session): 2  skipped (judged beneath the loop, not a review): 2  carried (rebase bookkeeping, not a review): 3
+
+outcome: carried=3  (unset)=3  skipped=2  clean=1  cycle-limit=1  abandoned=1
+
+tier floor: (unset)=10  skipped=1
+
+tier executed: (unset)=4  carried=3  skipped=2  full=1  partial=1
+
+session kind: (unset)=9  interactive=1  headless=1
+
+orchestrator model: (unset)=10  (none)=1
+
+convergence: unknown=2
+
+why runs were abandoned:
+    2  no abandon record — the run stopped and nothing said why
+--- stderr ---

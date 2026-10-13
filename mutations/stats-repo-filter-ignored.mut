@@ -1,0 +1,10 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    --repo is parsed and never applied, so the filtered report describes every repo on the machine
+--- old
+	if repo != "" {
+		runs = nil
+--- new
+	if false {
+		runs = nil

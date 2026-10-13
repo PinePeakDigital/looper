@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestStatsAlarmAsPlanPyCallsIt'
+expect: --- FAIL:
+why:    the subcommand is ported and never dispatched: plan.py would get `unknown command` and exit 2, and print no alarm at all
+--- old
+	case "stats":
+--- new
+	case "stats-unwired":
