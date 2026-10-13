@@ -1,0 +1,9 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    a long reason clipped from the end only, so two reasons sharing a long gate-naming prefix print identically with separate counts
+--- old
+	return string(r[:head]) + "…" + string(r[len(r)-(reasonClip-head-1):])
+--- new
+	_ = head
+	return string(r[:reasonClip-1]) + "…"

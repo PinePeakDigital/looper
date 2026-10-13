@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    an explicit abandon reads as finished, so `looper record abandon` hides the run it records — three of those are three reviews that did not happen
+--- old
+		return x.outcome == "abandoned"
+--- new
+		return false

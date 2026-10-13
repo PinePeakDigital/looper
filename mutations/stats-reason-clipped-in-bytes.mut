@@ -1,0 +1,14 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the clip measured in bytes, not characters, so a reason in non-ASCII text is clipped early and can be cut mid-character
+--- old
+	r := []rune(flat(s))
+	if len(r) <= reasonClip {
+		return string(r)
+	}
+--- new
+	r := []rune(flat(s))
+	if len(flat(s)) <= reasonClip {
+		return string(r)
+	}

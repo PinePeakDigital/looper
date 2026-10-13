@@ -1,0 +1,9 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestShapesThisBuildCannotReadAreNamed|TestTheAlarmNamesOnlyUnreadableRunsInItsWindow'
+expect: --- FAIL:
+why:    a run whose fields did not decode is read as if they had, so its missing plan or finish derives a verdict from nothing
+--- old
+	x.err = errors.Join(errs...)
+--- new
+	x.err = nil
+	_ = errs

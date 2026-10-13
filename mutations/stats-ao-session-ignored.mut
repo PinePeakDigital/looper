@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    AO_SESSION_ID is not read, so an AO worker's alarm can never derive another session's open run as abandoned
+--- old
+	return os.Getenv("AO_SESSION_ID")
+--- new
+	return ""

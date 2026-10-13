@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    a null in a later row is skipped instead of merged, so a run whose session was cleared still reads as owned by the old one
+--- old
+		if v, ok := top[k]; ok {
+--- new
+		if v, ok := top[k]; ok && string(v) != "null" {

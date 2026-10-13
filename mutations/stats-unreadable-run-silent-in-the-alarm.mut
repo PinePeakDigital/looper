@@ -1,0 +1,9 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestShapesThisBuildCannotReadAreNamed|TestTheAlarmNamesOnlyUnreadableRunsInItsWindow'
+expect: --- FAIL:
+why:    a run this build cannot read is skipped without a word, so a window holding it can look clean over a repeat offender — the run vanishes from the alarm
+--- old
+			unreadable++
+			continue
+--- new
+			continue

@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    a run that named no session derives abandoned — every headless run, three of which in 50 tripped the alarm at every later Step 0
+--- old
+	return x.sessionID != "" && x.sessionID != here
+--- new
+	return x.sessionID != here

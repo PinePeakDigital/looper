@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the merged run fields read off plan rows only, so a carried run's repo (on its finish row) is lost to the --repo filter and a later row no longer overrides an earlier one, as load()'s merge does
+--- old
+	if json.Unmarshal(top["phase"], &phase) == nil && phase == "cycle" {
+--- new
+	if json.Unmarshal(top["phase"], &phase) == nil && phase != "plan" {

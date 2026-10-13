@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the window counts 51 runs, so a drop that has scrolled out still raises the alarm
+--- old
+	AlarmWindow    = 50
+--- new
+	AlarmWindow    = 51

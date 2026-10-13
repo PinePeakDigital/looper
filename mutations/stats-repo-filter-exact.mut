@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    --repo matched exactly instead of as a substring, so the repo name a reader types matches nothing
+--- old
+!x.repoOK || strings.Contains(x.repo, repo)
+--- new
+!x.repoOK || x.repo == repo

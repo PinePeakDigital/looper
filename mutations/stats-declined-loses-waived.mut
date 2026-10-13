@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    waived dropped from the declined states, so a waived measurement gate — which references/measurement-gate.md says passes — reads as a failure to complete. The third time this one list went wrong in the Python
+--- old
+var DeclinedStates = []string{"skipped", "pending", "deferred", "waived"}
+--- new
+var DeclinedStates = []string{"skipped", "pending", "deferred"}

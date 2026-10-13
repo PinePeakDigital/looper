@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the window slices from the front, so the alarm reads the 50 OLDEST runs in the tail and never sees the recent ones it exists to watch
+--- old
+		recent = recent[len(recent)-AlarmWindow:]
+--- new
+		recent = recent[:AlarmWindow]

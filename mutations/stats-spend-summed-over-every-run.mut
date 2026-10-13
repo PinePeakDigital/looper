@@ -1,0 +1,10 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    cycle spend summed over every run but divided by finished ones: one finished 4-agent run beside an in-flight 20-agent one read mean agents/run 24.0
+--- old
+	for _, x := range fin {
+		for _, c := range x.r.Cycles {
+--- new
+	for _, x := range ok {
+		for _, c := range x.r.Cycles {

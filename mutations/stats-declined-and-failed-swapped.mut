@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the two buckets swapped, so a deliberate skip reads as did-not-complete and an unknown status as declined — the original defect, and its mirror
+--- old
+			if declined(st) {
+--- new
+			if !declined(st) {

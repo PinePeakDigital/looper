@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    cycle rows merged into the run like every other phase, so a stray repo or session_id on a cycle row overrides the run's own where load() appends cycle rows and merges nothing from them
+--- old
+	if json.Unmarshal(top["phase"], &phase) == nil && phase == "cycle" {
+--- new
+	if json.Unmarshal(top["phase"], &phase) == nil && phase == "cycle-never" {

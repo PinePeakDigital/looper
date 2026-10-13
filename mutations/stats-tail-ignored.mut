@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the store read whole instead of bounded by REVIEW_LOOP_TAIL, so the two readers of one store disagree about which runs exist
+--- old
+record.LoadStore(record.StorePath(), record.TailLines())
+--- new
+record.LoadStore(record.StorePath(), 0)

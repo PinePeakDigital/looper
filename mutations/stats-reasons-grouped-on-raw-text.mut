@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    reasons grouped on the raw text, so three whitespace variants of one hand-typed cause print as three 1x lines
+--- old
+			abandonWhy.add(flat(why), 1)
+--- new
+			abandonWhy.add(why, 1)

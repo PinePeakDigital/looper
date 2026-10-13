@@ -1,0 +1,8 @@
+target: internal/stats/stats.go
+verify: go test ./internal/stats/ -count=1 -run 'TestTheOverflowLinePointsAtLooper|TestStatsMatchesThePython'
+expect: --- FAIL:
+why:    the overflow line keeps pointing at review-stats.py, a script the skill stops running once it switches to looper
+--- old
+      ...and %d other reason(s) — `looper stats` has them all\n
+--- new
+      ...and %d other reason(s) — `review-stats.py` has them all\n
