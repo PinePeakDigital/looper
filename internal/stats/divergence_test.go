@@ -223,14 +223,20 @@ func TestTheOverflowLinePointsAtLooper(t *testing.T) {
 	}
 }
 
-// Nothing matched the --repo filter, so the answer is review-stats.py's "no runs recorded" — not
-// a headline of zeros and five bare "outcome: " lines, which is what a store holding one row
-// with a non-string run_id produced. That row is still said, after the answer.
+// Nothing matched the --repo filter: not a headline of zeros and five bare "outcome: " lines,
+// which is what a store holding one row with a non-string run_id produced. With such rows in
+// the store, "no runs recorded" would be false, so the answer says what is true and names them.
 func TestARepoFilterMatchingNothingSaysNoRuns(t *testing.T) {
 	rows := []string{`{"run_id":"a","phase":"plan","planned_at":"1","repo":"/r/one","gates":{}}`, `{"run_id":7,"phase":"plan","planned_at":"2","repo":"/r/two"}`}
 	got := runGo(t, scenario{rows: rows, args: []string{"--repo", "zzz"}, env: s1})
-	if !strings.Contains(got, "\nno runs recorded\n  1 row(s) carry a run_id that is not a string") || strings.Contains(got, "outcome:") {
+	if !strings.Contains(got, "\nno runs this build can read\n  1 row(s) carry a run_id that is not a string") || strings.Contains(got, "outcome:") {
 		t.Errorf("a filter matching nothing:\n%s", got)
+	}
+	// And with no filter at all, when those rows are all the store holds: still not "no runs
+	// recorded", which would be false.
+	got = runGo(t, scenario{rows: rows[1:], env: s1})
+	if !strings.Contains(got, "\nno runs this build can read\n  1 row(s)") || strings.Contains(got, "no runs recorded") {
+		t.Errorf("a store of unattributable rows only:\n%s", got)
 	}
 }
 

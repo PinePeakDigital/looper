@@ -385,9 +385,11 @@ integral float like `"agents":2.0` —
   line is dropped, and a surrogate elsewhere reads as U+FFFD, which can change a sort or what
   falls in the alarm's window. `review-stats.py` accepted both and died printing a surrogate.
   The store's writer is `looper record` now, which writes neither.
-- **A `--repo` filter that matches nothing** prints `no runs recorded`, as `review-stats.py`
-  does, then names any rows whose `run_id` is not a string, since they cannot be shown to be in
-  another repo (`TestARepoFilterMatchingNothingSaysNoRuns`). With every run unreadable, the
+- **No readable run to report** (a `--repo` filter that matches nothing, or a store holding only
+  rows whose `run_id` is not a string) prints `no runs recorded` when the store truly holds none,
+  as `review-stats.py` does, and `no runs this build can read` plus a count of those rows when it
+  holds them — they cannot be shown to be in another repo. `review-stats.py` keyed such a run by
+  the number and reported it (`TestARepoFilterMatchingNothingSaysNoRuns`). With every run unreadable, the
   tallies are left out rather than printed empty (`TestNoEmptyTallyWhenEveryRunIsUnreadable`).
 - **Invalid UTF-8 in the store** is read, the bad bytes as U+FFFD, as every looper reader does;
   `review-stats.py` died decoding it, taking the Step 0 alarm with it

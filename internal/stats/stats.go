@@ -425,15 +425,18 @@ func report(out io.Writer, all []run, unattributed int, repo string) {
 		}
 	}
 	if len(runs) == 0 {
-		// The Python's answer, and nothing after it: the headline and tallies below with zero
-		// runs printed `runs: 0` and five bare `outcome: ` lines. Rows that belong to no run are
-		// still said — they cannot be shown to be in another repo, any more than a run whose
+		// The Python's answer when there is truly nothing: the headline and tallies below with
+		// zero runs printed `runs: 0` and five bare `outcome: ` lines. Rows that belong to no run
+		// make "no runs recorded" false — the store holds rows — so that case says what is true
+		// and names them; they cannot be shown to be in another repo, any more than a run whose
 		// repo field cannot be read.
-		fmt.Fprintln(out, "no runs recorded")
-		if unattributed > 0 {
-			fmt.Fprintf(out, "  %d row(s) carry a run_id that is not a string, so they belong to no run "+
-				"this build can read\n", unattributed)
+		if unattributed == 0 {
+			fmt.Fprintln(out, "no runs recorded")
+			return
 		}
+		fmt.Fprintln(out, "no runs this build can read")
+		fmt.Fprintf(out, "  %d row(s) carry a run_id that is not a string, so they belong to no run "+
+			"this build can read\n", unattributed)
 		return
 	}
 	var ok, bad []run
