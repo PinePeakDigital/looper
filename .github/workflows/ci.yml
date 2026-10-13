@@ -225,6 +225,17 @@ jobs:
           GOPROXY: direct
           GONOSUMDB: github.com/pinepeakdigital/looper
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Automatic maintenance off. A branch commit (not a tag, not main) makes go shallow-fetch
+          # it, fetch every head and tag, then `fetch --unshallow`; under the runner's git 2.55 the
+          # full fetch starts detached auto-maintenance that rewrites .git/shallow under the
+          # unshallow, which dies with "shallow file has changed since we read it". Measured in a
+          # container on git 2.56: failed 2/2 as before, installed 3/3 with both keys, failed with
+          # either alone. Nothing here wants that maintenance; the module cache is thrown away.
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: maintenance.auto
+          GIT_CONFIG_VALUE_0: "false"
+          GIT_CONFIG_KEY_1: gc.auto
+          GIT_CONFIG_VALUE_1: "0"
         run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
 
       - name: go test (everything else)
