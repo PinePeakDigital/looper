@@ -1,0 +1,10 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 4 runs:
+  (run abandoned) did not complete 4x
+      1x ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé…éééééééééééééééééééééééééééééééé
+      1x record_reviewed and learnings_capture and upstream_drift_check …r reached cycle 1 of the fan-out
+      1x record_reviewed and learnings_capture and upstream_drift_check …r reached cycle 2 of the fan-out
+      ...and 1 other reason(s) — `review-stats.py` has them all
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

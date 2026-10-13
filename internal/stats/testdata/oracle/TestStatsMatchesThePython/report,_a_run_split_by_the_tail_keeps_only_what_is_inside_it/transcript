@@ -1,0 +1,18 @@
+exit=0
+--- stdout ---
+runs: 1  finished: 1  abandoned: 0  in flight (this session): 0
+
+outcome: clean=1
+
+tier floor: (unset)=1
+
+tier executed: full=1
+
+session kind: (unset)=1
+
+orchestrator model: (unset)=1
+
+convergence: converged=1
+
+cycles: 1  agents: 7  mean agents/run: 7.0  tokens: none recorded
+--- stderr ---

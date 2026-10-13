@@ -55,9 +55,10 @@ func (s runStore) get(id string) map[string]any { return s.runs[id] }
 
 var pyIntRE = regexp.MustCompile(`^[+-]?[0-9]+(_[0-9]+)*$`)
 
-// tailLines is runlog.TAIL_LINES: REVIEW_LOOP_TAIL, at least 1, and 4000 when it does not
-// parse, because a fat-fingered override must not break every invocation.
-func tailLines() int {
+// TailLines is runlog.TAIL_LINES: REVIEW_LOOP_TAIL, at least 1, and 4000 when it does not
+// parse, because a fat-fingered override must not break every invocation. Exported for the
+// other reader bounded by the tail, `looper stats`, so the two cannot parse it differently.
+func TailLines() int {
 	v := strings.TrimSpace(os.Getenv("REVIEW_LOOP_TAIL"))
 	if v == "" {
 		return DefaultTail
@@ -1191,7 +1192,7 @@ func cmdAbandon(s *sub, out io.Writer) error {
 // unfinished is planned runs in this repo with no finish, newest first. A run recorded without
 // a session id still matches a session filter: dropping it would stop guarding it silently.
 func unfinished(repo, head string, session any) ([]map[string]any, error) {
-	s, err := loadRaw(StorePath(), tailLines())
+	s, err := loadRaw(StorePath(), TailLines())
 	if err != nil {
 		return nil, err
 	}

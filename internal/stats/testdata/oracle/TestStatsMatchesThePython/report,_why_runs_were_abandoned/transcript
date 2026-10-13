@@ -1,0 +1,20 @@
+exit=0
+--- stdout ---
+runs: 5  finished: 0  abandoned: 5  in flight (this session): 0
+
+outcome: abandoned=4  (unset)=1
+
+tier floor: full=5
+
+tier executed: (unset)=5
+
+session kind: interactive=5
+
+orchestrator model: opus=5
+
+why runs were abandoned:
+    2  cause one
+    1  no abandon record — the run stopped and nothing said why
+    1  record_reviewed and learnings_capture and upstream_drift_check and threat_model_update both planned and and it is not clipped in the report at all
+    1  
+--- stderr ---

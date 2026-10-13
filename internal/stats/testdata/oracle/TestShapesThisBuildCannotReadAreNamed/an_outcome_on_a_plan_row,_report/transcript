@@ -1,0 +1,27 @@
+exit=0
+--- stdout ---
+runs: 4  finished: 3  abandoned: 1  in flight (this session): 0
+
+outcome: clean=3  abandoned=1
+
+tier floor: full=3  (unset)=1
+
+tier executed: full=3  (unset)=1
+
+session kind: interactive=3  (unset)=1
+
+orchestrator model: opus=3  (unset)=1
+
+convergence: unknown=3
+
+gates planned but not completed:
+    3  g
+
+  by orchestrator model:
+    opus: g×3
+  by session kind:
+    interactive: g×3
+
+why runs were abandoned:
+    1  no abandon record — the run stopped and nothing said why
+--- stderr ---

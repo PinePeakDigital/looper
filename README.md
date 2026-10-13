@@ -321,6 +321,68 @@ is stricter than Python's on `İ` and never looser. Records carry non-ASCII text
 
 `TestWriteConstantsMatchThePython` imports `runlog.py` and compares the copied constants directly: the precedent phrases, the default agent cap, and the outcome and tier vocabularies. `runlog.py` outlives its command line as a library that `learn.py` and `plan.py` import, so the two lists must stay one list now that the scenarios no longer run against it; one scenario sends every phrase in the port's list through `skipped`, and this test is what keeps that list `runlog.py`'s.
 
+## `looper stats`
+
+Reads the run record for what actually happens across runs: a port of the skill's
+`review-stats.py`, with the same two consumers.
+
+```text
+looper stats                    # the cadence report; --repo <substring> filters it by repo path
+looper stats --alarm            # plan.py at Step 0: repeat-offender gates, or nothing
+```
+
+The alarm raises a gate that did not complete, or was declined with a reason (`skipped`,
+`pending`, `deferred`, `waived`), three times in the last 50 runs, and an abandoned run once
+per run rather than once per gate it planned, with the abandon reasons grouped. Any other
+status, `blocked` and `passed` included, is a failure to complete. A run is abandoned when it
+says so, or when it is open and was planned by a session other than the one asking
+(`CLAUDE_CODE_SESSION_ID`, else `AO_SESSION_ID`); with neither set, or for a run that named no
+session, nothing is derived. The report splits runs into finished, abandoned, open, skipped and
+carried, then tallies outcome, tiers, session kind and model, convergence and spend over the
+finished runs, dropped gates, escalations, abandon reasons and unresolved asks. Both read the
+store the push gate reads (`$REVIEW_LOOP_RUNS`), bounded by `$REVIEW_LOOP_TAIL` lines as
+`runlog.py` is. Exit 0 for either report, 2 for a usage error, 1 for a store that exists and
+cannot be read; plan.py prints the alarm only on 0. Flags are Go's, so `-alarm` works too.
+
+`TestStatsMatchesThePython` runs 61 stores through `looper stats` and requires the exit status,
+stdout and stderr that `review-stats.py` printed for the same store and environment, frozen
+under `internal/stats/testdata/oracle` (captured at narthur/skills 839aa49, each under six hash
+seeds to prove the fixture's output did not depend on one). The one normalisation is the
+alarm's overflow line, which names the command that lists every reason: `review-stats.py`
+there, `looper stats` here (`TestTheOverflowLinePointsAtLooper`). Usage errors are compared on
+the exit status alone (`TestStatsUsageExitsLikeThePython`).
+
+The divergences, each with its own test:
+
+- **A run this build cannot read is named, not counted.** `looper stats` reads the record
+  through the push gate's typed loader, so a run whose fields it reads have the wrong type —
+  a numeric gate status, a list for `gates`, `executed` or an outcome, a string count, a
+  non-string `planned_at`, `repo`, `session_id`, `session_kind` or `abandoned_missing`, a
+  run-level field on a phase that does not own it — is unreadable as a whole. It keeps its
+  place in the order, so it still takes a slot in the alarm's window, and nothing is derived
+  from it. The alarm adds one line, `N run(s) here could not be read, so no gate above counts
+  them`, whenever one sits inside the window (an unreadable run outside it says nothing, so an
+  old bad row does not speak at every Step 0); the report counts it in `runs:` and as
+  `unreadable`, and lists each decode error at the end. On these shapes `review-stats.py` either
+  coerced the value (`g did not complete (123)`, a list printed as `['g']`, a string `applied`
+  read as not-zero, a non-dict escalation skipped) or died with a traceback in one or both
+  modes. `TestShapesThisBuildCannotReadAreNamed` runs these and the two below, 17 shapes in
+  both modes, with the oracle's answer for each frozen beside it.
+- **A row whose `run_id` is a truthy non-string** (`7`, `true`, a list) belongs to no run here.
+  `review-stats.py` keyed a run by the number and died on the list. The report counts such rows
+  at the end; the alarm, which has no run to place in its window, is what it is without them.
+- **A row that is valid JSON but not an object** is skipped as a torn line is, where
+  `review-stats.py` died on `.get`.
+- **Invalid UTF-8 in the store** is read, the bad bytes as U+FFFD, as every looper reader does;
+  `review-stats.py` died decoding it, taking the Step 0 alarm with it
+  (`TestInvalidUTF8IsReadNotFatal`).
+- **An unreadable store** (not a missing one, which is "no runs recorded") exits 1 with
+  `looper stats: cannot read the run store: …` where `review-stats.py` exited 1 with a traceback
+  (`TestAnUnreadableStoreIsAnError`).
+- **Ties between gates first dropped by the same run** print by name. `review-stats.py`
+  collected them from a set, whose order is hash-seeded per process, so its order there changed
+  between invocations (`TestGatesFirstDroppedByOneRunTieByName`).
+
 ## `looper docs`
 
 ```text

@@ -1,0 +1,18 @@
+exit=0
+--- stdout ---
+runs: 2  finished: 2  abandoned: 0  in flight (this session): 0
+
+outcome: clean=2
+
+tier floor: full=2
+
+tier executed: full=2
+
+session kind: interactive=2
+
+orchestrator model: opus=2
+
+convergence: converged=2
+
+cycles: 2  agents: 5  mean agents/run: 2.5  tokens: none recorded
+--- stderr ---

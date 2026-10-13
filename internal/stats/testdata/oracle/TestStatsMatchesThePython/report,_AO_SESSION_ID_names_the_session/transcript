@@ -1,0 +1,17 @@
+exit=0
+--- stdout ---
+runs: 2  finished: 0  abandoned: 1  in flight (this session): 1
+
+outcome: (unset)=2
+
+tier floor: full=2
+
+tier executed: (unset)=2
+
+session kind: interactive=2
+
+orchestrator model: opus=2
+
+why runs were abandoned:
+    1  no abandon record — the run stopped and nothing said why
+--- stderr ---

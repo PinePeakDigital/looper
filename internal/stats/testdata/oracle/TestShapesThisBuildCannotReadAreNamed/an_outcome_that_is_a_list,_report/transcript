@@ -1,0 +1,5 @@
+exit=1
+--- stdout ---
+runs: 4  finished: 4  abandoned: 0  in flight (this session): 0
+--- stderr ---
+TypeError: unhashable type: 'list'

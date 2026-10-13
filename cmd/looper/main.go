@@ -14,6 +14,7 @@ import (
 	"github.com/pinepeakdigital/looper/internal/push"
 	"github.com/pinepeakdigital/looper/internal/record"
 	"github.com/pinepeakdigital/looper/internal/report"
+	"github.com/pinepeakdigital/looper/internal/stats"
 )
 
 const usage = `usage: looper version
@@ -26,6 +27,7 @@ const usage = `usage: looper version
                         [-repo dir] [-branch b] [-store path]
        looper record {plan,cycle,finish,convergence,carried,skipped,nudge,abandon,
                       check,show,pending} [flags]
+       looper stats [--alarm] [--repo <substring>]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
@@ -35,7 +37,10 @@ instruction.
 pr-report renders the Step 14 disclosure from the record. Without -post it writes the
 body to stdout. With -post it comments on this branch's PR, and otherwise keeps the
 body in .git/info for Step 0c to flush — stderr says which, and names the cause when
-gh could not answer rather than asserting there is no PR. See README.md.`
+gh could not answer rather than asserting there is no PR.
+
+stats reads the run record: the cadence report, or with --alarm the repeat-offender
+gates plan.py prints at Step 0 (silent when there are none). See README.md.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -69,6 +74,10 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		// The run record's writer, and runlog.py's exit statuses with it: check's 1 means an
 		// open run, convergence's 1 means not converged. Returned as is, not mapped to 1/2.
 		return record.Command(args[1:], out, errOut)
+	case "stats":
+		// review-stats.py's statuses: 0 for either report, 2 for a usage error, 1 for a store
+		// that exists and cannot be read. plan.py prints the alarm only on 0.
+		return stats.Command(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2

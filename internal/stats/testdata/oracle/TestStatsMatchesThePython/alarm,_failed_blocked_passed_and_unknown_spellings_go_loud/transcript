@@ -1,0 +1,8 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 9 runs:
+  a did not complete (failed) 3x
+  b did not complete (FAILED, blocked, passed) 3x
+  c did not complete (probably fine) 3x
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

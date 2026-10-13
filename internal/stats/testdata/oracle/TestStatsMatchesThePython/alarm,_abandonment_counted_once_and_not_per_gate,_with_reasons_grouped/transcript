@@ -1,0 +1,9 @@
+exit=0
+--- stdout ---
+review-loop alarm — over the last 5 runs:
+  (run abandoned) did not complete 5x
+      3x plan.py re-invoked to re-read its own plan
+      1x agent_7: fast path approved
+      1x no abandon record — the run stopped and nothing said why
+  Repeat count beats calendar: fix the gate or change the plan, don't log it again.
+--- stderr ---

@@ -1,0 +1,18 @@
+exit=0
+--- stdout ---
+runs: 4  finished: 4  abandoned: 0  in flight (this session): 0
+
+outcome: clean=4
+
+tier floor: full=4
+
+tier executed: full=4
+
+session kind: interactive=4
+
+orchestrator model: opus=4
+
+convergence: converged=2  unknown=2
+
+cycles: 2  agents: 9  mean agents/run: 2.2  tokens: none recorded
+--- stderr ---

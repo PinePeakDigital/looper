@@ -1,0 +1,14 @@
+exit=0
+--- stdout ---
+runs: 4  finished: 0  abandoned: 0  in flight (this session): 3  carried (rebase bookkeeping, not a review): 1
+
+outcome: (unset)=3  carried=1
+
+tier floor: (unset)=4
+
+tier executed: (unset)=3  carried=1
+
+session kind: (unset)=4
+
+orchestrator model: (unset)=4
+--- stderr ---

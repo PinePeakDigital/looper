@@ -840,3 +840,38 @@ func TestVersionAnswersOnStdout(t *testing.T) {
 		t.Errorf("version printed %q, want one non-empty line", out)
 	}
 }
+
+// plan.py runs `looper stats --alarm` at Step 0 and prints stdout only on exit 0. The flag is
+// spelled as plan.py passes it, and the store comes from the environment as it does there.
+func TestStatsAlarmAsPlanPyCallsIt(t *testing.T) {
+	dir := t.TempDir()
+	store := filepath.Join(dir, "runs.jsonl")
+	var rows string
+	for i := 1; i <= 3; i++ {
+		rows += fmt.Sprintf(`{"run_id":"d%d","phase":"plan","planned_at":"2026-01-0%dT00:00:00","session_id":"s1","gates":{"g":{"planned":"run"}}}`+"\n", i, i)
+		rows += fmt.Sprintf(`{"run_id":"d%d","phase":"finish","outcome":"clean","executed":{}}`+"\n", i)
+	}
+	if err := os.WriteFile(store, []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "s1")
+	t.Setenv("AO_SESSION_ID", "")
+	t.Setenv("REVIEW_LOOP_TAIL", "")
+	code, out, errOut := doRun(t, "stats", "--alarm")
+	if code != 0 || errOut != "" || !strings.Contains(out, "  g did not complete 3x\n") {
+		t.Errorf("stats --alarm: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	// The report, and its status passed through rather than mapped: 1 for a store that exists
+	// and cannot be read, which plan.py must not mistake for a clean alarm.
+	if code, out, _ := doRun(t, "stats"); code != 0 || !strings.HasPrefix(out, "runs: 3  finished: 3") {
+		t.Errorf("stats: exit %d, stdout %q", code, out)
+	}
+	t.Setenv("REVIEW_LOOP_RUNS", dir)
+	if code, out, errOut := doRun(t, "stats", "--alarm"); code != 1 || out != "" || !strings.Contains(errOut, "cannot read the run store") {
+		t.Errorf("stats --alarm on a directory: exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if code, _, _ := doRun(t, "stats", "--bogus"); code != 2 {
+		t.Errorf("stats --bogus: exit %d, want 2", code)
+	}
+}

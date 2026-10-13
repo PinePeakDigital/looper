@@ -1,0 +1,15 @@
+exit=1
+--- stdout ---
+runs: 4  finished: 4  abandoned: 0  in flight (this session): 0
+
+outcome: clean=4
+
+tier floor: full=4
+
+tier executed: full=3  (unset)=1
+
+session kind: interactive=4
+
+orchestrator model: opus=4
+--- stderr ---
+TypeError: '>' not supported between instances of 'str' and 'int'
