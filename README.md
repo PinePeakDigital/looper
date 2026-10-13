@@ -342,7 +342,9 @@ carried, then tallies outcome, tiers, session kind and model, convergence and sp
 finished runs, dropped gates, escalations, abandon reasons and unresolved asks. Both read the
 store the push gate reads (`$REVIEW_LOOP_RUNS`), bounded by `$REVIEW_LOOP_TAIL` lines as
 `runlog.py` is. Exit 0 for either report, 2 for a usage error, 1 for a store that exists and
-cannot be read; plan.py prints the alarm only on 0. Flags are Go's, so `-alarm` works too.
+cannot be read; plan.py prints the alarm only on 0. Flags are Go's, so `-alarm` works too, and
+argparse's habits do not: no prefix abbreviations (`--al` is a usage error), `--repo -x` filters
+on `-x`, and `--alarm=false` is the report. plan.py passes the exact `--alarm`.
 
 `TestStatsMatchesThePython` runs 61 stores through `looper stats` and requires the exit status,
 stdout and stderr that `review-stats.py` printed for the same store and environment, frozen
@@ -355,7 +357,9 @@ the exit status alone (`TestStatsUsageExitsLikeThePython`).
 The divergences, each with its own test:
 
 - **A run this build cannot read is named, not counted.** `looper stats` reads the record
-  through the push gate's typed loader, so a run whose fields it reads have the wrong type —
+  through the push gate's typed loader, so a run with ANY field that loader decodes in the wrong
+type — including ones stats never prints, such as a cycle's `n`, an escalation's `reason` or an
+integral float like `"agents":2.0` —
   a numeric gate status, a list for `gates`, `executed` or an outcome, a string count, a
   non-string `planned_at`, `repo`, `session_id`, `session_kind` or `abandoned_missing`, a
   run-level field on a phase that does not own it — is unreadable as a whole. It keeps its
@@ -373,6 +377,18 @@ The divergences, each with its own test:
   at the end; the alarm, which has no run to place in its window, is what it is without them.
 - **A row that is valid JSON but not an object** is skipped as a torn line is, where
   `review-stats.py` died on `.get`.
+- **A key that differs from `run_id` only in case** (`RUN_ID`, `Run_Id`) makes its run
+  unreadable, where `review-stats.py`'s exact-key dict ignored the row. That is the push gate's
+  refusal of case-folded keys (encoding/json matches field names case-insensitively, which was a
+  forgery path), and stats inherits it rather than loosening a security check for parity.
+- **JSON Go's decoder refuses** — a bare `NaN`, a lone UTF-16 surrogate — drops the row as a torn
+  line is dropped, and a surrogate elsewhere reads as U+FFFD, which can change a sort or what
+  falls in the alarm's window. `review-stats.py` accepted both and died printing a surrogate.
+  The store's writer is `looper record` now, which writes neither.
+- **A `--repo` filter that matches nothing** prints `no runs recorded`, as `review-stats.py`
+  does, then names any rows whose `run_id` is not a string, since they cannot be shown to be in
+  another repo (`TestARepoFilterMatchingNothingSaysNoRuns`). With every run unreadable, the
+  tallies are left out rather than printed empty (`TestNoEmptyTallyWhenEveryRunIsUnreadable`).
 - **Invalid UTF-8 in the store** is read, the bad bytes as U+FFFD, as every looper reader does;
   `review-stats.py` died decoding it, taking the Step 0 alarm with it
   (`TestInvalidUTF8IsReadNotFatal`).

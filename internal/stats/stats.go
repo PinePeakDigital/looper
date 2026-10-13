@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/pinepeakdigital/looper/internal/record"
 )
@@ -191,13 +190,10 @@ func (c *counter) joined(sep string) string {
 	return strings.Join(parts, sep)
 }
 
-// pySpace is str.isspace(), which counts \x1c-\x1f where unicode.IsSpace does not.
-func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
-
 // flat is the GROUPING key, not just a display step: keying the counter on the raw text and
 // flattening only at print time made three whitespace-variant copies of one reason print as
 // three separate `1x` lines — the failure the grouping was added to fix.
-func flat(s string) string { return strings.Join(strings.FieldsFunc(s, pySpace), " ") }
+func flat(s string) string { return strings.Join(strings.FieldsFunc(s, record.PySpace), " ") }
 
 // clip bounds a reason for display, truncated in the MIDDLE. Two reasons sharing a long
 // prefix — likely here, since these name gates — clipped from the end alone printed as
@@ -243,7 +239,10 @@ func declined(status string) bool {
 func droppedNames(x run) ([]string, map[string]string) {
 	d, err := x.r.DroppedGates()
 	if err != nil {
-		return nil, nil // unreachable: read() marks the run unreadable on r.Err
+		// Every caller skips unreadable runs first, and DroppedGates fails only on r.Err, so this
+		// cannot run today. Loud if it ever does: an empty map here would read as "nothing
+		// dropped" — the quiet clean sweep the DroppedGates deferral decided against.
+		panic("stats: droppedNames on an unreadable run: " + err.Error())
 	}
 	names := make([]string, 0, len(d))
 	for g := range d {
@@ -425,8 +424,16 @@ func report(out io.Writer, all []run, unattributed int, repo string) {
 			}
 		}
 	}
-	if len(runs) == 0 && unattributed == 0 {
+	if len(runs) == 0 {
+		// The Python's answer, and nothing after it: the headline and tallies below with zero
+		// runs printed `runs: 0` and five bare `outcome: ` lines. Rows that belong to no run are
+		// still said — they cannot be shown to be in another repo, any more than a run whose
+		// repo field cannot be read.
 		fmt.Fprintln(out, "no runs recorded")
+		if unattributed > 0 {
+			fmt.Fprintf(out, "  %d row(s) carry a run_id that is not a string, so they belong to no run "+
+				"this build can read\n", unattributed)
+		}
 		return
 	}
 	var ok, bad []run
@@ -476,6 +483,9 @@ func report(out io.Writer, all []run, unattributed int, repo string) {
 	fmt.Fprintln(out)
 
 	tally := func(label string, key func(run) string) {
+		if len(ok) == 0 {
+			return // every run unreadable: an empty tally line says nothing the list below doesn't
+		}
 		c := newCounter()
 		for _, x := range ok {
 			c.add(or(key(x), "(unset)"), 1)

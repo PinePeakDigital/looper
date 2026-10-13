@@ -217,6 +217,10 @@ func pyStrip(s string) string { return strings.TrimFunc(s, pySpace) }
 
 func pySpace(r rune) bool { return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f) }
 
+// PySpace is pySpace for internal/stats, so the two packages share one definition of Python's
+// whitespace and cannot drift.
+var PySpace = pySpace
+
 // ---- environment, the way runlog reads it -----------------------------------------------
 
 func now() string { return time.Now().Format("2006-01-02T15:04:05-07:00") }
