@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a threat model whose only problem is a broken pin is planned skip, so a claim that can never go stale is never re-examined
+--- old
+	} else if stale, broken := length(tm["stale"]), length(tm["broken_pins"]); stale+broken > 0 {
+--- new
+	} else if stale, broken := length(tm["stale"]), length(tm["broken_pins"]); stale > 0 {

@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAnUnmeasuredDiffPlansWide'
+expect: --- FAIL:
+why:    a largest-file scan that could not run reads as a small diff, and Agent #7 is planned skip on a size nobody measured
+--- old
+		substantial := c.semantic >= structuralLines || big >= bigFileLines || scanFailed != ""
+--- new
+		substantial := c.semantic >= structuralLines || big >= bigFileLines

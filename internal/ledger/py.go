@@ -1,11 +1,7 @@
 package ledger
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
-	"unicode/utf8"
-
+	"github.com/pinepeakdigital/looper/internal/py"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
@@ -40,163 +36,17 @@ const digitClass = `\x{30}-\x{39}\x{660}-\x{669}\x{6f0}-\x{6f9}\x{7c0}-\x{7c9}\x
 	`\x{1ccf0}-\x{1ccf9}\x{1d7ce}-\x{1d7ff}\x{1e140}-\x{1e149}\x{1e2f0}-\x{1e2f9}\x{1e4f0}-\x{1e4f9}` +
 	`\x{1e5f1}-\x{1e5fa}\x{1e950}-\x{1e959}\x{1fbf0}-\x{1fbf9}`
 
-// decode is how Python's text mode reads bytes: UTF-8, then universal newlines (\r\n and a
-// lone \r both become \n). Python's strict decoder dies on invalid UTF-8; this reads the bad
-// bytes as U+FFFD instead (a divergence, see README).
-func decode(b []byte) string {
-	s := string(b)
-	if !utf8.ValidString(s) {
-		s = strings.ToValidUTF8(s, "\uFFFD")
-	}
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	return strings.ReplaceAll(s, "\r", "\n")
-}
+// The rest of the text model is internal/py's, shared with looper plan; these are its names
+// here so the ledger code reads as it did.
+type (
+	value = py.Value
+	obj   = py.Obj
+	field = py.Field
+)
 
-// isLineBreak is the set str.splitlines() splits on.
-func isLineBreak(r rune) bool {
-	switch r {
-	case '\n', '\r', '\v', '\f', 0x1c, 0x1d, 0x1e, 0x85, 0x2028, 0x2029:
-		return true
-	}
-	return false
-}
-
-// splitlines is str.splitlines(): no trailing empty line, \r\n is one break.
-func splitlines(s string) []string {
-	var out []string
-	start := 0
-	for i, r := range s {
-		if i < start || !isLineBreak(r) {
-			continue
-		}
-		out = append(out, s[start:i])
-		start = i + utf8.RuneLen(r)
-		if r == '\r' && start < len(s) && s[start] == '\n' {
-			start++
-		}
-	}
-	if start < len(s) {
-		out = append(out, s[start:])
-	}
-	return out
-}
-
-// strip is str.strip(): Python's whitespace, from both ends.
-func strip(s string) string { return strings.TrimFunc(s, isSpace) }
-
-// value is what the JSON encoder takes: string, int, bool, nil, []value, *string (nil is
-// null) or obj, whose fields keep the order they were written in, as a Python dict does.
-type value any
-
-type field struct {
-	key string
-	val value
-}
-
-type obj []field
-
-// encode is json.dumps(v, indent=2) plus print's newline: ensure_ascii, ", " never appears
-// because indent puts each item on its own line, and an empty list or object is [] or {}.
-func encode(v value) string {
-	var b strings.Builder
-	write(&b, v, 0)
-	b.WriteByte('\n')
-	return b.String()
-}
-
-func write(b *strings.Builder, v value, depth int) {
-	pad := func(d int) { b.WriteString("\n" + strings.Repeat("  ", d)) }
-	switch x := v.(type) {
-	case nil:
-		b.WriteString("null")
-	case bool:
-		b.WriteString(strconv.FormatBool(x))
-	case int:
-		b.WriteString(strconv.Itoa(x))
-	case string:
-		quote(b, x)
-	case *string:
-		if x == nil {
-			b.WriteString("null")
-		} else {
-			quote(b, *x)
-		}
-	case []value:
-		if len(x) == 0 {
-			b.WriteString("[]")
-			return
-		}
-		b.WriteByte('[')
-		for i, e := range x {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			pad(depth + 1)
-			write(b, e, depth+1)
-		}
-		pad(depth)
-		b.WriteByte(']')
-	case obj:
-		if len(x) == 0 {
-			b.WriteString("{}")
-			return
-		}
-		b.WriteByte('{')
-		for i, f := range x {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			pad(depth + 1)
-			quote(b, f.key)
-			b.WriteString(": ")
-			write(b, f.val, depth+1)
-		}
-		pad(depth)
-		b.WriteByte('}')
-	default:
-		panic(fmt.Sprintf("ledger: cannot encode a %T", v))
-	}
-}
-
-// quote is json's ensure_ascii string form: the five short escapes, and \uXXXX (lowercase,
-// a surrogate pair above the BMP) for every code point outside ' '..'~' — DEL included.
-func quote(b *strings.Builder, s string) {
-	const hex = "0123456789abcdef"
-	u := func(c rune) {
-		b.WriteString(`\u`)
-		for sh := 12; sh >= 0; sh -= 4 {
-			b.WriteByte(hex[(c>>sh)&0xf])
-		}
-	}
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		default:
-			switch {
-			case r >= ' ' && r <= '~':
-				b.WriteRune(r)
-			case r > 0xffff:
-				r -= 0x10000
-				u(0xd800 | (r>>10)&0x3ff)
-				u(0xdc00 | r&0x3ff)
-			default:
-				u(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-}
+var (
+	decode     = py.Decode
+	splitlines = py.Splitlines
+	strip      = py.Strip
+	encode     = py.Encode
+)

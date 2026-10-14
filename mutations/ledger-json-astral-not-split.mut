@@ -1,4 +1,4 @@
-target: internal/ledger/py.go
+target: internal/py/py.go
 verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
 expect: --- FAIL:
 why:    a code point above the BMP escaped as one over-long \u sequence instead of a surrogate pair, which no JSON reader decodes as the character

@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestANameGitPrintsIsCounted'
+expect: --- FAIL:
+why:    git's file names read as text: a \r in a name becomes \n, the file is not found, and a 900-line file counts as nothing
+--- old
+	for _, name := range strings.Split(string(names), "\x00") {
+--- new
+	for _, name := range strings.Split(py.Decode(names), "\x00") {

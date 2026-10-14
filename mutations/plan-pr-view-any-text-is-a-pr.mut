@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    any output from gh pr view counts as a PR, so the report and evidence gates are planned to run against a PR that does not exist
+--- old
+		if r < '0' || r > '9' {
+--- new
+		if r < 0 {

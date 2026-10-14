@@ -1,5 +1,5 @@
-target: internal/ledger/py.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestQuoteIsJSONDumps'
+target: internal/py/py.go
+verify: go test ./internal/py/ -count=1 -run 'TestQuoteIsJSONDumps'
 expect: --- FAIL:
 why:    a backspace in entry text prints as \u0008 where json.dumps writes \b
 --- old

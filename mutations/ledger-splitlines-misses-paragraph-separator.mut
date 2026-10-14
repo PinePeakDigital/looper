@@ -1,5 +1,5 @@
-target: internal/ledger/py.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestLineBreaksAreSplitlines'
+target: internal/py/py.go
+verify: go test ./internal/py/ -count=1 -run 'TestLineBreaksAreSplitlines'
 expect: --- FAIL:
 why:    U+2029 does not end a line, so a claim after it joins the line before and the uncited count drops
 --- old

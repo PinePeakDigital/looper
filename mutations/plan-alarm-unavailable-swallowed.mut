@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    an unreadable run store prints nothing, the same as a healthy one, so the alarm dies silently when it matters most
+--- old
+		alarm = "review-loop alarm unavailable: " + why
+--- new
+		alarm = ""

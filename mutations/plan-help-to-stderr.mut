@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestHelpGoesToStdout'
+expect: --- FAIL:
+why:    -h prints to stderr, where argparse printed help to stdout
+--- old
+			fs.SetOutput(out)
+--- new
+			fs.SetOutput(errOut)

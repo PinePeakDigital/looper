@@ -12,6 +12,7 @@ import (
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
+	"github.com/pinepeakdigital/looper/internal/plan"
 	"github.com/pinepeakdigital/looper/internal/push"
 	"github.com/pinepeakdigital/looper/internal/record"
 	"github.com/pinepeakdigital/looper/internal/report"
@@ -31,6 +32,9 @@ const usage = `usage: looper version
        looper stats [--alarm] [--repo <substring>]
        looper threat-model
        looper deferred
+       looper plan --model m --logic yes|no --behavioral-goal yes|no
+                   --runtime-change yes|no --attacker-reachable yes|no
+                   [--spec-artifact yes|no] [--context f] [--dry-run]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
@@ -48,7 +52,11 @@ gates plan.py prints at Step 0 (silent when there are none). See README.md.
 threat-model and deferred report the two pinned ledgers under <git-common-dir>/info as
 JSON, from the working directory: which pinned files moved since their pin (stale), which
 pins name no commit here (broken_pins), and what owes a pin or a Guard line. Exit 0 for a
-report, 1 for a ledger that exists and cannot be read.`
+report, 1 for a ledger that exists and cannot be read.
+
+plan is Step 0b: which gates run and the tier floor, as JSON, from context.sh's JSON (the
+--context file, or stdin) and four yes/no answers. Unless --dry-run it records the plan and
+prints the run_id on the last line. The Step 0 alarm goes to stderr.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -92,6 +100,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return ledger.ThreatModel(args[1:], out, errOut)
 	case "deferred":
 		return ledger.Deferred(args[1:], out, errOut)
+	case "plan":
+		return plan.Command(args[1:], in, out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2

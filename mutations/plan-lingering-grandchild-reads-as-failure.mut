@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAProbeWithALingeringGrandchildIsAnswered'
+expect: --- FAIL:
+why:    a probe that succeeded while a grandchild held its pipes reads as failed: no PR, gh unauthenticated, no PR history
+--- old
+	if err != nil && !errors.As(err, &ee) && !errors.Is(err, exec.ErrWaitDelay) {
+--- new
+	if err != nil && !errors.As(err, &ee) {

@@ -1,0 +1,6 @@
+exit=1
+--- stdout ---
+--- stderr ---
+plan: context is not valid JSON (Extra data: line 1 column 223 (char 222)) — run context.sh first
+--- ao ---
+--- plan row ---

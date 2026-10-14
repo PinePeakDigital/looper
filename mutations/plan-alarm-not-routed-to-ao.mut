@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    under AO the alarm reaches only stderr, the transcript of a run nobody is watching
+--- old
+			run(ghTimeout, "ao", "report", "--checkpoint", "--note", alarm)
+--- new
+			run(ghTimeout, "ao", "nothing", "--checkpoint", "--note", alarm)

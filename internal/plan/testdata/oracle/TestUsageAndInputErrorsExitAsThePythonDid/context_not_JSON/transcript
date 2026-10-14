@@ -1,0 +1,6 @@
+exit=1
+--- stdout ---
+--- stderr ---
+plan: context is not valid JSON (Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — run context.sh first
+--- ao ---
+--- plan row ---

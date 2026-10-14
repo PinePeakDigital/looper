@@ -24,3 +24,5 @@ report.log
 stats.log
 # And the ledger package's oracle step, the same pairing.
 ledger.log
+# And the plan package's oracle step, the same pairing.
+plan.log

@@ -1,0 +1,10 @@
+exit=2
+--- stdout ---
+--- stderr ---
+usage: plan.py [-h] [--context CONTEXT] --model MODEL --logic yes|no
+               --behavioral-goal yes|no --runtime-change yes|no
+               --attacker-reachable yes|no [--spec-artifact yes|no]
+               [--dry-run]
+plan.py: error: the following arguments are required: --behavioral-goal, --runtime-change, --attacker-reachable
+--- ao ---
+--- plan row ---

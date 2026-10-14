@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestATimedOutProbeStopsAtItsTimeout'
+expect: --- FAIL:
+why:    a killed probe's grandchild holds the pipes and the wait runs past the timeout, so a stuck gh credential helper hangs Step 0b
+--- old
+	cmd.WaitDelay = time.Second
+--- new
+	cmd.WaitDelay = 0
