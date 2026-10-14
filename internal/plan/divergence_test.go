@@ -172,7 +172,7 @@ func TestAnUnmeasuredDiffPlansWide(t *testing.T) {
 	_, out, _, _ := divergence{scenario: scenario{ctx: ctx(`{"base_branch": "nosuch"}`)}}.run(t)
 	for _, want := range []string{
 		`"40 lines of review surface \u2014 the largest changed file could not be measured (fatal: `,
-		`"substantial diff \u2014 skip the observability half if the project logs nothing"`,
+		`"planned as substantial, since the diff could not be measured (#7's reason) \u2014 skip the observability half if the project logs nothing"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("want %s in:\n%s", want, out)
@@ -195,6 +195,23 @@ func TestATimedOutProbeStopsAtItsTimeout(t *testing.T) {
 	want := `could not confirm PR history (Command '['gh', 'pr', 'list', '--state', 'all', '--limit', '1', '--json', 'number']' timed out after 1 seconds)`
 	if !strings.Contains(out, want) {
 		t.Errorf("want %s in:\n%s", want, out)
+	}
+}
+
+// A probe that exits while a grandchild still holds its pipes is answered by what it printed and
+// its exit status, a second later. WaitDelay's own error used to stand in for the answer, so a
+// gh whose credential helper lingered read as no PR, unauthenticated, or no history.
+func TestAProbeWithALingeringGrandchildIsAnswered(t *testing.T) {
+	d := divergence{scenario: scenario{ctx: ctxDefault, gh: `case "$1 $2" in "auth status") (sleep 5) & exit 0 ;; "pr view") echo 17; (sleep 5) & ;; "pr list") echo '[{"number":1}]'; (sleep 5) & ;; esac`}}
+	start := time.Now()
+	_, out, _, _ := d.run(t)
+	if el := time.Since(start); el > 4500*time.Millisecond {
+		t.Errorf("took %v; each probe waited out its grandchild", el)
+	}
+	for _, want := range []string{`"a PR exists to comment on"`, `"gh authenticated, github remote present, PR history confirmed"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %s in:\n%s", want, out)
+		}
 	}
 }
 

@@ -59,8 +59,11 @@ func call(timeout time.Duration, name string, args ...string) (int, []byte, stri
 	if ctx.Err() != nil {
 		return 1, nil, fmt.Sprintf("Command '%s' timed out after %d seconds", pyList(name, args), int(timeout.Seconds()))
 	}
+	// ErrWaitDelay without a timeout is a child that exited — success or not — while a
+	// grandchild still held its pipes: its status and what it printed stand. plan.py waited
+	// for that grandchild up to the timeout; this waits WaitDelay.
 	var ee *exec.ExitError
-	if err != nil && !errors.As(err, &ee) {
+	if err != nil && !errors.As(err, &ee) && !errors.Is(err, exec.ErrWaitDelay) {
 		return 1, nil, err.Error()
 	}
 	code := cmd.ProcessState.ExitCode()
@@ -164,7 +167,14 @@ func biggestChangedFile(base string) (int, string) {
 		if code == 0 {
 			return out, ""
 		}
+		// git's fatal: or error: line, which says why; warnings come before it and usage hints
+		// after. Otherwise the first line.
 		if l := py.Splitlines(py.Strip(err)); len(l) > 0 {
+			for _, x := range l {
+				if strings.HasPrefix(x, "fatal:") || strings.HasPrefix(x, "error:") {
+					return nil, x
+				}
+			}
 			return nil, l[0]
 		}
 		return nil, fmt.Sprintf("git %s exited %d", args[0], code)
@@ -413,7 +423,11 @@ func build(c contextJSON, a answers) obj {
 		}
 		if substantial {
 			set("agent_7_structural", gate("run", r))
-			set("agent_8_observability", gate("run", "substantial diff — skip the observability half if the project logs nothing"))
+			if scanFailed != "" {
+				set("agent_8_observability", gate("run", "planned as substantial, since the diff could not be measured (#7's reason) — skip the observability half if the project logs nothing"))
+			} else {
+				set("agent_8_observability", gate("run", "substantial diff — skip the observability half if the project logs nothing"))
+			}
 		} else {
 			set("agent_7_structural", gate("skip", r))
 			set("agent_8_observability", gate("skip", "not a substantial diff (#7's threshold)"))

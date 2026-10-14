@@ -517,7 +517,10 @@ The divergences, each with its own test:
   #7 `skip` "under both floors" on a diff it had not measured (`TestAnUnmeasuredDiffPlansWide`).
 - **A probe stops at its timeout** even when it leaves a grandchild holding its output open;
   plan.py's `subprocess.run` did, and a Go wait without `WaitDelay` would not. The scan's two
-  `git` calls get plan.py's 15 seconds too (`TestATimedOutProbeStopsAtItsTimeout`).
+  `git` calls get plan.py's 15 seconds too (`TestATimedOutProbeStopsAtItsTimeout`). A probe
+  that exits while a grandchild still holds its output is answered by its exit status and what
+  it printed, a second after it exits; plan.py waited for the grandchild up to the timeout
+  (`TestAProbeWithALingeringGrandchildIsAnswered`).
 
 ## `looper docs`
 
