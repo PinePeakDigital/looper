@@ -1,0 +1,10 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestQuoteIsJSONDumps'
+expect: --- FAIL:
+why:    a backspace in entry text prints as \u0008 where json.dumps writes \b
+--- old
+		case '\b':
+			b.WriteString(`\b`)
+--- new
+		case 0x110000:
+			b.WriteString(`\b`)

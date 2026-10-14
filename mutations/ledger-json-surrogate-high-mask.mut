@@ -1,0 +1,8 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestQuoteIsJSONDumps'
+expect: --- FAIL:
+why:    the high surrogate loses a bit, so code points from U+90000 print as the wrong character
+--- old
+				u(0xd800 | (r>>10)&0x3ff)
+--- new
+				u(0xd800 | (r>>10)&0x1ff)

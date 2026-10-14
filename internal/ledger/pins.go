@@ -10,8 +10,10 @@ package ledger
 
 import (
 	"bytes"
+	"fmt"
 	"os/exec"
 	"regexp"
+	"unicode/utf8"
 )
 
 // citation is pins.CITATION: [path:line @ sha], [path:start-end @ sha] or [path @ sha], with
@@ -53,24 +55,35 @@ func pinList(ps []Pin) []value {
 // fails or cannot start — pins.git, which callers rely on: "" is both "no output" and "no
 // answer", and the staleness rule below is built on that.
 func git(args ...string) string {
+	return strip(decode(gitRaw(args...)))
+}
+
+// gitRaw is git's stdout as bytes, or nil when it fails or cannot start.
+func gitRaw(args ...string) []byte {
 	cmd := exec.Command("git", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return ""
+		return nil
 	}
-	return strip(decode(out.Bytes()))
+	return out.Bytes()
 }
 
 // infoPath is `<git-common-dir>/info/<name>`, or "" outside a repo. --git-common-dir, never
 // --git-dir: in a linked worktree the latter has no info/, so the ledger would be written
-// where the next run cannot find it.
-func infoPath(name string) string {
-	common := git("rev-parse", "--git-common-dir")
-	if common == "" {
-		return ""
+// where the next run cannot find it. A common dir that is not UTF-8 is an error: decoded, it
+// names no real file, so an existing ledger would read as missing. The Python crashed on it.
+func infoPath(name string) (string, error) {
+	raw := gitRaw("rev-parse", "--git-common-dir")
+	if !utf8.Valid(raw) {
+		return "", fmt.Errorf("git's common dir %q is not UTF-8, so the ledger under it cannot "+
+			"be named", raw)
 	}
-	return common + "/info/" + name
+	common := strip(decode(raw))
+	if common == "" {
+		return "", nil
+	}
+	return common + "/info/" + name, nil
 }
 
 // Citations returns the pins in text, one per line at most (the first on it), and, when

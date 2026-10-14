@@ -3,6 +3,7 @@ package ledger
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,4 +201,38 @@ func TestNonUTF8GitOutputIsRead(t *testing.T) {
 
 func latin1Log(t *testing.T, root string) {
 	runGit(t, root, nil, "config", "i18n.logOutputEncoding", "latin1")
+}
+
+// A git common dir that is not UTF-8 exits 1 with a sentence. Decoded with U+FFFD it names no
+// real file, so an existing ledger would read as missing: the deferred list empty, the threat
+// model bootstrapped over. The Python died with UnicodeDecodeError. APFS refuses such a name,
+// so a wrapper git reports one.
+func TestNonUTF8CommonDirIsAnError(t *testing.T) {
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			if !strings.HasPrefix(py, "exit=1\n") || !strings.Contains(py, "UnicodeDecodeError") {
+				t.Fatalf("the frozen oracle no longer records the crash:\n%s", py)
+			}
+			code, out, errOut := divergence{cmd: cmd, ledger: "- x\n", prep: latin1CommonDir}.runGo(t)
+			if code != 1 || out != "" || !strings.Contains(errOut, "is not UTF-8") {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+		})
+	}
+}
+
+// latin1CommonDir puts a git first on PATH that answers --git-common-dir with a Latin-1 path
+// and hands everything else to the real git.
+func latin1CommonDir(t *testing.T, root string) {
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1 $2\" = \"rev-parse --git-common-dir\" ]; then printf '/srv/caf\\351/.git\\n'; exit 0; fi\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

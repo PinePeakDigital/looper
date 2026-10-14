@@ -84,7 +84,11 @@ func ThreatModel(args []string, out, errOut io.Writer) int {
 	if selftest("threat-model", args, errOut) {
 		return 2
 	}
-	path := infoPath(ThreatModelFile)
+	path, err := infoPath(ThreatModelFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "looper threat-model: %v\n", err)
+		return 1
+	}
 	text, ok, err := read(path)
 	if err != nil {
 		return unreadable("threat-model", path, err, errOut)
@@ -167,7 +171,11 @@ func Deferred(args []string, out, errOut io.Writer) int {
 	if selftest("deferred", args, errOut) {
 		return 2
 	}
-	path := infoPath(DeferredFile)
+	path, err := infoPath(DeferredFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "looper deferred: %v\n", err)
+		return 1
+	}
 	text, ok, err := read(path)
 	if err != nil {
 		return unreadable("deferred", path, err, errOut)

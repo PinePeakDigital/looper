@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestNonUTF8CommonDirIsAnError'
+expect: --- FAIL:
+why:    a non-UTF-8 common dir is decoded with U+FFFD into a path that names no file, so an existing ledger reads as missing
+--- old
+	if !utf8.Valid(raw) {
+--- new
+	if !utf8.Valid(raw) && false {

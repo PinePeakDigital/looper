@@ -453,6 +453,9 @@ The divergences, each with its own test:
 - **git output that is not UTF-8** — a commit subject under `i18n.logOutputEncoding latin1`,
   say — is read with U+FFFD for the bad bytes, as the ledger is. The Python died with
   `UnicodeDecodeError` on one commit subject (`TestNonUTF8GitOutputIsRead`).
+- **A git common dir that is not UTF-8** exits 1 with a sentence. Decoded with U+FFFD it names
+  no real file, so an existing ledger would read as missing; the Python died with
+  `UnicodeDecodeError` (`TestNonUTF8CommonDirIsAnError`).
 - **A NUL byte in a pin's path** exits 1 naming the pin's line. git cannot be asked about such a
   path, and a failed git reads as "nothing moved", so the pin would look fresh forever; the
   Python died with `ValueError` (`TestANULInAPinPathIsAnError`).
