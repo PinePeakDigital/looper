@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    `y` reads as no, so an orchestrator answering --attacker-reachable y is planned as if nothing were reachable
+--- old
+	case "yes", "y", "true", "1":
+--- new
+	case "yes", "true", "1":

@@ -1,0 +1,79 @@
+exit=0
+--- stdout ---
+{
+  "tier_floor": "fast",
+  "tier_reason": "12 lines of review surface and no program logic touched (400 raw; excluded package-lock.json (388))",
+  "agent_cap": 40,
+  "changed_lines": 400,
+  "semantic_lines": 12,
+  "sizing_excluded": "package-lock.json (388)",
+  "base_branch": "main",
+  "inputs": {
+    "logic": false,
+    "behavioral_goal": true,
+    "runtime_behavior_change": true,
+    "attacker_reachable": false,
+    "spec_artifact": false
+  },
+  "gates": {
+    "upstream_drift_check": {
+      "planned": "run",
+      "reason": "cheap, no LLM"
+    },
+    "learnings_capture": {
+      "planned": "run",
+      "reason": "always"
+    },
+    "pr_report": {
+      "planned": "skip",
+      "reason": "no PR for this branch \u2014 defer to the pending-report file, or report in-session on a repo that does not use PRs"
+    },
+    "record_reviewed": {
+      "planned": "run",
+      "reason": "on clean exit"
+    },
+    "staleness_sweep": {
+      "planned": "skip",
+      "reason": "10 learnings entries \u2014 under the 40 threshold"
+    },
+    "threat_model": {
+      "planned": "run",
+      "reason": "no threat model yet \u2014 bounded bootstrap"
+    },
+    "security_review": {
+      "planned": "skip",
+      "reason": "fast path folds the finder into the single reviewer"
+    },
+    "agent_7_structural": {
+      "planned": "skip",
+      "reason": "fast path runs no conditional agents"
+    },
+    "agent_8_observability": {
+      "planned": "skip",
+      "reason": "fast path runs no conditional agents"
+    },
+    "agent_9_intent": {
+      "planned": "skip",
+      "reason": "fast path runs no conditional agents"
+    },
+    "agent_10_prior_feedback": {
+      "planned": "skip",
+      "reason": "fast path runs no conditional agents"
+    },
+    "agent_11_spec": {
+      "planned": "skip",
+      "reason": "fast path runs no conditional agents"
+    },
+    "evidence_gate": {
+      "planned": "skip",
+      "reason": "no PR to attach evidence to \u2014 deferred, not dropped (Step 0c)"
+    },
+    "measurement_gate": {
+      "planned": "run",
+      "reason": "user-facing behavior may change \u2014 waive in the report if the repo cannot measure"
+    }
+  }
+}
+--- stderr ---
+--- ao ---
+--- plan row ---

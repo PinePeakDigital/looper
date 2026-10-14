@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    the largest-file scan runs only when the line count already decided Agent #7, so a small diff with a huge file is planned skip
+--- old
+		if c.semantic < structuralLines {
+--- new
+		if c.semantic >= structuralLines {

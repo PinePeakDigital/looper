@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    the never-swept case claims the last sweep left 0 entries, a measurement nobody made
+--- old
+	c.swept = "None"
+--- new
+	c.swept = "0"

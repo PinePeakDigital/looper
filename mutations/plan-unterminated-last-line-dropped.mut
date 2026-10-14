@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a file whose last line has no newline is counted one line short, unlike plan.py's line iteration
+--- old
+			n++
+--- new
+			n += 0

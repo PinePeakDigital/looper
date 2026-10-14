@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a context with no semantic count sizes the review as 0 lines rather than the raw count, under-planning Agent #7
+--- old
+		c.semantic = c.changed // a context.sh predating semantic sizing
+--- new
+		c.semantic = 0 // a context.sh predating semantic sizing

@@ -463,6 +463,54 @@ The divergences, each with its own test:
 `.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
 Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
 
+## `looper plan`
+
+The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates
+run and the tier floor, from context.sh's JSON and four answers only the orchestrator can give.
+
+```text
+looper plan --model <orchestrator model> --logic yes|no --behavioral-goal yes|no \
+            --runtime-change yes|no --attacker-reachable yes|no \
+            [--spec-artifact yes|no] [--context <context.json>] [--dry-run]
+```
+
+It prints the plan as JSON (`json.dumps(indent=2)`, byte for byte) and the Step 0 alarm, if
+any, on stderr, routed to `ao report --checkpoint` under `AO_SESSION_ID`. Unless `--dry-run`, it
+then records the plan row and prints the run_id on the last line. The context is read from
+`--context`, or stdin. The answers take `yes`, `y`, `true` or `1` in any case as yes, and
+anything else as no, as plan.py's did. It asks `gh` whether the branch has a PR and whether the
+repo has any, `git` for the remote and the branch's largest changed file, and reads the threat
+model, the alarm and the record write in process: plan.py ran those as `~/.local/bin/looper`,
+and the branches it needed for a missing looper cannot happen here.
+
+`TestPlanMatchesThePython` runs 43 scenarios through `looper plan` and requires what plan.py
+did over the same fixture repo, stub `gh` and `ao`, threat model and run store: the exit
+status, stdout, stderr, what `ao` was asked and the plan row it recorded, frozen under
+`internal/plan/testdata/oracle` (captured at narthur/skills 791c4d1, with plan.py running
+looper v0.2.6's threat-model, stats and record). A run_id, the temp directory and the row's
+timestamps are the only normalisations.
+
+The divergences, each with its own test:
+
+- **Error sentences are looper's own** and say `looper plan`. The exit statuses are plan.py's:
+  1 for a context that cannot be read or parsed, 2 for a usage error. Nothing reaches stdout
+  either way (`TestUsageAndInputErrorsExitAsThePythonDid`).
+- **A context that is not an object, or a field of the wrong type,** exits 1 naming it. A count
+  must be a whole number, a flag true or false, a name a string; `null` and a missing field
+  read as plan.py's defaults. plan.py read the JSON through `dict.get` and truthiness, so a list
+  crashed it and a string where a count belongs passed through into the plan and the record.
+  context.sh writes neither (`TestAWrongContextIsAnError`).
+- **An abbreviated flag is a usage error.** argparse took any unambiguous prefix, such as
+  `--log`; Go's flag package takes none (`TestAnAbbreviatedFlagIsRefused`).
+- **A failed record write** passes the record's error and exit status on and then says nothing
+  was recorded, as plan.py did; the sentence says to re-run `looper plan`
+  (`TestAFailedRecordSaysSo`).
+- **Changed files' names are read as bytes.** plan.py read `git diff -z` in text mode, which
+  turns a `\r` in a name into `\n`, so that file was not found and counted as no lines — a
+  900-line file could leave Agent #7 planned `skip`. A name that is not UTF-8 would fail
+  text mode's strict decoding (not measured: APFS refuses such names)
+  (`TestANameWithACarriageReturnIsCounted`).
+
 ## `looper docs`
 
 ```text

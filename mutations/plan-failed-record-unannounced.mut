@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAFailedRecordSaysSo'
+expect: --- FAIL:
+why:    a failed record write no longer says COMPUTED BUT NOT RECORDED, so a complete-looking plan on stdout reads as recorded and the run proceeds with no run_id
+--- old
+		fmt.Fprintln(errOut, "looper plan: COMPUTED BUT NOT RECORDED — no run_id exists, the Stop "+
+--- new
+		fmt.Fprintln(errOut, "looper plan: — no run_id exists, the Stop "+

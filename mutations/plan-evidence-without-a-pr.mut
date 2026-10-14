@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    the evidence gate is planned to run with no PR to attach evidence to, instead of being deferred to Step 0c
+--- old
+	case a.runtimeChange && hasPR:
+--- new
+	case a.runtimeChange:

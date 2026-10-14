@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a repo with no PRs at all is reported as having PR history, so Agent #10 runs with nothing to mine and the skip reason is lost
+--- old
+	if out == "[]" || out == "" {
+--- new
+	if false {

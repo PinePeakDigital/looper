@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a failed PR probe's whole stderr goes into the gate reason instead of its first line
+--- old
+			why = py.Splitlines(err)[0]
+--- new
+			why = err

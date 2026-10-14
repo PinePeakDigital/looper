@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a small diff that touches program logic is planned on the fast path: one reviewer, no conditional agents, no security review
+--- old
+	if c.fastBySize && !a.logic {
+--- new
+	if c.fastBySize {

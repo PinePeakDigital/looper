@@ -1,0 +1,79 @@
+exit=0
+--- stdout ---
+{
+  "tier_floor": "full",
+  "tier_reason": "40 lines of review surface (fast path is <30); diff touches program logic",
+  "agent_cap": 40,
+  "changed_lines": 40,
+  "semantic_lines": 40,
+  "sizing_excluded": null,
+  "base_branch": "main",
+  "inputs": {
+    "logic": true,
+    "behavioral_goal": true,
+    "runtime_behavior_change": true,
+    "attacker_reachable": false,
+    "spec_artifact": true
+  },
+  "gates": {
+    "upstream_drift_check": {
+      "planned": "run",
+      "reason": "cheap, no LLM"
+    },
+    "learnings_capture": {
+      "planned": "run",
+      "reason": "always"
+    },
+    "pr_report": {
+      "planned": "skip",
+      "reason": "no PR for this branch \u2014 defer to the pending-report file, or report in-session on a repo that does not use PRs"
+    },
+    "record_reviewed": {
+      "planned": "run",
+      "reason": "on clean exit"
+    },
+    "staleness_sweep": {
+      "planned": "skip",
+      "reason": "10 learnings entries \u2014 under the 40 threshold"
+    },
+    "threat_model": {
+      "planned": "run",
+      "reason": "no threat model yet \u2014 bounded bootstrap"
+    },
+    "security_review": {
+      "planned": "run",
+      "reason": "runs every cycle"
+    },
+    "agent_7_structural": {
+      "planned": "run",
+      "reason": "40 lines of review surface, largest changed file 900 lines"
+    },
+    "agent_8_observability": {
+      "planned": "run",
+      "reason": "substantial diff \u2014 skip the observability half if the project logs nothing"
+    },
+    "agent_9_intent": {
+      "planned": "run",
+      "reason": "reviewable intent established at Step 4b"
+    },
+    "agent_10_prior_feedback": {
+      "planned": "run",
+      "reason": "gh authenticated, github remote present, PR history confirmed"
+    },
+    "agent_11_spec": {
+      "planned": "run",
+      "reason": "written spec artifact captured verbatim at Step 4b"
+    },
+    "evidence_gate": {
+      "planned": "skip",
+      "reason": "no PR to attach evidence to \u2014 deferred, not dropped (Step 0c)"
+    },
+    "measurement_gate": {
+      "planned": "run",
+      "reason": "user-facing behavior may change \u2014 waive in the report if the repo cannot measure"
+    }
+  }
+}
+--- stderr ---
+--- ao ---
+--- plan row ---
