@@ -494,10 +494,12 @@ The divergences, each with its own test:
 
 - **Error sentences are looper's own** and say `looper plan`. The exit statuses are plan.py's:
   1 for a context that cannot be read or parsed, 2 for a usage error. Nothing reaches stdout
-  either way (`TestUsageAndInputErrorsExitAsThePythonDid`).
+  either way (`TestUsageAndInputErrorsExitAsThePythonDid`). `-h` prints Go's usage text to
+  stdout and exits 0, where argparse printed its own (`TestHelpGoesToStdout`).
 - **A context that is not an object, or a field of the wrong type,** exits 1 naming it. A count
   must be a whole number, a flag true or false, a name a string; `null` and a missing field
-  read as plan.py's defaults. plan.py read the JSON through `dict.get` and truthiness, so a list
+  read as plan.py's defaults, except a `null` `learnings_entries`, which plan.py printed as
+  "None learnings entries" or crashed on, and which is an error here. plan.py read the JSON through `dict.get` and truthiness, so a list
   crashed it and a string where a count belongs passed through into the plan and the record.
   context.sh writes neither (`TestAWrongContextIsAnError`).
 - **An abbreviated flag is a usage error.** argparse took any unambiguous prefix, such as
@@ -505,11 +507,17 @@ The divergences, each with its own test:
 - **A failed record write** passes the record's error and exit status on and then says nothing
   was recorded, as plan.py did; the sentence says to re-run `looper plan`
   (`TestAFailedRecordSaysSo`).
-- **Changed files' names are read as bytes.** plan.py read `git diff -z` in text mode, which
-  turns a `\r` in a name into `\n`, so that file was not found and counted as no lines — a
-  900-line file could leave Agent #7 planned `skip`. A name that is not UTF-8 would fail
-  text mode's strict decoding (not measured: APFS refuses such names)
-  (`TestANameWithACarriageReturnIsCounted`).
+- **Changed files' names are read as bytes, whole.** plan.py read `git diff -z` in text mode,
+  which turns a `\r` in a name into `\n`, and stripped it, which drops a leading space from the
+  first name; either way that file was not found and counted as no lines, so a 900-line file
+  could leave Agent #7 planned `skip`. A name that is not UTF-8 would fail text mode's strict
+  decoding (not measured: APFS refuses such names) (`TestANameGitPrintsIsCounted`).
+- **A largest-file scan that cannot run plans Agents #7 and #8,** and the reason names git's
+  error. plan.py read a failed `git diff` (an unfetched base, say) as a 0-line file and planned
+  #7 `skip` "under both floors" on a diff it had not measured (`TestAnUnmeasuredDiffPlansWide`).
+- **A probe stops at its timeout** even when it leaves a grandchild holding its output open;
+  plan.py's `subprocess.run` did, and a Go wait without `WaitDelay` would not. The scan's two
+  `git` calls get plan.py's 15 seconds too (`TestATimedOutProbeStopsAtItsTimeout`).
 
 ## `looper docs`
 

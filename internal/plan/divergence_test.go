@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinepeakdigital/looper/internal/golden"
 )
@@ -84,6 +85,7 @@ var badContext = []struct{ name, ctx, stderr string }{
 	{"a count is fractional", ctx(`{"semantic_lines": 12.5}`), "semantic_lines is 12.5, not a whole number"},
 	{"a flag is a number", ctx(`{"fast_path_eligible_by_size": 1}`), "fast_path_eligible_by_size is 1, not true or false"},
 	{"a name is a number", ctx(`{"base_branch": 7}`), "base_branch is 7, not a string"},
+	{"learnings entries null", ctx(`{"learnings_entries": null}`), "learnings_entries is null"},
 }
 
 func TestAWrongContextIsAnError(t *testing.T) {
@@ -127,27 +129,80 @@ func TestAFailedRecordSaysSo(t *testing.T) {
 	}
 }
 
-// A changed file's name is read as bytes. plan.py read git's output in text mode, which turns
-// a \r in a name into \n, so the big file it named was not found and counted as no lines:
-// Agent #7 was planned skip on a diff with a 900-line file in it.
-func TestANameWithACarriageReturnIsCounted(t *testing.T) {
-	py := golden.Read(t, "transcript")
-	if !strings.Contains(py, `"40 lines of review surface, largest changed file 3 lines \u2014 under both floors (150/800)"`) {
-		t.Fatalf("the frozen oracle no longer records the name being missed:\n%s", py)
-	}
-	d := divergence{scenario: scenario{ctx: ctxDefault}, prep: crInName}
-	_, out, _, _ := d.run(t)
-	if !strings.Contains(out, `"40 lines of review surface, largest changed file 900 lines"`) {
-		t.Errorf("the 900-line file was not counted:\n%s", out)
+// A changed file's name is read as bytes, whole. plan.py read git's output in text mode, which
+// turns a \r in a name into \n, and stripped it, which drops a leading space from the first
+// name; either way the big file it named was not found and counted as no lines, and Agent #7
+// was planned skip on a diff with a 900-line file in it.
+func TestANameGitPrintsIsCounted(t *testing.T) {
+	for _, name := range []string{"b\rig.txt", " lead.txt"} {
+		t.Run(strings.NewReplacer("\r", "CR", " ", "SP").Replace(name), func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			if !strings.Contains(py, `"40 lines of review surface, largest changed file 3 lines \u2014 under both floors (150/800)"`) {
+				t.Fatalf("the frozen oracle no longer records the name being missed:\n%s", py)
+			}
+			_, out, _, _ := divergence{scenario: scenario{ctx: ctxDefault}, prep: renameBig(name)}.run(t)
+			if !strings.Contains(out, `"40 lines of review surface, largest changed file 900 lines"`) {
+				t.Errorf("the 900-line file was not counted:\n%s", out)
+			}
+		})
 	}
 }
 
-// crInName renames big.txt to a name holding a \r, and is the only big file on the branch.
-func crInName(t *testing.T, w world) {
-	t.Helper()
-	if err := os.Rename(filepath.Join(w.repo, "big.txt"), filepath.Join(w.repo, "b\rig.txt")); err != nil {
-		t.Fatal(err)
+// renameBig renames big.txt, the only big file on the branch, and commits it.
+func renameBig(to string) func(t *testing.T, w world) {
+	return func(t *testing.T, w world) {
+		t.Helper()
+		if err := os.Rename(filepath.Join(w.repo, "big.txt"), filepath.Join(w.repo, to)); err != nil {
+			t.Fatal(err)
+		}
+		git(t, w.repo, "add", "-A")
+		git(t, w.repo, "commit", "-q", "-m", "rename")
 	}
-	git(t, w.repo, "add", "-A")
-	git(t, w.repo, "commit", "-q", "-m", "rename")
+}
+
+// A largest-file scan that cannot run plans Agent #7 and #8, saying why. plan.py read a failed
+// git as a 0-line file, so a small diff whose base was not fetched planned #7 skip "under both
+// floors" — a measurement it had not made. When no number decides it, the skill takes the
+// wider option.
+func TestAnUnmeasuredDiffPlansWide(t *testing.T) {
+	py := golden.Read(t, "transcript")
+	if !strings.Contains(py, `"40 lines of review surface \u2014 under both floors (150/800)"`) {
+		t.Fatalf("the frozen oracle no longer records the skip:\n%s", py)
+	}
+	_, out, _, _ := divergence{scenario: scenario{ctx: ctx(`{"base_branch": "nosuch"}`)}}.run(t)
+	for _, want := range []string{
+		`"40 lines of review surface \u2014 the largest changed file could not be measured (fatal: `,
+		`"substantial diff \u2014 skip the observability half if the project logs nothing"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %s in:\n%s", want, out)
+		}
+	}
+}
+
+// A probe that outlives its timeout is stopped at it, even when it leaves a grandchild holding
+// its pipes, and the gate says it timed out in TimeoutExpired's words. Without WaitDelay the
+// wait ran on until the grandchild exited.
+func TestATimedOutProbeStopsAtItsTimeout(t *testing.T) {
+	defer func(g time.Duration) { ghTimeout = g }(ghTimeout)
+	ghTimeout = time.Second
+	d := divergence{scenario: scenario{ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") exit 1 ;; "pr list") sleep 30 & sleep 30 ;; esac`}}
+	start := time.Now()
+	_, out, _, _ := d.run(t)
+	if el := time.Since(start); el > 10*time.Second {
+		t.Errorf("took %v; the 1s timeout did not hold", el)
+	}
+	want := `could not confirm PR history (Command '['gh', 'pr', 'list', '--state', 'all', '--limit', '1', '--json', 'number']' timed out after 1 seconds)`
+	if !strings.Contains(out, want) {
+		t.Errorf("want %s in:\n%s", want, out)
+	}
+}
+
+// -h prints the usage to stdout and exits 0, as argparse did; its text is Go's flag package's.
+func TestHelpGoesToStdout(t *testing.T) {
+	var o, e bytes.Buffer
+	if code := Command([]string{"-h"}, strings.NewReader(""), &o, &e); code != 0 || e.Len() != 0 ||
+		!strings.Contains(o.String(), "-attacker-reachable") {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, o.String(), e.String())
+	}
 }

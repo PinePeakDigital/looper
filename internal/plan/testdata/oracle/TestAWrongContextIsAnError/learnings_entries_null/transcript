@@ -1,0 +1,6 @@
+exit=1
+--- stdout ---
+--- stderr ---
+TypeError: '<' not supported between instances of 'NoneType' and 'int'
+--- ao ---
+--- plan row ---

@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAWrongContextIsAnError'
+expect: --- FAIL:
+why:    a null learnings_entries reads as 0 entries, a count context.sh never wrote
+--- old
+		return c, errors.New("context field learnings_entries is null, not a whole number")
+--- new
+		_ = 0

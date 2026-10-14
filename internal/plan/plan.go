@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/ledger"
@@ -39,24 +40,40 @@ type (
 	value = py.Value
 )
 
-// run is plan.py's run(): the exit status, and stdout and stderr decoded as text mode and
-// stripped. A command that cannot start, or outlives its timeout, is exit 1 with the reason
-// as stderr, as subprocess raised them.
-func run(timeout time.Duration, name string, args ...string) (int, string, string) {
+// Timeouts, plan.py's: git's 15s and gh's and ao's 20s. Variables so a test can shorten one.
+var gitTimeout, ghTimeout = 15 * time.Second, 20 * time.Second
+
+// call runs a command with a timeout and returns its exit status and raw output. A command
+// that cannot start, or outlives its timeout, is exit 1 with why as stderr, as subprocess
+// raised them. A child killed by a signal is minus the signal, as Python's returncode is.
+func call(timeout time.Duration, name string, args ...string) (int, []byte, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Without this a killed child's grandchild — a credential helper under gh — keeps the
+	// pipes open and Run waits for it past the timeout, as internal/push and report know.
+	cmd.WaitDelay = time.Second
 	var o, e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &e
 	err := cmd.Run()
 	if ctx.Err() != nil {
-		return 1, "", fmt.Sprintf("Command '%s' timed out after %d seconds", pyList(name, args), int(timeout.Seconds()))
+		return 1, nil, fmt.Sprintf("Command '%s' timed out after %d seconds", pyList(name, args), int(timeout.Seconds()))
 	}
 	var ee *exec.ExitError
 	if err != nil && !errors.As(err, &ee) {
-		return 1, "", err.Error()
+		return 1, nil, err.Error()
 	}
-	return cmd.ProcessState.ExitCode(), py.Strip(py.Decode(o.Bytes())), py.Strip(py.Decode(e.Bytes()))
+	code := cmd.ProcessState.ExitCode()
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		code = -int(ws.Signal())
+	}
+	return code, o.Bytes(), e.String()
+}
+
+// run is plan.py's run(): call, with stdout and stderr decoded as text mode and stripped.
+func run(timeout time.Duration, name string, args ...string) (int, string, string) {
+	code, out, err := call(timeout, name, args...)
+	return code, py.Strip(py.Decode(out)), py.Strip(py.Decode([]byte(err)))
 }
 
 // pyList is repr() of the argv list, for TimeoutExpired's message.
@@ -91,7 +108,7 @@ func threatModel() (map[string]any, string) {
 
 // prExists: is there a PR for this branch? Gates the report, evidence and measurement.
 func prExists() bool {
-	rc, out, _ := run(20*time.Second, "gh", "pr", "view", "--json", "number", "-q", ".number")
+	rc, out, _ := run(ghTimeout, "gh", "pr", "view", "--json", "number", "-q", ".number")
 	if rc != 0 || out == "" {
 		return false
 	}
@@ -107,16 +124,16 @@ func prExists() bool {
 // conditions — gh cannot reach the API, the repo has no PR history to mine — need different
 // fixes, and a gate reason is read later as evidence.
 func githubReachable() (bool, string) {
-	rc, out, _ := run(15*time.Second, "git", "remote", "-v")
+	rc, out, _ := run(gitTimeout, "git", "remote", "-v")
 	if rc != 0 || !strings.Contains(out, "github.com") {
 		return false, "no github remote"
 	}
-	if rc, _, _ := run(20*time.Second, "gh", "auth", "status"); rc != 0 {
+	if rc, _, _ := run(ghTimeout, "gh", "auth", "status"); rc != 0 {
 		// Seen repeatedly: the sandbox proxy denies api.github.com while git push works.
 		return false, "gh not authenticated here (retry unsandboxed before accepting this)"
 	}
 	// One API call, not per-file: a repo with zero PRs cannot have PR comments on any file.
-	rc, out, err := run(20*time.Second, "gh", "pr", "list", "--state", "all", "--limit", "1", "--json", "number")
+	rc, out, err := run(ghTimeout, "gh", "pr", "list", "--state", "all", "--limit", "1", "--json", "number")
 	if rc != 0 {
 		// Fail OPEN on a failed probe — #10 can discover an empty repo itself — but say so.
 		why := fmt.Sprintf("exit %d", rc)
@@ -133,20 +150,32 @@ func githubReachable() (bool, string) {
 }
 
 // biggestChangedFile is the line count of the largest file this branch changed, as it is at
-// HEAD. Paths stay bytes end to end: plan.py decoded git's output as UTF-8 text, so a name
-// that was not UTF-8 crashed it, and text mode's newline translation changed any name holding
-// a \r into one that matched nothing, which read as 0 lines.
-func biggestChangedFile(base string) int {
+// HEAD, and why it could not be measured when it could not. Paths stay bytes end to end:
+// plan.py read git's output in text mode and stripped it, so a \r in a name became \n, a
+// leading space on the first name was lost, and either file then matched nothing and read as
+// 0 lines. A git that fails is said, not read as 0: plan.py's 0 there planned Agent #7 skip
+// on a diff whose size it had not measured.
+func biggestChangedFile(base string) (int, string) {
 	if base == "" {
-		return 0
+		return 0, ""
 	}
-	root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return 0
+	gitOut := func(args ...string) ([]byte, string) {
+		code, out, err := call(gitTimeout, "git", args...)
+		if code == 0 {
+			return out, ""
+		}
+		if l := py.Splitlines(py.Strip(err)); len(l) > 0 {
+			return nil, l[0]
+		}
+		return nil, fmt.Sprintf("git %s exited %d", args[0], code)
 	}
-	names, err := exec.Command("git", "diff", "--name-only", "-z", "origin/"+base+"...HEAD").Output()
-	if err != nil {
-		return 0
+	root, why := gitOut("rev-parse", "--show-toplevel")
+	if why != "" {
+		return 0, why
+	}
+	names, why := gitOut("diff", "--name-only", "-z", "origin/"+base+"...HEAD")
+	if why != "" {
+		return 0, why
 	}
 	top := strings.TrimSuffix(string(root), "\n")
 	biggest := 0
@@ -154,9 +183,11 @@ func biggestChangedFile(base string) int {
 		if name == "" {
 			continue
 		}
+		// Any read error, as plan.py's OSError: a deleted file has no size at HEAD, and a
+		// submodule is a directory.
 		b, err := os.ReadFile(filepath.Join(top, name))
 		if err != nil {
-			continue // deleted by this diff — it has no size at HEAD
+			continue
 		}
 		n := bytes.Count(b, []byte("\n"))
 		if len(b) > 0 && b[len(b)-1] != '\n' {
@@ -164,7 +195,7 @@ func biggestChangedFile(base string) int {
 		}
 		biggest = max(biggest, n)
 	}
-	return biggest
+	return biggest, ""
 }
 
 // answers are the four (five) inputs no script can measure. Booleans, never prose: free text
@@ -239,6 +270,10 @@ func readContext(raw []byte) (contextJSON, error) {
 	}
 	if c.entries, _, err = num("learnings_entries"); err != nil {
 		return c, err
+	} else if v, ok := m["learnings_entries"]; ok && v == nil {
+		// Not plan.py's default: its .get("learnings_entries", 0) defaults only a MISSING key,
+		// so null printed as "None learnings entries", or crashed comparing None with 40.
+		return c, errors.New("context field learnings_entries is null, not a whole number")
 	}
 	swept, has, err := num("learnings_swept_entries")
 	if err != nil {
@@ -360,13 +395,17 @@ func build(c contextJSON, a answers) obj {
 		}
 	} else {
 		// Only pay the per-file scan when the line count alone hasn't decided it.
-		big := 0
+		big, scanFailed := 0, ""
 		if c.semantic < structuralLines {
-			big = biggestChangedFile(orEmpty(c.base))
+			big, scanFailed = biggestChangedFile(orEmpty(c.base))
 		}
-		substantial := c.semantic >= structuralLines || big >= bigFileLines
+		// An unmeasured diff plans wide: a redundant agent costs tokens, a skipped one ships.
+		substantial := c.semantic >= structuralLines || big >= bigFileLines || scanFailed != ""
 		r := fmt.Sprintf("%d lines of review surface", c.semantic)
-		if big != 0 {
+		switch {
+		case scanFailed != "":
+			r += " — the largest changed file could not be measured (" + scanFailed + "), so planned as substantial"
+		case big != 0:
 			r += fmt.Sprintf(", largest changed file %d lines", big)
 		}
 		if !substantial {
@@ -477,7 +516,8 @@ func (y *yesno) Set(s string) error {
 // record's own exit status in the second case.
 func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	// Help to stdout, as argparse printed it; a usage error to stderr.
+	fs.SetOutput(io.Discard)
 	var a answers
 	ctxPath := fs.String("context", "", "context.sh JSON file (default: stdin)")
 	model := fs.String("model", "", "the ORCHESTRATOR's model id — the only model that varies across runs")
@@ -502,8 +542,11 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(out)
+			fs.Usage()
 			return 0
 		}
+		fmt.Fprintf(errOut, "looper plan: %v\n", err)
 		return 2
 	}
 	if fs.NArg() > 0 {
@@ -571,7 +614,7 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 		// stderr reaches only a human watching this run; the unattended runs are the ones
 		// most likely to accumulate repeated failures, so route it as unresolved asks are.
 		if os.Getenv("AO_SESSION_ID") != "" {
-			run(20*time.Second, "ao", "report", "--checkpoint", "--note", alarm)
+			run(ghTimeout, "ao", "report", "--checkpoint", "--note", alarm)
 		}
 	}
 	if *dry {

@@ -260,13 +260,15 @@ jobs:
             echo "the plan parity gate SKIPPED:"; cat plan.log; exit 1
           fi
           for spec in TestPlanMatchesThePython:43 TestUsageAndInputErrorsExitAsThePythonDid:7 \
-                      TestAWrongContextIsAnError:5; do
+                      TestAWrongContextIsAnError:6 \
+                      TestANameGitPrintsIsCounted:2; do
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' plan.log)
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat plan.log; exit 1; }
             echo "$c $t subtests compared against the frozen oracle"
           done
-          for d in TestAnAbbreviatedFlagIsRefused TestAFailedRecordSaysSo TestANameWithACarriageReturnIsCounted; do
+          for d in TestAnAbbreviatedFlagIsRefused TestAFailedRecordSaysSo TestAnUnmeasuredDiffPlansWide \
+                   TestATimedOutProbeStopsAtItsTimeout TestHelpGoesToStdout; do
             grep -q -- "--- PASS: $d" plan.log || { echo "divergence $d did not pass"; cat plan.log; exit 1; }
           done
 
@@ -355,7 +357,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 321 ] || { echo "only $n mutations, expected at least 321 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 326 ] || { echo "only $n mutations, expected at least 326 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in
