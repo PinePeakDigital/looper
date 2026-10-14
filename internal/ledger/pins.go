@@ -77,7 +77,7 @@ func infoPath(name string) (string, error) {
 	raw := gitRaw("rev-parse", "--git-common-dir")
 	if !utf8.Valid(raw) {
 		return "", fmt.Errorf("git's common dir %q is not UTF-8, so the ledger under it cannot "+
-			"be named", raw)
+			"be named", bytes.TrimRight(raw, "\n"))
 	}
 	common := strip(decode(raw))
 	if common == "" {
