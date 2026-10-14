@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    only the last suffix is checked, so values.yml.j2 goes down the whitespace-blind path and its indentation changes score 0
+--- old
+	for _, p := range parts[1:] {
+--- new
+	for _, p := range parts[len(parts)-1:] {

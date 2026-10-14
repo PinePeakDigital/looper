@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": "# Learnings\n\n- 2026-10-01: entry 0\n- 2026-10-01: entry 1\n- 2026-10-01: entry 2\n- caf\u00e9, na\u00efve \u2014 \ud83d\udca1",
+  "learnings_entries": 4,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " b.js | 3 +++\n 1 file changed, 3 insertions(+)",
+  "changed_lines": 3,
+  "semantic_lines": 3,
+  "sizing_excluded": null,
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": null,
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---

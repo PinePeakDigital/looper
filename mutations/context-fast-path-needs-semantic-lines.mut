@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a pure reformatting has 0 semantic lines and so is never fast-path eligible, the very change semantic sizing routes there
+--- old
+		{"fast_path_eligible_by_size", 0 < changed && semantic < 30},
+--- new
+		{"fast_path_eligible_by_size", 0 < semantic && semantic < 30},

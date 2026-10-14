@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": "# Learnings\r\n\r\n- 2026-10-01: entry 0\r\n- 2026-10-01: entry 1\r\n- 2026-10-01: entry 2\r\n- 2026-10-01: entry 3\r\n- 2026-10-01: entry 4\r\n- 2026-10-01: entry 5\r\n- 2026-10-01: entry 6\r\n- 2026-10-01: entry 7\r\n- 2026-10-01: entry 8\r\n- 2026-10-01: entry 9\r\n- 2026-10-01: entry 10\r\n- 2026-10-01: entry 11\r\n- 2026-10-01: entry 12\r\n- 2026-10-01: entry 13\r\n- 2026-10-01: entry 14\r\n- 2026-10-01: entry 15\r\n- 2026-10-01: entry 16\r\n- 2026-10-01: entry 17\r\n- 2026-10-01: entry 18\r\n- 2026-10-01: entry 19\r\n- 2026-10-01: entry 20\r\n- 2026-10-01: entry 21\r\n- 2026-10-01: entry 22\r\n- 2026-10-01: entry 23\r\n- 2026-10-01: entry 24\r\n- 2026-10-01: entry 25\r\n- 2026-10-01: entry 26\r\n- 2026-10-01: entry 27\r\n- 2026-10-01: entry 28\r\n- 2026-10-01: entry 29\r\n- 2026-10-01: entry 30\r\n- 2026-10-01: entry 31\r\n- 2026-10-01: entry 32\r\n- 2026-10-01: entry 33\r\n- 2026-10-01: entry 34\r\n- 2026-10-01: entry 35\r\n- 2026-10-01: entry 36\r\n- 2026-10-01: entry 37\r\n- 2026-10-01: entry 38\r\n- 2026-10-01: entry 39\r\n- 2026-10-01: entry 40\r\n- 2026-10-01: entry 41\r\n- 2026-10-01: entry 42\r\n- 2026-10-01: entry 43\r\n- 2026-10-01: entry 44\r\n<!-- swept: 44 -->\r",
+  "learnings_entries": 45,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": 44,
+  "today": "<today>",
+  "diff_stat": " b.js | 3 +++\n 1 file changed, 3 insertions(+)",
+  "changed_lines": 3,
+  "semantic_lines": 3,
+  "sizing_excluded": null,
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": null,
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---

@@ -463,6 +463,41 @@ The divergences, each with its own test:
 `.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
 Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
 
+## `looper context`
+
+The review-loop's Step 0, a port of the skill's `context.sh` in `internal/gather`. From the
+working directory it resolves the base branch (the PR's base, else the repo default, else
+`origin/HEAD`) and fetches it. It also loads the learnings file and works out whether a staleness
+sweep is due, detects the test and lint commands, and sizes the branch diff. That size is given
+three ways: raw, as review surface (lockfiles, files `.gitattributes` marks
+`linguist-generated`, and whitespace-only lines are dropped, except in files where indentation
+is syntax), and since the last commit the review gate stamped. It prints one JSON object that
+`looper plan --context` reads.
+
+```text
+looper context > "$(git rev-parse --git-dir)/review-loop-context.json"
+```
+
+`TestContextMatchesTheShell` runs 38 scenarios through `looper context` and requires what
+context.sh printed for the same fixture repo, stub `gh` and review store, byte for byte, frozen
+under `internal/gather/testdata/oracle` (captured at narthur/skills 865f93d). The date is the one
+normalisation.
+
+The divergences, each with its own test:
+
+- **Arguments are not ignored.** `-h` prints a usage line and any other argument is a usage error
+  (exit 2); context.sh read none, so `context.sh -h` fetched and sized the whole branch
+  (`TestArgumentsAreNotIgnored`).
+- **package.json's `scripts` is read only as an object of strings.** context.sh tested Python
+  membership on whatever was there: a string of scripts matched `test` as a substring and
+  answered `npm test`, and a list, or a `lint` script that was not a string, crashed it with no
+  output at all (`TestPackageScriptsAreAnObject`).
+- **A Makefile that is not UTF-8 is still searched** for its `test:` target. context.sh's strict
+  decode crashed on it, losing the whole context (`TestALatin1MakefileIsRead`).
+- **Learnings that are not UTF-8 reach the JSON with U+FFFD** for each bad byte. context.sh passed
+  them through the environment, where each became a lone-surrogate escape (`\udcXX`) that many
+  JSON parsers refuse (`TestLatin1LearningsAreReplaced`).
+
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates

@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestALatin1MakefileIsRead'
+expect: --- FAIL:
+why:    a Makefile's test target is never found
+--- old
+		if b, err := os.ReadFile("Makefile"); err == nil && regexp.MustCompile(`(?m)^test:`).MatchString(py.Decode(b)) {
+--- new
+		if b, err := os.ReadFile("Makefile"); err == nil && regexp.MustCompile(`(?m)^test:`).MatchString(string(b[:0])) {

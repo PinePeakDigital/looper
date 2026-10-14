@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    Makefile.am and friends are sized whitespace-blind, and a recipe's tab change scores 0
+--- old
+	if indentNames[name] || indentStems[parts[0]] {
+--- new
+	if false {

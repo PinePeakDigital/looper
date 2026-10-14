@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    the delta verdict is read without a reviewed sha, which cannot tell nothing-reviewed from nothing-changed
+--- old
+		{"fast_path_eligible_by_delta", last != "" && 0 < delta && delta < 30},
+--- new
+		{"fast_path_eligible_by_delta", 0 < delta && delta < 30},

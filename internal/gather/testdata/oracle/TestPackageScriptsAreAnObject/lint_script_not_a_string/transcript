@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+TypeError: argument of type 'int' is not a container or iterable

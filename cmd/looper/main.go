@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 
 	"github.com/pinepeakdigital/looper/internal/docs"
+	"github.com/pinepeakdigital/looper/internal/gather"
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
 	"github.com/pinepeakdigital/looper/internal/plan"
@@ -32,6 +33,7 @@ const usage = `usage: looper version
        looper stats [--alarm] [--repo <substring>]
        looper threat-model
        looper deferred
+       looper context
        looper plan --model m --logic yes|no --behavioral-goal yes|no
                    --runtime-change yes|no --attacker-reachable yes|no
                    [--spec-artifact yes|no] [--context f] [--dry-run]
@@ -53,6 +55,9 @@ threat-model and deferred report the two pinned ledgers under <git-common-dir>/i
 JSON, from the working directory: which pinned files moved since their pin (stale), which
 pins name no commit here (broken_pins), and what owes a pin or a Guard line. Exit 0 for a
 report, 1 for a ledger that exists and cannot be read.
+
+context is Step 0: the base branch (fetched), the learnings, the test and lint commands and
+the diff's size, as JSON, from the working directory. plan reads it.
 
 plan is Step 0b: which gates run and the tier floor, as JSON, from context.sh's JSON (the
 --context file, or stdin) and four yes/no answers. Unless --dry-run it records the plan and
@@ -102,6 +107,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return ledger.Deferred(args[1:], out, errOut)
 	case "plan":
 		return plan.Command(args[1:], in, out, errOut)
+	case "context":
+		return gather.Command(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2

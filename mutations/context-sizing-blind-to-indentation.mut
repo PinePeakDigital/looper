@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a dedent that moves a call out of a guard in python scores 0 lines of review surface and takes the fast path
+--- old
+		if indentSensitive(f) {
+--- new
+		if false {

@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": null,
+  "learnings_entries": 0,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " b.js | 3 +++\n 1 file changed, 3 insertions(+)",
+  "changed_lines": 3,
+  "semantic_lines": 3,
+  "sizing_excluded": null,
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": "0446f3c38b3bd7eee937ac741fe0628ed9bc8cd1",
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---
