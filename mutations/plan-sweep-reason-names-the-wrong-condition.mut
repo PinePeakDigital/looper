@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    the sweep reason says at/over the threshold when the regrowth margin is what decided the skip, a false statement of which condition held
+--- old
+	case c.due:
+--- new
+	case true:

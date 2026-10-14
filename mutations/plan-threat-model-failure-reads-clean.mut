@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a threat model that could not be read falls through as if it existed with nothing stale, so the update is skipped exactly when the model could not be read
+--- old
+	if tm, why := threatModel(); tm == nil {
+--- new
+	if tm, why := threatModel(); false {
