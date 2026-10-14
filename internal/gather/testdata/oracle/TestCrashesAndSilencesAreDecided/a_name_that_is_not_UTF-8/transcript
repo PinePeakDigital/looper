@@ -1,0 +1,23 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": null,
+  "learnings_entries": 0,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " a.js     | 6 +++---\n caf\udce9.txt | 1 +\n 2 files changed, 4 insertions(+), 3 deletions(-)",
+  "changed_lines": 7,
+  "semantic_lines": 7,
+  "sizing_excluded": "sizing helper produced no count; using the raw total",
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": null,
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---
+sed: RE error: illegal byte sequence

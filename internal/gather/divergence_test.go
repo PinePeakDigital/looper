@@ -2,6 +2,9 @@ package gather
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,14 +45,17 @@ func TestArgumentsAreNotIgnored(t *testing.T) {
 	}
 }
 
-// package.json's scripts are read only as an object of strings. context.sh tested membership
-// with Python's `in` on whatever was there: a string of scripts matched "test" as a substring
-// and answered `npm test`, and a list, or a lint script that was not a string, died with a
-// TypeError and printed nothing — the whole Step 0 context lost to one odd package.json.
+// package.json's scripts are read only as an object. context.sh tested membership with Python's
+// `in` on whatever was there: a string of scripts matched "test" as a substring and answered
+// `npm test`, and a list of scripts, or a lint script that was a number or null, died with a
+// TypeError and printed nothing — the whole Step 0 context lost to one odd package.json. (A lint
+// script that is a list or an object answers as Python's `in` does; that is parity.) A
+// package.json using Python's JSON extensions (NaN, Infinity) is not JSON, and reads as none.
 var oddScripts = []struct{ name, pkg, test, lint string }{
 	{"scripts a list", `{"scripts": ["test", "lint"]}`, "null", "null"},
 	{"scripts a string", `{"scripts": "run the test suite"}`, "null", "null"},
-	{"lint script not a string", `{"scripts": {"lint": 5}}`, "null", `"npm run lint"`},
+	{"lint script a number", `{"scripts": {"lint": 5}}`, "null", `"npm run lint"`},
+	{"package json with NaN", `{"scripts": {"test": "x"}, "v": NaN}`, "null", "null"},
 }
 
 func TestPackageScriptsAreAnObject(t *testing.T) {
@@ -90,4 +96,70 @@ func TestLatin1LearningsAreReplaced(t *testing.T) {
 	if !strings.Contains(out, `"learnings": "- caf\ufffd",`) {
 		t.Errorf("got:\n%s", out)
 	}
+}
+
+// Where context.sh died, or said nothing, looper answers — each case keeps the shell's frozen
+// transcript and asserts what looper prints instead.
+var decided = []struct {
+	name string
+	d    divergence
+	want []string
+}{
+	// An unfetched or missing base: context.sh printed 0 lines and no reason, which reads as an
+	// empty diff. The plan's own scan fails the same way and plans wide; the context says why.
+	{"an unreadable diff is said", divergence{scenario: scenario{gh: `case "$1 $2" in "pr view") echo nosuch ;; *) exit 1 ;; esac`}},
+		[]string{`"sizing_excluded": "the diff against origin/nosuch...HEAD could not be read, so nothing was sized",`}},
+	// A base starting with '-' is no git branch name, and `git fetch origin <base>` would read it
+	// as an option. context.sh passed it on.
+	{"a base starting with a dash is refused", divergence{scenario: scenario{gh: `case "$1 $2" in "pr view") echo -x ;; *) exit 1 ;; esac`}},
+		[]string{`"base_branch": null,`}},
+	// No HOME is no review store. context.sh died under set -u; a path relative to the repo
+	// would have trusted a store the repo itself ships.
+	{"no HOME is no store", divergence{scenario: scenario{store: func(w world) string { return w.shas["main"] + "\n" },
+		prep: func(t *testing.T, w world) {
+			t.Setenv("HOME", "")
+			os.Unsetenv("HOME")
+			write(t, filepath.Join(w.repo, ".claude", "review-loop", "reviewed-shas"), w.shas["main"]+"\n")
+		}}}, []string{`"last_reviewed_sha": null,`}},
+	// A Makefile that is a directory has no test target. context.sh's read_text died on it.
+	{"a Makefile directory", divergence{scenario: scenario{files: map[string]string{"Makefile/x": "test:\n"}}},
+		[]string{`"test_cmd": null,`}},
+	// Learnings too big for the environment. context.sh passed them to Python through it, and
+	// past the platform's argument limit Python never started: exit 126, nothing printed.
+	{"learnings too big for the environment", divergence{scenario: scenario{learn: strings.Repeat("- "+strings.Repeat("x", 198)+"\n", 6000)}},
+		[]string{`"learnings_entries": 6000,`}},
+	// A name that is not UTF-8 (core.quotePath=false) is reported as context.sh's helper failing:
+	// the raw count stands. The diff stat's bad bytes are U+FFFD where context.sh wrote \udcXX.
+	// APFS refuses such a name on disk, so it goes straight into the index: the diff compares
+	// commits, not the working tree.
+	{"a name that is not UTF-8", divergence{scenario: scenario{files: map[string]string{"a.js": strings.ReplaceAll(jsBody, "  ", "      ")},
+		prep: nonUTF8Name}},
+		[]string{`"semantic_lines": 7,`, `"sizing_excluded": "sizing helper produced no count; using the raw total",`, `caf\ufffd.txt`}},
+}
+
+func TestCrashesAndSilencesAreDecided(t *testing.T) {
+	for _, c := range decided {
+		t.Run(c.name, func(t *testing.T) {
+			golden.Read(t, "transcript") // what context.sh did, kept beside the decision
+			code, out, _ := c.d.run(t)
+			for _, w := range c.want {
+				if code != 0 || !strings.Contains(out, w) {
+					t.Errorf("exit %d, want %s in:\n%s", code, w, out)
+				}
+			}
+		})
+	}
+}
+
+func nonUTF8Name(t *testing.T, w world) {
+	t.Helper()
+	git(t, w.repo, "config", "core.quotePath", "false")
+	cmd := exec.Command("git", "hash-object", "-w", "--stdin")
+	cmd.Dir, cmd.Stdin = w.repo, strings.NewReader("1\n")
+	blob, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	git(t, w.repo, "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(string(blob))+",caf\xe9.txt")
+	git(t, w.repo, "commit", "-q", "-m", "latin-1 name")
 }

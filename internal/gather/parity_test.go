@@ -25,13 +25,14 @@ type world struct {
 }
 
 type scenario struct {
-	name  string
-	gh    string                      // the stub gh's body; "" fails every call
-	prep  func(t *testing.T, w world) // after the fixture is built, before running
-	cwd   string                      // relative to the repo
-	store func(w world) string        // the reviewed-shas store's contents; nil is none
-	files map[string]string           // written at the repo root and committed on feature
-	learn string                      // the learnings file; "" is none
+	name   string
+	gh     string                      // the stub gh's body; "" fails every call
+	prep   func(t *testing.T, w world) // after the fixture is built, before running
+	cwd    string                      // relative to the repo
+	store  func(w world) string        // the reviewed-shas store's contents; nil is none
+	files  map[string]string           // written at the repo root and committed on feature
+	learn  string                      // the learnings file; "" is none
+	onMain map[string]string           // committed on main, before the branch
 }
 
 func gitEnv(t *testing.T, base string) {
@@ -91,6 +92,9 @@ func (sc scenario) build(t *testing.T) world {
 	write(t, filepath.Join(w.repo, "a.js"), jsBody)
 	write(t, filepath.Join(w.repo, "app.py"), pyBody)
 	write(t, filepath.Join(w.repo, "web", "package-lock.json"), "{\n  \"v\": 1\n}\n")
+	for p, body := range sc.onMain {
+		write(t, filepath.Join(w.repo, p), body)
+	}
 	git(t, w.repo, "add", "-A")
 	git(t, w.repo, "commit", "-q", "-m", "base")
 	git(t, w.repo, "remote", "add", "origin", filepath.Join(base, "up"))
@@ -160,9 +164,12 @@ var scenarios = []scenario{
 	{name: "base from the repo default", gh: `case "$1 $2" in "repo view") echo main ;; *) exit 1 ;; esac`},
 	{name: "base from origin HEAD"},
 	{name: "no base at all", prep: func(t *testing.T, w world) { git(t, w.repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD") }},
-	{name: "a base origin does not have", gh: `case "$1 $2" in "pr view") echo nosuch ;; *) exit 1 ;; esac`},
 	{name: "a reindent is not review surface", files: map[string]string{"a.js": strings.ReplaceAll(jsBody, "  ", "      ")}},
 	{name: "a dedent in python is", files: map[string]string{"app.py": "def f(x):\n    if x:\n        pass\n    g()\n    return 1\n"}},
+	// Reindented, not added: an added file has no whitespace-only lines for -w to hide.
+	{name: "indentation-sensitive files reindented",
+		onMain: map[string]string{"values.yml.j2": "a:\n  b: 1\n", "Makefile.am": "all:\n  true\n", "x.JS": "if (a) {\n  b()\n}\n"},
+		files:  map[string]string{"values.yml.j2": "a:\n    b: 1\n", "Makefile.am": "all:\n\ttrue\n", "x.JS": "if (a) {\n    b()\n}\n"}},
 	{name: "indentation-sensitive suffixes", files: map[string]string{
 		"values.yml.j2": "a:\n  b: 1\n", "Up.PY": "x = 1\n", "Makefile.am": "all:\n\ttrue\n", "notes.MD": "- a\n  - b\n"}},
 	{name: "lockfiles at any depth", files: map[string]string{"web/package-lock.json": "{\n  \"v\": 2,\n  \"w\": 3\n}\n", "go.sum": "x v1 h1:a\n", "b.js": "1\n"}},
@@ -187,6 +194,8 @@ var scenarios = []scenario{
 	{name: "learnings trailing blank lines", learn: entries(2) + "\n\n\n"},
 	{name: "npm test and lint fix", files: map[string]string{"package.json": `{"scripts": {"test": "jest", "lint": "eslint . --fix"}}`}},
 	{name: "npm lint-fix script wins", files: map[string]string{"package.json": `{"scripts": {"lint": "eslint .", "lint:fix": "eslint --fix ."}}`}},
+	{name: "npm lint script a list", files: map[string]string{"package.json": `{"scripts": {"lint": ["eslint", "--fix"]}}`}},
+	{name: "npm lint script an object", files: map[string]string{"package.json": `{"scripts": {"lint": {"--fix": 1}}}`}},
 	{name: "npm lint without fix", files: map[string]string{"package.json": `{"scripts": {"lint": "eslint ."}}`}},
 	{name: "package json unparseable", files: map[string]string{"package.json": `{"scripts": `, "pytest.ini": "[pytest]\n"}},
 	{name: "pyproject and ruff", files: map[string]string{"pyproject.toml": "[x]\n", "ruff.toml": "\n"}},

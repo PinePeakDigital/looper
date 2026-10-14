@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a lint script given as a list is never read as fixing, unlike Python's membership test
+--- old
+				fix = fix || e == "--fix"
+--- new
+				fix = fix && e == "--fix"

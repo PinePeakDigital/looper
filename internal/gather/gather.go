@@ -141,6 +141,11 @@ func indentSensitive(path string) bool {
 // helper would have died (a count that is not a number).
 func perFile(args []string) (map[string]int, []string, bool) {
 	o, _ := exec.Command("git", append([]string{"diff", "--numstat"}, args...)...).Output()
+	// Python's strict decode died on a name that is not UTF-8 (core.quotePath=false), and
+	// context.sh then fell back to the raw count. Replacing the bytes instead would size on.
+	if !utf8.Valid(o) {
+		return nil, nil, false
+	}
 	acc, order := map[string]int{}, []string{}
 	for _, l := range py.Splitlines(py.Decode(o)) {
 		p := strings.Split(l, "\t")
@@ -172,7 +177,12 @@ func perFile(args []string) (map[string]int, []string, bool) {
 func size(base string) (changed, semantic int, diffstat, excluded string) {
 	rng := "origin/" + base + "...HEAD"
 	diffstat, _ = out("git", "diff", "--stat", rng)
-	ns, _ := out("git", "diff", "--numstat", rng)
+	ns, ok := out("git", "diff", "--numstat", rng)
+	if !ok {
+		// An unfetched or missing base. context.sh printed 0 lines and said nothing, which
+		// reads as an empty diff; the plan's scan then fails the same way and plans wide.
+		return 0, 0, diffstat, "the diff against " + rng + " could not be read, so nothing was sized"
+	}
 	changed = sum(ns)
 
 	// No positive pathspec: an exclude-only list already means "everything but these", and a
@@ -226,7 +236,11 @@ func size(base string) (changed, semantic int, diffstat, excluded string) {
 // reviewed, and the raw size of everything since. Raw on purpose: it can only over-count,
 // which makes the delta fast path harder to reach, never easier.
 func lastReviewed() (string, int) {
-	home, _ := os.UserHomeDir()
+	// No HOME is no store: a path relative to the repo would trust a store the repo ships.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", 0
+	}
 	b, err := os.ReadFile(filepath.Join(home, ".claude", "review-loop", "reviewed-shas"))
 	if err != nil || len(b) == 0 {
 		return "", 0
@@ -283,8 +297,17 @@ func commands() (test, lint value, fix bool) {
 		lint, fix = "npm run lint:fix", true
 	case hasLint:
 		lint = "npm run lint"
-		s, _ := lintScript.(string)
-		fix = strings.Contains(s, "--fix")
+		// Python's `in`: a substring of a string, an element of a list, a key of an object.
+		switch v := lintScript.(type) {
+		case string:
+			fix = strings.Contains(v, "--fix")
+		case []any:
+			for _, e := range v {
+				fix = fix || e == "--fix"
+			}
+		case map[string]any:
+			_, fix = v["--fix"]
+		}
 	case exists("ruff.toml") || exists(".ruff.toml"):
 		lint, fix = "ruff check --fix", true
 	case len(eslint) > 0:
@@ -317,6 +340,11 @@ func Command(args []string, stdout, errOut io.Writer) int {
 		return 2
 	}
 	base := baseBranch()
+	if strings.HasPrefix(base, "-") {
+		// Never a branch name git accepts, and `git fetch origin <base>` would read it as an
+		// option. Only a hostile origin/HEAD could supply one.
+		base = ""
+	}
 	if base != "" {
 		exec.Command("git", "fetch", "origin", base).Run() // best effort, as context.sh did
 	}

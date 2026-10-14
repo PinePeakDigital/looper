@@ -286,7 +286,8 @@ jobs:
           if grep -q -- '--- SKIP' context.log; then
             echo "the context parity gate SKIPPED:"; cat context.log; exit 1
           fi
-          for spec in TestContextMatchesTheShell:38 TestPackageScriptsAreAnObject:3; do
+          for spec in TestContextMatchesTheShell:40 TestPackageScriptsAreAnObject:4 \
+                      TestCrashesAndSilencesAreDecided:6; do
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' context.log)
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat context.log; exit 1; }
@@ -381,7 +382,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 348 ] || { echo "only $n mutations, expected at least 348 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 352 ] || { echo "only $n mutations, expected at least 352 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

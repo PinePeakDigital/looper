@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestCrashesAndSilencesAreDecided'
+expect: --- FAIL:
+why:    an unfetched base reads as an empty diff with no reason given
+--- old
+		return 0, 0, diffstat, "the diff against " + rng + " could not be read, so nothing was sized"
+--- new
+		return 0, 0, diffstat, ""

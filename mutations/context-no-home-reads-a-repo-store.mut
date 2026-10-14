@@ -1,0 +1,9 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestCrashesAndSilencesAreDecided'
+expect: --- FAIL:
+why:    with no HOME the review store is read relative to the repo, trusting stamps the repo itself ships
+--- old
+	home, err := os.UserHomeDir()
+--- new
+	home, err := os.UserHomeDir()
+	err = nil

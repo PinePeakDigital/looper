@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestCrashesAndSilencesAreDecided'
+expect: --- FAIL:
+why:    a base starting with '-' reaches git fetch, where it is read as an option
+--- old
+	if strings.HasPrefix(base, "-") {
+--- new
+	if false {

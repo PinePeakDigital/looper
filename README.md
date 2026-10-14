@@ -488,15 +488,32 @@ The divergences, each with its own test:
 - **Arguments are not ignored.** `-h` prints a usage line and any other argument is a usage error
   (exit 2); context.sh read none, so `context.sh -h` fetched and sized the whole branch
   (`TestArgumentsAreNotIgnored`).
-- **package.json's `scripts` is read only as an object of strings.** context.sh tested Python
-  membership on whatever was there: a string of scripts matched `test` as a substring and
-  answered `npm test`, and a list, or a `lint` script that was not a string, crashed it with no
-  output at all (`TestPackageScriptsAreAnObject`).
+- **package.json's `scripts` is read only as an object.** context.sh tested Python membership on
+  whatever was there. A string of scripts matched `test` as a substring and answered `npm test`.
+  A list of scripts, or a `lint` script that was a number or null, crashed it with no output at
+  all. (A `lint` script that is a list or an object answers as Python's `in` does, which is
+  parity.) A package.json using Python's JSON extensions, such as `NaN`, is not JSON, and reads as
+  no scripts (`TestPackageScriptsAreAnObject`).
 - **A Makefile that is not UTF-8 is still searched** for its `test:` target. context.sh's strict
   decode crashed on it, losing the whole context (`TestALatin1MakefileIsRead`).
-- **Learnings that are not UTF-8 reach the JSON with U+FFFD** for each bad byte. context.sh passed
-  them through the environment, where each became a lone-surrogate escape (`\udcXX`) that many
-  JSON parsers refuse (`TestLatin1LearningsAreReplaced`).
+- **Text that is not UTF-8 reaches the JSON with U+FFFD** for each bad byte, in the learnings and in
+  the diff stat. context.sh turned each such byte into a lone-surrogate escape (`\udcXX`), which
+  many JSON parsers refuse (`TestLatin1LearningsAreReplaced`). Learnings lines are matched as
+  bytes. context.sh's `grep` and `sed` matched by locale, which on some platforms skipped a line
+  holding invalid UTF-8 and took Unicode spaces as `[[:space:]]`.
+- **Where context.sh died or said nothing, looper answers** (`TestCrashesAndSilencesAreDecided`):
+  - A diff against `origin/<base>` that cannot be read (an unfetched or missing base) is named
+    in `sizing_excluded`. context.sh printed 0 lines and no reason, which reads as an empty diff.
+  - A base branch starting with `-` is refused (`base_branch: null`). `git fetch origin <base>`
+    would read it as an option, and git accepts no such branch name.
+  - No `HOME` means no review store. context.sh died under `set -u`, and a path relative to the
+    repo would trust a store the repo ships.
+  - A `Makefile` that is a directory has no test target. context.sh crashed on it.
+  - Learnings too big to pass through the environment are read. context.sh's Python never
+    started (exit 126).
+  - A changed file whose name is not UTF-8 (with `core.quotePath=false`) gets context.sh's
+    fallback: the raw count, with `sizing_helper produced no count`. Decoding it with U+FFFD
+    instead would have sized on and under-counted.
 
 ## `looper plan`
 
