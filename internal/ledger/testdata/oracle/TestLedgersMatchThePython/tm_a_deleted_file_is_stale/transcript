@@ -1,0 +1,21 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-threat-model.md",
+  "exists": true,
+  "claims": 1,
+  "stale": [
+    {
+      "line": 1,
+      "path": "docs/old.md",
+      "lines": "1",
+      "sha": "5402b36",
+      "commits": [
+        "b16d830 drop the old doc"
+      ]
+    }
+  ],
+  "broken_pins": [],
+  "uncited": 0
+}
+--- stderr ---

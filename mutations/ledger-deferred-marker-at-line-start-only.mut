@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    only a line starting `- DEFERRED` opens an entry, where the Python opened one for DEFERRED anywhere on a line, so entries and their pins merge or vanish
+--- old
+		if contains(raw, "DEFERRED") {
+--- new
+		if strings.HasPrefix(raw, "- DEFERRED") {

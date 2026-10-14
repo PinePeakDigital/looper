@@ -1,0 +1,8 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    DEL written raw where json.dumps escapes it, so the bytes plan.py parses are no longer the Python's
+--- old
+			case r >= ' ' && r <= '~':
+--- new
+			case r >= ' ' && r <= 0x7f:

@@ -1,0 +1,23 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 1,
+  "stale": [
+    {
+      "line": 2,
+      "path": "src/auth.ts",
+      "lines": null,
+      "sha": "5402b362ad3c942d23233d6e03303252872e195b",
+      "commits": [
+        "12a3560 rework auth again",
+        "89f2905 rework auth \u2014 \u03c0"
+      ]
+    }
+  ],
+  "unpinned": [],
+  "broken_pins": [],
+  "unguarded": []
+}
+--- stderr ---

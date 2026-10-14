@@ -1,0 +1,32 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 2,
+  "stale": [
+    {
+      "line": 2,
+      "path": "src/types.ts",
+      "lines": null,
+      "sha": "5402b36",
+      "commits": [
+        "09c38e6 allow async draws"
+      ]
+    }
+  ],
+  "unpinned": [
+    {
+      "line": 4,
+      "text": "- DEFERRED \ufffd y"
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 4,
+      "text": "- DEFERRED \ufffd y"
+    }
+  ]
+}
+--- stderr ---

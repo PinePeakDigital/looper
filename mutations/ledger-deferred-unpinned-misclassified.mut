@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    an entry with one pin is reported unpinned, so the defect list names correctly pinned entries and the one signal for never-stale deferrals is noise
+--- old
+		if len(e.pins) == 0 {
+--- new
+		if len(e.pins) <= 1 {

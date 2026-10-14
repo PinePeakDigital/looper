@@ -1,0 +1,30 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 3,
+  "stale": [],
+  "unpinned": [
+    {
+      "line": 1,
+      "text": "- DEFERRED x: a Guardian object."
+    },
+    {
+      "line": 3,
+      "text": "- DEFERRED y: c."
+    },
+    {
+      "line": 5,
+      "text": "- DEFERRED z: e."
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 5,
+      "text": "- DEFERRED z: e."
+    }
+  ]
+}
+--- stderr ---

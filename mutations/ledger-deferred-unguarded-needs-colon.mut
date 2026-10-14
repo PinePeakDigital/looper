@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    unguarded keyed on `Guard:` rather than the Python's bare `Guard`, so entries the skill reads as answered are reported as never asked
+--- old
+		if !contains(e.text, "Guard") {
+--- new
+		if !contains(e.text, "Guard:") {

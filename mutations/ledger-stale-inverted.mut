@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    the staleness rule inverted: the pins whose file moved are the ones reported fresh, so the one claim that needs re-reading is dropped from the worklist
+--- old
+		if touched != "" {
+--- new
+		if touched == "" {

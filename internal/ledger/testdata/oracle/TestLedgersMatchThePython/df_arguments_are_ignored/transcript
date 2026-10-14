@@ -1,0 +1,32 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 2,
+  "stale": [
+    {
+      "line": 4,
+      "path": "src/types.ts",
+      "lines": "1",
+      "sha": "5402b36",
+      "commits": [
+        "09c38e6 allow async draws"
+      ]
+    }
+  ],
+  "unpinned": [
+    {
+      "line": 7,
+      "text": "- DEFERRED 2026-10-01 (run abc123abc123): no pin on this one."
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 7,
+      "text": "- DEFERRED 2026-10-01 (run abc123abc123): no pin on this one."
+    }
+  ]
+}
+--- stderr ---

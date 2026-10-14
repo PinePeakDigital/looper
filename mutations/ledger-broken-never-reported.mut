@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    broken_pins always empty: pins.py recorded that broken() could be gutted to return [] with its own selftest green, and Step 2b then skips a suppression nothing re-examines
+--- old
+		if exec.Command("git", "cat-file", "-e", p.Sha+"^{commit}").Run() != nil {
+--- new
+		if exec.Command("git", "cat-file", "-e", p.Sha+"^{commit}").Run() != nil && false {

@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    --git-dir instead of --git-common-dir: in a linked worktree the ledger reads as missing, so Step 2b bootstraps a second threat model and the deferrals never wake
+--- old
+	common := git("rev-parse", "--git-common-dir")
+--- new
+	common := git("rev-parse", "--git-dir")

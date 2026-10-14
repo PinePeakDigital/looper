@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    a footer or note after the last entry joins it, so a citation down there becomes that entry's pin and an unpinned deferral drops out of unpinned
+--- old
+		} else if len(bs) > 0 && strip(raw) != "" && startsWithSpace(raw) {
+--- new
+		} else if len(bs) > 0 && strip(raw) != "" {

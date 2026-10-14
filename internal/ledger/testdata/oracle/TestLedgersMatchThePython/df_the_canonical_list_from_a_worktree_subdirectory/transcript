@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "path": "<tmp>/r/.git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 2,
+  "stale": [],
+  "unpinned": [
+    {
+      "line": 7,
+      "text": "- DEFERRED 2026-10-01 (run abc123abc123): no pin on this one."
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 7,
+      "text": "- DEFERRED 2026-10-01 (run abc123abc123): no pin on this one."
+    }
+  ]
+}
+--- stderr ---

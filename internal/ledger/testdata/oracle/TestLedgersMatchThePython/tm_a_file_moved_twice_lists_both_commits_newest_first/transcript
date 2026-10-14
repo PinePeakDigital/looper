@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-threat-model.md",
+  "exists": true,
+  "claims": 1,
+  "stale": [
+    {
+      "line": 1,
+      "path": "src/auth.ts",
+      "lines": "1",
+      "sha": "ef4e42bdb65fdfb66bd736c9461f0fa24fd489b9",
+      "commits": [
+        "12a3560 rework auth again",
+        "89f2905 rework auth \u2014 \u03c0"
+      ]
+    }
+  ],
+  "broken_pins": [],
+  "uncited": 0
+}
+--- stderr ---

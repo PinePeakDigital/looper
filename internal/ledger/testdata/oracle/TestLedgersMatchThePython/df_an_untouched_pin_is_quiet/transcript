@@ -1,0 +1,12 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 1,
+  "stale": [],
+  "unpinned": [],
+  "broken_pins": [],
+  "unguarded": []
+}
+--- stderr ---

@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    an indented entry is named with its indentation, so the text Step 2a quotes is not what the Python quoted
+--- old
+		out[i] = entry{line: b.line, text: strip(joined), pins: pins}
+--- new
+		out[i] = entry{line: b.line, text: joined, pins: pins}

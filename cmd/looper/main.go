@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 
 	"github.com/pinepeakdigital/looper/internal/docs"
+	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
 	"github.com/pinepeakdigital/looper/internal/push"
 	"github.com/pinepeakdigital/looper/internal/record"
@@ -28,6 +29,8 @@ const usage = `usage: looper version
        looper record {plan,cycle,finish,convergence,carried,skipped,nudge,abandon,
                       check,show,pending} [flags]
        looper stats [--alarm] [--repo <substring>]
+       looper threat-model
+       looper deferred
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
@@ -40,7 +43,12 @@ body in .git/info for Step 0c to flush — stderr says which, and names the caus
 gh could not answer rather than asserting there is no PR.
 
 stats reads the run record: the cadence report, or with --alarm the repeat-offender
-gates plan.py prints at Step 0 (silent when there are none). See README.md.`
+gates plan.py prints at Step 0 (silent when there are none). See README.md.
+
+threat-model and deferred report the two pinned ledgers under <git-common-dir>/info as
+JSON, from the working directory: which pinned files moved since their pin (stale), which
+pins name no commit here (broken_pins), and what owes a pin or a Guard line. Exit 0 for a
+report, 1 for a ledger that exists and cannot be read.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -78,6 +86,12 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		// review-stats.py's statuses: 0 for either report, 2 for a usage error, 1 for a store
 		// that exists and cannot be read. plan.py prints the alarm only on 0.
 		return stats.Command(args[1:], out, errOut)
+	case "threat-model":
+		// threat-model.py's report, which plan.py parses. Its own exit status: 0 for a report,
+		// 1 for a ledger that exists and cannot be read, 2 for --selftest.
+		return ledger.ThreatModel(args[1:], out, errOut)
+	case "deferred":
+		return ledger.Deferred(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
