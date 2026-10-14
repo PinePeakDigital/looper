@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xef in position 16: invalid continuation byte

@@ -23,14 +23,22 @@ type divergence struct {
 	ledger string
 	dir    bool
 	args   []string
+	// prep, when set, runs on the fixture root before the ledger is written; with noLedger,
+	// no ledger is written at all.
+	prep     func(t *testing.T, root string)
+	noLedger bool
 }
 
 func (d divergence) setup(t *testing.T) (*fixture, string) {
 	t.Helper()
 	f := newFixture(t)
+	if d.prep != nil {
+		d.prep(t, f.root)
+	}
 	p := filepath.Join(f.root, ".git", "info", ledgerName(d.cmd))
 	var err error
-	if d.dir {
+	if d.noLedger {
+	} else if d.dir {
 		err = os.Mkdir(p, 0o755)
 	} else {
 		err = os.WriteFile(p, []byte(f.subst.Replace(d.ledger)), 0o644)
@@ -117,4 +125,79 @@ func TestSelftestIsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// .git/info as a regular file is no ledger, exists:false, as the Python said: open fails with
+// ENOTDIR, and nothing can be under a file. Not a divergence — the case the unreadable rule
+// above must not swallow.
+func TestInfoAsAFileIsNoLedger(t *testing.T) {
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			want := golden.Read(t, "transcript")
+			code, out, errOut := divergence{cmd: cmd, noLedger: true, prep: infoAsFile}.runGo(t)
+			if got := transcript(code, out, errOut); got != want {
+				t.Errorf("--- python (frozen) ---\n%s\n--- looper ---\n%s", want, got)
+			}
+		})
+	}
+}
+
+func infoAsFile(t *testing.T, root string) {
+	info := filepath.Join(root, ".git", "info")
+	if err := os.RemoveAll(info); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(info, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var nulPin = map[string]string{
+	"threat-model": "- OBSERVED: fine. [src/types.ts @ {c1s}]\n- OBSERVED: bad. [src/a\x00b.ts @ {c1s}]\n",
+	"deferred":     "- DEFERRED x\n  Grounding: [src/a\x00b.ts @ {c1s}]\n  Guard: none.\n",
+}
+
+// A NUL byte in a pin's path exits 1 naming the pin's line. git cannot be asked about such a
+// path — the exec fails to start, which git() reads as "nothing moved" — so the pin would look
+// fresh forever. The Python died with ValueError.
+func TestANULInAPinPathIsAnError(t *testing.T) {
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			if !strings.HasPrefix(py, "exit=1\n") || !strings.Contains(py, "embedded null byte") {
+				t.Fatalf("the frozen oracle no longer records the crash:\n%s", py)
+			}
+			code, out, errOut := divergence{cmd: cmd, ledger: nulPin[cmd]}.runGo(t)
+			if code != 1 || out != "" || !strings.Contains(errOut, "line 2 names a path with a NUL byte") {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+		})
+	}
+}
+
+var latin1Pin = map[string]string{
+	"threat-model": "- OBSERVED: x. [src/naïve.ts @ {c1s}]\n",
+	"deferred":     "- DEFERRED x\n  Grounding: [src/naïve.ts @ {c1s}]\n  Guard: none.\n",
+}
+
+// git output that is not UTF-8 — here `i18n.logOutputEncoding latin1` re-encoding the subject
+// "touch naïve" — is read with U+FFFD for the bad bytes, as the ledger itself is. The Python's
+// strict decoder died with a traceback, losing the whole worklist to one commit subject.
+func TestNonUTF8GitOutputIsRead(t *testing.T) {
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			if !strings.HasPrefix(py, "exit=1\n") || !strings.Contains(py, "UnicodeDecodeError") {
+				t.Fatalf("the frozen oracle no longer records the crash:\n%s", py)
+			}
+			code, out, errOut := divergence{cmd: cmd, ledger: latin1Pin[cmd], prep: latin1Log}.runGo(t)
+			if code != 0 || !strings.Contains(out, `touch na\ufffdve"`) {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
+			}
+		})
+	}
+}
+
+func latin1Log(t *testing.T, root string) {
+	runGit(t, root, nil, "config", "i18n.logOutputEncoding", "latin1")
 }

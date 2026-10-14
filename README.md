@@ -450,6 +450,15 @@ The divergences, each with its own test:
 - **`--selftest` as the first argument** exits 2 with a pointer to `go test ./internal/ledger/`.
   The Python ran its own checks and printed `ok`; looper has none to run, and printing `ok` would
   claim one did (`TestSelftestIsRefused`). Anywhere else it is ignored with the other arguments.
+- **git output that is not UTF-8** — a commit subject under `i18n.logOutputEncoding latin1`,
+  say — is read with U+FFFD for the bad bytes, as the ledger is. The Python died with
+  `UnicodeDecodeError` on one commit subject (`TestNonUTF8GitOutputIsRead`).
+- **A NUL byte in a pin's path** exits 1 naming the pin's line. git cannot be asked about such a
+  path, and a failed git reads as "nothing moved", so the pin would look fresh forever; the
+  Python died with `ValueError` (`TestANULInAPinPathIsAnError`).
+
+`.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
+Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
 
 ## `looper docs`
 

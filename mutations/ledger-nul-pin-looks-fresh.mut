@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestANULInAPinPathIsAnError'
+expect: --- FAIL:
+why:    a pin path with a NUL byte cannot be passed to git, so its log fails to start, reads as "nothing moved", and the pin looks fresh forever
+--- old
+		if strings.ContainsRune(p.Path, 0) {
+--- new
+		if false {

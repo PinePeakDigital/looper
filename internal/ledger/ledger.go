@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // The two ledgers' file names under <git-common-dir>/info.
@@ -26,7 +27,8 @@ func read(path string) (text string, ok bool, err error) {
 		return "", false, nil
 	}
 	b, err := os.ReadFile(path)
-	if errors.Is(err, fs.ErrNotExist) {
+	// ENOTDIR is info/ being a file: no ledger can be under it, so there is none, as the Python said.
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -54,6 +56,20 @@ func emit(out io.Writer, v value) int {
 	return 0
 }
 
+// nulPath refuses a pin whose path holds a NUL byte. No file can be named that, and git cannot
+// be asked about it: the exec fails to start, which git() reads as "nothing moved", so the pin
+// would look fresh forever. The Python died on it with a ValueError; this says which pin.
+func nulPath(cmd string, pins []Pin, errOut io.Writer) bool {
+	for _, p := range pins {
+		if strings.ContainsRune(p.Path, 0) {
+			fmt.Fprintf(errOut, "looper %s: the pin on line %d names a path with a NUL byte, "+
+				"which git cannot be asked about — fix the pin\n", cmd, p.Line)
+			return true
+		}
+	}
+	return false
+}
+
 func unreadable(cmd, path string, err error, errOut io.Writer) int {
 	fmt.Fprintf(errOut, "looper %s: cannot read %s: %v — it exists, so it is not reported "+
 		"as missing\n", cmd, path, err)
@@ -78,6 +94,9 @@ func ThreatModel(args []string, out, errOut io.Writer) int {
 			{"stale", []value{}}, {"broken_pins", []value{}}, {"uncited", 0}})
 	}
 	claims, uncited := Citations(text, "OBSERVED:")
+	if nulPath("threat-model", claims, errOut) {
+		return 1
+	}
 	return emit(out, obj{
 		{"path", path},
 		{"exists", true},
@@ -171,6 +190,9 @@ func Deferred(args []string, out, errOut io.Writer) int {
 		if !contains(e.text, "Guard") {
 			unguarded = append(unguarded, e.first())
 		}
+	}
+	if nulPath("deferred", all, errOut) {
+		return 1
 	}
 	return emit(out, obj{
 		{"path", path},

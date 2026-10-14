@@ -5,25 +5,21 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/pinepeakdigital/looper/internal/record"
 )
 
 // The Python text model, as far as these two ledgers reach it. Parity is byte for byte, so
 // "whitespace", "a line" and "a digit" each mean what they mean to Python 3's str and re,
 // not what they mean to Go's strings and regexp — the two disagree on all three.
 
-// isSpace is str.isspace(), which is also what re's \s matches in a str pattern (checked
-// over every code point against Python 3.14). It is wider than unicode.IsSpace: \x1c-\x1f
-// count, and so on.
-func isSpace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', 0x1c, 0x1d, 0x1e, 0x1f, ' ', 0x85, 0xa0, 0x1680,
-		0x2028, 0x2029, 0x202f, 0x205f, 0x3000:
-		return true
-	}
-	return r >= 0x2000 && r <= 0x200a
-}
+// isSpace is str.isspace(), which is also what re's \s matches in a str pattern. It is
+// record's definition, shared with internal/stats, so the module has one meaning of Python
+// whitespace rather than one per port.
+var isSpace = record.PySpace
 
-// spaceClass is isSpace as a regexp class body.
+// spaceClass is isSpace as a regexp class body; TestSpaceClassIsIsSpace holds the two equal
+// over every code point, since a regexp class cannot call a function.
 const spaceClass = `\t\n\x0b\f\r\x1c-\x1f \x{85}\x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}`
 
 // digitClass is re's \d in a str pattern: Unicode category Nd, as of the Unicode 16.0 tables
