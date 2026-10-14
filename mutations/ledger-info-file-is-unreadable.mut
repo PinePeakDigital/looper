@@ -5,4 +5,4 @@ why:    .git/info as a regular file exits 1 claiming the ledger exists but canno
 --- old
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 --- new
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
