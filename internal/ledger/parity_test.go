@@ -328,6 +328,7 @@ var scenarios = []scenario{
 	{name: "df a skipped line inside an entry shifts its pin line", cmd: "deferred", ledger: "- DEFERRED x: a.\n\n  Grounding: b. [src/types.ts:1 @ {c1s}]\nunindented\n  Guard: [src/auth.ts @ {c1s}]\n"},
 	{name: "df several pins in one entry", cmd: "deferred", ledger: "- DEFERRED x: a. [src/types.ts:1-2 @ {c1s}]\n  Grounding: b. [src/types.ts:1 @ {c1s}] and [src/auth.ts:1 @ {c1s}]\n  and [docs/old.md @ {c1s}]\n  Guard: none.\n"},
 	{name: "df a hard-wrapped entry names its first line", cmd: "deferred", ledger: "  - DEFERRED 2026-10-01 (run abc123abc123): two async Sketch draws could overlap and\n    corrupt the canvas mid-render.\n    Grounding: no async Sketch exists; `trails` is synchronous. [src/types.ts:14 @ {c1s}]\n    Guard: none — a type-level assertion would need a new test file, so not cheap.   \n"},
+	{name: "df an indented entry is named stripped", cmd: "deferred", ledger: "   - DEFERRED x: indented, unpinned, unguarded.   \n\u3000- DEFERRED y: ideographic.\u00a0\n"},
 	{name: "df an entry with no Guard line", cmd: "deferred", ledger: "- DEFERRED x: a.\n  Grounding: b. [src/app.ts:1 @ {c1s}]\n"},
 	{name: "df Guard anywhere in the text counts", cmd: "deferred", ledger: "- DEFERRED x: a Guardian object.\n  Grounding: b.\n- DEFERRED y: c.\n  Grounding: d. Guard\n- DEFERRED z: e.\n  guard: lower case.\n"},
 	{name: "df DEFERRED anywhere on a line starts an entry", cmd: "deferred", ledger: "UNDEFERRED\n  Grounding: [src/types.ts @ {c1s}]\nnote: DEFERRED until later\n- deferred lower case is not an entry\n  Guard: x\n"},

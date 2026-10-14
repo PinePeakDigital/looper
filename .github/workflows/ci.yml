@@ -236,7 +236,7 @@ jobs:
           fi
           # Per table, for the reason the record floors are per-oracle: each divergence is the only
           # thing asserting which side owns that answer, so none is left to an aggregate.
-          for spec in TestLedgersMatchThePython:62 TestAnUnreadableLedgerIsAnError:2 \
+          for spec in TestLedgersMatchThePython:63 TestAnUnreadableLedgerIsAnError:2 \
                       TestInvalidUTF8LedgerIsRead:2 TestSelftestIsRefused:2; do
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' ledger.log)

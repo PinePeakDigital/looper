@@ -425,7 +425,7 @@ from `git rev-parse --git-common-dir`, so a linked worktree reads the main check
 Outside a repo the path is `""` and the report says `exists: false`. Arguments are ignored, as
 the Python ignored them; exit 0 for any report.
 
-`TestLedgersMatchThePython` runs 62 scenarios through both commands and requires the exit
+`TestLedgersMatchThePython` runs 63 scenarios through both commands and requires the exit
 status, stdout and stderr the Python printed for the same repo, ledger and working directory,
 byte for byte — key order, indentation, `ensure_ascii` escapes — frozen under
 `internal/ledger/testdata/oracle` (captured at narthur/skills 8c3b0f4). The fixture repo is
