@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a repo with no GitHub remote goes on to ask gh about PRs, and the gate reason names gh rather than the missing remote
+--- old
+	if rc != 0 || !strings.Contains(out, "github.com") {
+--- new
+	if rc != 0 {

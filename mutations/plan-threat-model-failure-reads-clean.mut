@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a threat model that could not be read reports as one that exists with nothing stale, so the update is planned skip exactly when the model could not be read
+--- old
+			return nil, why
+--- new
+			return map[string]any{"exists": true}, ""

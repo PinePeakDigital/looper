@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    when the regrowth margin is what decided the skip, the reason says the file is under the threshold, which is false on its face and sends a reader hunting an off-by-one
+--- old
+	case c.entries < 40:
+--- new
+	case true:

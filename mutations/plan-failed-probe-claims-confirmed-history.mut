@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+expect: --- FAIL:
+why:    a PR-history probe that failed reports history as confirmed, asserting a fact the check abandoned
+--- old
+		return true, "gh authenticated, but could not confirm PR history (" + why + ") — assuming reachable"
+--- new
+		return true, "gh authenticated, github remote present, PR history confirmed" + why[:0]

@@ -51,24 +51,35 @@ func pyExit(t *testing.T, py string) string {
 var usageAndInput = []struct {
 	name   string
 	d      divergence
-	stderr string
+	stderr []string
 }{
-	{"context not JSON", divergence{scenario: scenario{ctx: "{not json"}}, "context is not valid JSON"},
-	{"context trailing data", divergence{scenario: scenario{ctx: ctxDefault + " {}"}}, "context is not valid JSON"},
-	{"context file missing", divergence{scenario: scenario{ctx: ctxDefault, args: with("--context", "/nonexistent/ctx.json")}}, "cannot read the context file"},
-	{"no model", divergence{scenario: scenario{ctx: ctxDefault}, raw: append(with(), "--dry-run")}, "--model"},
-	{"no answers", divergence{scenario: scenario{ctx: ctxDefault, args: []string{"--logic", "yes"}}}, "--behavioral-goal, --runtime-change, --attacker-reachable"},
-	{"unknown flag", divergence{scenario: scenario{ctx: ctxDefault, args: with("--frobnicate", "yes")}}, "frobnicate"},
-	{"positional argument", divergence{scenario: scenario{ctx: ctxDefault, args: append(with(), "extra")}}, "extra"},
+	{"context not JSON", divergence{scenario: scenario{ctx: "{not json"}}, []string{"context is not valid JSON"}},
+	{"context trailing data", divergence{scenario: scenario{ctx: ctxDefault + " {}"}}, []string{"context is not valid JSON"}},
+	{"context file missing", divergence{scenario: scenario{ctx: ctxDefault, args: with("--context", "/nonexistent/ctx.json")}}, []string{"cannot read the context file (", "Run context.sh first and point --context at what it wrote"}},
+	{"no model", divergence{scenario: scenario{ctx: ctxDefault}, raw: append(with(), "--dry-run")}, []string{"--model"}},
+	{"no answers", divergence{scenario: scenario{ctx: ctxDefault, args: []string{"--logic", "yes"}}}, []string{"--behavioral-goal, --runtime-change, --attacker-reachable"}},
+	{"unknown flag", divergence{scenario: scenario{ctx: ctxDefault, args: with("--frobnicate", "yes")}}, []string{"frobnicate"}},
+	// The tier is the plan's to name, never the caller's: there is no flag for it.
+	{"a tier flag", divergence{scenario: scenario{ctx: ctxDefault, args: with("--tier", "fast")}}, []string{"-tier"}},
+	{"positional argument", divergence{scenario: scenario{ctx: ctxDefault, args: append(with(), "extra")}}, []string{"extra"}},
 }
 
 func TestUsageAndInputErrorsExitAsThePythonDid(t *testing.T) {
 	for _, c := range usageAndInput {
 		t.Run(c.name, func(t *testing.T) {
 			py := golden.Read(t, "transcript")
+			// The frozen answer must be plan.py's own refusal: comparing exit codes alone passed
+			// a golden that recorded python3 failing to open the script, which also exits 2.
+			if !strings.Contains(py, "\nplan.py: error: ") && !strings.Contains(py, "\nplan: ") {
+				t.Fatalf("the frozen oracle is not plan.py refusing:\n%s", py)
+			}
 			code, out, errOut, w := c.d.run(t)
 			got := w.result(t, code, out, errOut)
-			if pyExit(t, got) != pyExit(t, py) || out != "" || !strings.Contains(errOut, c.stderr) {
+			named := true
+			for _, want := range c.stderr {
+				named = named && strings.Contains(errOut, want)
+			}
+			if pyExit(t, got) != pyExit(t, py) || out != "" || !named {
 				t.Errorf("--- python (frozen) ---\n%s\n--- looper ---\n%s\nwant the same exit, no stdout, stderr naming %q", py, got, c.stderr)
 			}
 		})
