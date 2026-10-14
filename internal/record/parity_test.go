@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pinepeakdigital/looper/internal/golden"
 )
 
 // The parity gate. Until runlog.py is retired, the two implementations must not be able to
@@ -68,10 +70,10 @@ const noRun = "NO-SUCH-RUN"
 // without one reintroduces exactly the vacuity this helper was extracted to fix, with
 // nothing red. Copy the shape from a caller below rather than assuming the helper covers it.
 //
-// runpy rather than an import: review-stats.py's name has a hyphen and is therefore not
-// importable, and its own `import runlog` needs the skill directory on sys.path — run_path
-// does not put the script's directory there. runlog.py needs neither, but both oracles that
-// take a STORE and a BODY go through here, so neither can invent its own mechanism.
+// runpy rather than an import, with the script's directory put on sys.path by hand: run_path
+// does not put it there. runlog.py needs neither today; they are the mechanism review-stats.py
+// needed (a hyphenated name, its own `import runlog`) when it was the second live oracle, and
+// keeping one mechanism means a future oracle cannot invent its own.
 //
 // TestStorePathMatchesThePython does not, and cannot: it needs a FRESH environment rather
 // than os.Environ() plus overrides, because an inherited HOME cannot be removed by appending
@@ -263,23 +265,17 @@ var refused = map[string][]string{
 // the whole suite. Labelled rather than left to read as coverage.
 //
 // What IS testable is the half that can change underneath us — whether the Python still
-// SIGNALS a missing run at all. A refactor that made review-stats' load() return a default
-// run, or dropped cmd_convergence's exit 2, would silence the tripwires without touching Go,
-// and nothing else would notice. So this pins the oracles' side of the contract directly.
+// SIGNALS a missing run at all. A refactor that made runlog's load() return a default run
+// would silence the tripwires without touching Go, and nothing else would notice. So this pins
+// the oracle's side of the contract directly.
+//
+// It once pinned review-stats' load() too. That subtest went when DroppedGates' oracle was
+// frozen: no live review-stats.py is consulted any more, so there is no missing-run signal of
+// its to keep, and a frozen answer to "does it say ABSENT" would assert only the golden.
 func TestTheOraclesSayWhenTheyFindNoRun(t *testing.T) {
 	script := runlogPath(t)
-	stats := reviewStatsPath(t)
 	// A store with a run, just not the one anything asks about.
 	path := store(t, `{"run_id":"other","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x"}`)
-
-	t.Run("review-stats load", func(t *testing.T) {
-		got := pyOracle(t, stats, path,
-			"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
-				"print('ABSENT' if run is None else 'FOUND')")
-		if got != "ABSENT" {
-			t.Errorf("the oracle no longer distinguishes a missing run: got %q", got)
-		}
-	})
 
 	t.Run("runlog load", func(t *testing.T) {
 		got := pyOracle(t, script, path,
@@ -592,12 +588,12 @@ var fixtures = map[string][]string{
 	// `passed` and `blocked` are the two statuses most likely to be quietly accounted, and
 	// both are deliberately absent from the accounted vocabularies — but for different
 	// reasons, and not the same tuple. `passed` was added to GATE_ACCOUNTED and taken back
-	// out (runlog.py:466-470, review-stats.py:104-112): it is report-line PROSE for a gate
-	// line rather than a status word, and accounting it made the tier read `full` while the
+	// out (runlog.py:466-470, review-stats.py:104-112, both at narthur/skills 6993999): it is
+	// report-line PROSE for a gate line rather than a status word, and accounting it made the tier read `full` while the
 	// alarm read `did not complete (passed)` — two instruments contradicting each other about
 	// one record. `blocked` has no add-and-revert; its absence is argued from the docs' own
 	// asymmetry, that a waived gate pushes and a blocked one does not
-	// (review-stats.py:95-102). Each must surface under its own name.
+	// (review-stats.py:95-102 at 6993999). Each must surface under its own name.
 	"gate passed is still dropped": {
 		`{"run_id":"r","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40,"gates":{"g":{"planned":"run"}}}`,
 		`{"run_id":"r","phase":"cycle","n":1,"applied":0,"agents":2}`,
@@ -697,43 +693,28 @@ func TestCycleCountMatchesThePython(t *testing.T) {
 	}
 }
 
-// review-stats.py is the SECOND oracle, and it exists because the gate was narrower than
-// its name. `dropped_gates` does not live in runlog.py — it lives in review-stats.py, which
-// has no CLI entry point for it — so when the parity harness only knew how to shell out to
-// `runlog.py <subcommand>`, DroppedGates had no oracle at all. It had unit tests, but those
-// assert against my reading of the Python, which is the thing a port most needs checked.
-//
-// Resolved as a sibling of runlog.py rather than from its own variable: the two files ship
-// together in the skill directory, and a second env var is a second thing to get wrong.
-func reviewStatsPath(t *testing.T) string {
-	t.Helper()
-	p := filepath.Join(filepath.Dir(runlogPath(t)), "review-stats.py")
-	if _, err := os.Stat(p); err != nil {
-		// Fatal, never Skip, and not conditional on how the path was found. runlogPath has
-		// already established that runlog.py is there — it skips or fatals otherwise — so by
-		// here a missing sibling always means a runlog.py with no review-stats.py beside it,
-		// which is a broken checkout rather than an absent one. Keying the polarity on
-		// whether REVIEW_LOOP_RUNLOG happened to be set sent half those cases to Skip, and a
-		// skip reports a green gate for half a gate, which is the thing this guard is for.
-		t.Fatalf("review-stats.py is not beside runlog.py (looked at %s) — point "+
-			"REVIEW_LOOP_RUNLOG at a runlog.py that has review-stats.py next to it", p)
-	}
-	return p
-}
-
 // DroppedGates feeds the alarm, and its answer is a map rather than a word, so it is the
 // method with the most room to diverge quietly: a wrong default, a wrong GATE_OK, or a
 // dropped isinstance guard each change one entry and nothing else.
 //
-// Parity is on the RENDERED status. The Python's map can hold a non-string status, because
+// Its oracle was review-stats.py's dropped_gates, which runlog.py never had, and the skill
+// retires review-stats.py now that `looper stats` replaces it. So the oracle's answer for each
+// fixture is frozen under testdata/oracle (internal/golden says what a golden is and is not),
+// captured at narthur/skills 6993999 by loading the store through review-stats' own load() —
+// runlog's default 4000-line tail, which a handful of rows never reaches — and printing
+// dropped_gates(run) with every status passed through str(), re-marshalled through Go so the
+// two strings differ only where the maps do. A fixture added to `fixtures` has no oracle left
+// to capture from: its golden here is written by hand and reviewed as such, and a missing one
+// fails this test rather than skipping it.
+//
+// Parity is on the RENDERED status. The Python's map could hold a non-string status, because
 // the status vocabulary is open and cmd_finish never validates it, while the port's type is
-// map[string]string. str() is the same rendering the alarm line's f-string performs, so
-// comparing there compares what a reader of the report would actually see — the keys and
-// the defaults, which is where the logic is, still compare exactly.
+// map[string]string. str() is the rendering the alarm line's f-string performed, so the golden
+// holds what a reader of the report would actually have seen.
 func TestDroppedGatesMatchesThePython(t *testing.T) {
-	stats := reviewStatsPath(t)
 	for name, rows := range fixtures {
 		t.Run(name, func(t *testing.T) {
+			want := strings.TrimSuffix(golden.Read(t, "dropped"), "\n")
 			path := store(t, rows...)
 
 			runs, err := Load(path, 0)
@@ -742,50 +723,22 @@ func TestDroppedGatesMatchesThePython(t *testing.T) {
 			}
 			run := runs["r"]
 			if run == nil {
-				// Without this the subtest is vacuous: the Python side also degrades a
-				// missing run to {}, so a typo'd run_id or rows that fail to parse compare
-				// {} against {} and report PASS while counting toward the CI floor. The
-				// sibling test above has always had this guard; this one shipped without it.
+				// Without this the subtest is vacuous for any fixture whose golden is {}: a
+				// typo'd run_id or rows that fail to parse would compare an empty map against
+				// it and report PASS while counting toward the CI floor.
 				t.Fatalf("Go side found no run %q in the fixture", "r")
 			}
 			dropped, err := run.DroppedGates()
 			if err != nil {
 				t.Fatalf("Go side could not decode the fixture: %v", err)
 			}
-			gotJSON, err := json.Marshal(dropped) // encoding/json sorts map keys
+			got, err := json.Marshal(dropped) // encoding/json sorts map keys
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			// review-stats' own load() takes no limit and so reads at runlog's DEFAULT
-			// 4000-line tail, where the CycleCount site above passes limit=None and the Go
-			// side reads the whole store. Bare is the more faithful oracle — it is the entry
-			// point review-stats actually uses — and fixtures are a handful of rows, so the
-			// tail never bites; a fixture past 4000 rows would need runlog.load directly.
-			want := pyOracle(t, stats, path,
-				"run=next((x for x in m['load']() if x.get('run_id')=='r'), None);"+
-					"print("+strconv.Quote(noRun)+" if run is None else "+
-					"json.dumps({k: str(v) for k, v in m['dropped_gates'](run).items()}, sort_keys=True))")
-
-			// Re-marshal through Go so the two strings differ only where the maps do:
-			// Python's json.dumps spaces its separators and Go's does not.
-			var pyMap map[string]string
-			if err := json.Unmarshal([]byte(want), &pyMap); err != nil {
-				// %q, and the byte count: "printed something that is not a status map" sent
-				// the reader hunting for malformed output when the real answer was zero bytes
-				// and exit 0, which %s renders as nothing at all.
-				t.Fatalf("python side's %d bytes of output are not a status map: %v\n"+
-					"stdout: %q\nfixture:\n%s",
-					len(want), err, want, strings.Join(rows, "\n"))
-			}
-			wantJSON, err := json.Marshal(pyMap)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if string(gotJSON) != string(wantJSON) {
-				t.Errorf("dropped gates disagree: Go %s, Python %s\nfixture:\n%s",
-					gotJSON, wantJSON, strings.Join(rows, "\n"))
+			if string(got) != want {
+				t.Errorf("dropped gates disagree: Go %s, Python (frozen) %s\nfixture:\n%s",
+					got, want, strings.Join(rows, "\n"))
 			}
 		})
 	}

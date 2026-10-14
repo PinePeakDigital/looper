@@ -46,7 +46,9 @@ jobs:
       # a commit, not a branch: a mutable ref would let the oracle change under the gate.
       # The read-half tests import runlog.py as a library; the write half's gate
       # (TestWriteMatchesThePython) reads frozen output under testdata/oracle instead,
-      # because runlog.py's command line is gone, and needs no oracle.
+      # because runlog.py's command line is gone, and needs no oracle. So does
+      # TestDroppedGatesMatchesThePython, whose oracle was review-stats.py — retired by the
+      # skill once `looper stats` replaced it — so nothing here needs that script.
       - name: fetch the parity oracle
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -57,7 +59,7 @@ jobs:
 
       # internal/record runs here, verbosely and ONCE, because the next assertion needs
       # its per-subtest output. Running it again to check that it ran would re-pay the
-      # whole parity cost — ~100 subtests, each spawning a python3 subprocess — on every
+      # whole parity cost — ~70 subtests, each spawning a python3 subprocess — on every
       # push, so the rest of the tree is tested separately below.
       - name: go test (record, with the oracle)
         env:
@@ -92,12 +94,15 @@ jobs:
           # every gate here green, measured. (Why it was left out is recorded nowhere, so this
           # comment no longer guesses at it, and the agent count that was here belongs in a commit
           # message, not in the tree.) The floor
-          # of 11 pins the table's WIDTH as well as the test's existence. Write is the write half's
+          # of 11 pins the table's WIDTH as well as the test's existence. DroppedGates compares
+          # against review-stats.py's frozen answers, one per fixture, so its floor is the full
+          # 28: a fixture with no golden fails rather than skipping, and a shrunk table is what
+          # only this floor can catch. Write is the write half's
           # gate (looper record against runlog.py's frozen output): 37 scenarios, each a SEQUENCE of calls, so its
           # floor pins the scenario table and not the number of calls. The per-case `expect:`
           # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
           # entry, because two of the five store-path entries share one `expect:` string.
-          for spec in Convergence:25 CycleCount:25 DroppedGates:25 StorePath:11 Write:37; do
+          for spec in Convergence:25 CycleCount:25 DroppedGates:28 StorePath:11 Write:37; do
             t=${spec%:*}; min=${spec#*:}
             # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
             # Two reasons written here before were wrong, and the third is deliberately
