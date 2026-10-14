@@ -1,0 +1,8 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    \s narrowed to ASCII: a pin with a non-breaking space before its @ stops being a citation, so the claim goes unwatched
+--- old
+const spaceClass = `\t\n\x0b\f\r\x1c-\x1f \x{85}\x{a0}\x{1680}
+--- new
+const spaceClass = `\t\n\x0b\f\r\x1c-\x1f \x{85}\x{1680}

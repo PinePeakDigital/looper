@@ -1,0 +1,8 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    \d borrowed from Go's Unicode 15 tables: a line pinned with a Unicode 16 digit stops being a citation here while the Python read it as one
+--- old
+	`\x{1e5f1}-\x{1e5fa}\x{1e950}-\x{1e959}\x{1fbf0}-\x{1fbf9}`
+--- new
+	`\x{1e950}-\x{1e959}\x{1fbf0}-\x{1fbf9}`

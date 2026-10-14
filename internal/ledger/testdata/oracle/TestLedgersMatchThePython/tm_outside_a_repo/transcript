@@ -1,0 +1,11 @@
+exit=0
+--- stdout ---
+{
+  "path": "",
+  "exists": false,
+  "claims": 0,
+  "stale": [],
+  "broken_pins": [],
+  "uncited": 0
+}
+--- stderr ---

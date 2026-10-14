@@ -1,0 +1,11 @@
+exit=0
+--- stdout ---
+{
+  "path": "<tmp>/r/.git/info/review-loop-threat-model.md",
+  "exists": true,
+  "claims": 3,
+  "stale": [],
+  "broken_pins": [],
+  "uncited": 1
+}
+--- stderr ---

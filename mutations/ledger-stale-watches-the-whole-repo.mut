@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    a pin goes stale when ANY file moves, so every deferral and claim cries wolf on every commit and the worklist stops being read
+--- old
+		touched := git("log", "--oneline", p.Sha+"..HEAD", "--", p.Path)
+--- new
+		touched := git("log", "--oneline", p.Sha+"..HEAD")

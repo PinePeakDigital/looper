@@ -1,0 +1,35 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 3,
+  "stale": [
+    {
+      "line": 5,
+      "path": "src/app.ts",
+      "lines": "1",
+      "sha": "9c2a7090627d0fffa9ed001bf7be98f86c2c8068",
+      "commits": [
+        "5402b36 base"
+      ]
+    }
+  ],
+  "unpinned": [],
+  "broken_pins": [
+    {
+      "line": 2,
+      "path": "src/types.ts",
+      "lines": "1",
+      "sha": "0000000"
+    },
+    {
+      "line": 5,
+      "path": "src/app.ts",
+      "lines": "1",
+      "sha": "9c2a7090627d0fffa9ed001bf7be98f86c2c8068"
+    }
+  ],
+  "unguarded": []
+}
+--- stderr ---

@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestAnUnreadableLedgerIsAnError'
+expect: --- FAIL:
+why:    an unreadable ledger reports exists:false, the Python's answer: the deferred list says nothing is deferred and Step 2b bootstraps over a model it could not read
+--- old
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+--- new
+	if err != nil || errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {

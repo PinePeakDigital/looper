@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    a pin to a blob or tree sha passes as resolvable, so it is neither stale (git log fails on it) nor broken, and looks checked while nothing watches it
+--- old
+		if exec.Command("git", "cat-file", "-e", p.Sha+"^{commit}").Run() != nil {
+--- new
+		if exec.Command("git", "cat-file", "-e", p.Sha).Run() != nil {

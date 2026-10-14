@@ -401,6 +401,68 @@ integral float like `"agents":2.0` —
   collected them from a set, whose order is hash-seeded per process, so its order there changed
   between invocations (`TestGatesFirstDroppedByOneRunTieByName`).
 
+## `looper threat-model` and `looper deferred`
+
+The review-loop's two pinned ledgers, under `<git-common-dir>/info`: a port of the skill's
+`threat-model.py` (Step 2b, and parsed by plan.py), `deferred.py` (Step 2a) and the `pins.py`
+they share, in `internal/ledger`.
+
+```text
+looper threat-model   # review-loop-threat-model.md: {path, exists, claims, stale, broken_pins, uncited}
+looper deferred       # review-loop-deferred.md: {path, exists, entries, stale, unpinned, broken_pins, unguarded}
+```
+
+Both make the same kind of statement — something true about the code at a commit, cited as
+`[path:line @ sha]`, `[path:start-end @ sha]` or `[path @ sha]` — and a pin is **stale** when
+`git log <sha>..HEAD -- <path>` lists anything, reported with those commits. A pin whose sha
+names no commit here is in `broken_pins`: `git log` fails on it, which reads exactly like
+"nothing moved", so without that list it would look checked and be unwatched. The threat model
+counts each line holding `OBSERVED:` but no pin as `uncited`. The deferred list reads each line
+containing `DEFERRED` as an entry, with the indented non-blank lines after it, names entries
+with no pin (`unpinned`) and entries with no `Guard` anywhere in them (`unguarded`). Both run
+in the working directory, as the Python did — there is no `--repo` — and take the ledger path
+from `git rev-parse --git-common-dir`, so a linked worktree reads the main checkout's ledgers.
+Outside a repo the path is `""` and the report says `exists: false`. Arguments are ignored, as
+the Python ignored them; exit 0 for any report.
+
+`TestLedgersMatchThePython` runs 63 scenarios through both commands and requires the exit
+status, stdout and stderr the Python printed for the same repo, ledger and working directory,
+byte for byte — key order, indentation, `ensure_ascii` escapes — frozen under
+`internal/ledger/testdata/oracle` (captured at narthur/skills 8c3b0f4). The fixture repo is
+built with a fixed identity, fixed author and committer dates and no global or system git
+config, so its shas are the same on every machine and the goldens hold them as they are; the
+one normalisation is the temp directory, which a worktree's absolute common dir prints. Parity
+reaches Python's text model, not Go's: `\s` and `str.strip()` are Python's Unicode whitespace,
+`\d` is Unicode `Nd` as of the Unicode 16.0 tables the oracle's Python carried (spelled out,
+since go1.24's are 15.0), lines split where `str.splitlines()` splits, after universal newlines.
+
+The divergences, each with its own test:
+
+- **An unreadable ledger** (not a missing one, which is still `exists: false`) exits 1 with
+  `looper <cmd>: cannot read <path>: …` and nothing on stdout. The Python caught every `OSError`
+  as `exists: false`, so an unreadable deferred list reported nothing deferred and an unreadable
+  threat model sent Step 2b to bootstrap over it; plan.py reads a non-zero exit as "run the
+  update rather than assume clean" (`TestAnUnreadableLedgerIsAnError`).
+- **A ledger that is not valid UTF-8** is read, each run of bad bytes as one U+FFFD, and the
+  report is the Python's own report on the ledger with U+FFFD written there. The Python died
+  with `UnicodeDecodeError`, losing the whole worklist to one bad byte in a prose line
+  (`TestInvalidUTF8LedgerIsRead`).
+- **`--selftest` as the first argument** exits 2 with a pointer to `go test ./internal/ledger/`.
+  The Python ran its own checks and printed `ok`; looper has none to run, and printing `ok` would
+  claim one did (`TestSelftestIsRefused`). Anywhere else it is ignored with the other arguments.
+- **git output that is not UTF-8** — a commit subject under `i18n.logOutputEncoding latin1`,
+  say — is read with U+FFFD for the bad bytes, as the ledger is. The Python died with
+  `UnicodeDecodeError` on one commit subject (`TestNonUTF8GitOutputIsRead`).
+- **A git common dir that is not UTF-8** exits 1 with a sentence. Decoded with U+FFFD it names
+  no real file, so an existing ledger would read as missing; the Python died with
+  `UnicodeDecodeError` (`TestNonUTF8CommonDirIsAnError`).
+- **A NUL byte in a pin's path** exits 1 naming the pin's line. git cannot be asked about such a
+  path, and a failed git reads as "nothing moved", so the pin would look fresh forever; the
+  Python died with `ValueError` (`TestANULInAPinPathIsAnError`).
+
+`.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
+Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
+
 ## `looper docs`
 
 ```text

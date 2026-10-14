@@ -1,0 +1,10 @@
+exit=0
+--- stdout ---
+{
+  "path": "",
+  "exists": false,
+  "entries": 0,
+  "stale": [],
+  "unpinned": []
+}
+--- stderr ---

@@ -1,0 +1,10 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestAnUnwritableReportExits1'
+expect: --- FAIL:
+why:    a report that could not be written exits 0, so the caller parses nothing as a clean answer
+--- old
+	if _, err := io.WriteString(out, encode(v)); err != nil {
+		return 1
+--- new
+	if _, err := io.WriteString(out, encode(v)); err != nil {
+		return 0

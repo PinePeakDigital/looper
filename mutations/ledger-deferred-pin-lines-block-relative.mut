@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    pin lines left block-relative, so a stale or broken pin names a line that is not where the pin is
+--- old
+			pins[j].Line += b.line - 1
+--- new
+			pins[j].Line += 0

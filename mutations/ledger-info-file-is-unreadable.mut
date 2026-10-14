@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestInfoAsAFileIsNoLedger'
+expect: --- FAIL:
+why:    .git/info as a regular file exits 1 claiming the ledger exists but cannot be read, where there is none and the Python said exists:false
+--- old
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+--- new
+	if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {

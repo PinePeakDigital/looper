@@ -1,0 +1,8 @@
+target: internal/ledger/py.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLineBreaksAreSplitlines'
+expect: --- FAIL:
+why:    U+2029 does not end a line, so a claim after it joins the line before and the uncited count drops
+--- old
+	case '\n', '\r', '\v', '\f', 0x1c, 0x1d, 0x1e, 0x85, 0x2028, 0x2029:
+--- new
+	case '\n', '\r', '\v', '\f', 0x1c, 0x1d, 0x1e, 0x85, 0x2028:

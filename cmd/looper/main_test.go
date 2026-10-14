@@ -875,3 +875,25 @@ func TestStatsAlarmAsPlanPyCallsIt(t *testing.T) {
 		t.Errorf("stats --bogus: exit %d, want 2", code)
 	}
 }
+
+// The skill runs `looper threat-model` and `looper deferred` bare, from the repo, and plan.py
+// parses threat-model's stdout as JSON. Outside any repo both report no ledger and exit 0, as
+// the Python did; the statuses are the subcommands' own, passed through rather than mapped.
+func TestLedgerCommandsAsTheSkillCallsThem(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	t.Setenv("GIT_DIR", "")
+	os.Unsetenv("GIT_DIR")
+	t.Chdir(dir)
+	for cmd, want := range map[string]string{
+		"threat-model": "{\n  \"path\": \"\",\n  \"exists\": false,\n  \"claims\": 0,\n  \"stale\": [],\n  \"broken_pins\": [],\n  \"uncited\": 0\n}\n",
+		"deferred":     "{\n  \"path\": \"\",\n  \"exists\": false,\n  \"entries\": 0,\n  \"stale\": [],\n  \"unpinned\": []\n}\n",
+	} {
+		if code, out, errOut := doRun(t, cmd); code != 0 || out != want || errOut != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", cmd, code, out, errOut)
+		}
+		if code, out, _ := doRun(t, cmd, "--selftest"); code != 2 || out != "" {
+			t.Errorf("%s --selftest: exit %d, stdout %q; want 2 and nothing", cmd, code, out)
+		}
+	}
+}

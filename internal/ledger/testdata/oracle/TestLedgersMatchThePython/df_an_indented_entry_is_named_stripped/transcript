@@ -1,0 +1,30 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 2,
+  "stale": [],
+  "unpinned": [
+    {
+      "line": 1,
+      "text": "- DEFERRED x: indented, unpinned, unguarded."
+    },
+    {
+      "line": 2,
+      "text": "- DEFERRED y: ideographic."
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 1,
+      "text": "- DEFERRED x: indented, unpinned, unguarded."
+    },
+    {
+      "line": 2,
+      "text": "- DEFERRED y: ideographic."
+    }
+  ]
+}
+--- stderr ---

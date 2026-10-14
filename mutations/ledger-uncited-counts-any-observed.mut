@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+expect: --- FAIL:
+why:    the uncited count keys on OBSERVED without its colon, so prose that merely mentions the word inflates uncited and the threat model's real gaps hide in the noise
+--- old
+		} else if marker != "" && contains(raw, marker) {
+--- new
+		} else if marker != "" && contains(raw, marker[:len(marker)-1]) {

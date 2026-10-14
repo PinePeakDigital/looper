@@ -1,0 +1,214 @@
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"strings"
+	"syscall"
+)
+
+// The two ledgers' file names under <git-common-dir>/info.
+const (
+	ThreatModelFile = "review-loop-threat-model.md"
+	DeferredFile    = "review-loop-deferred.md"
+)
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+// read returns the ledger's text, or ok=false when there is none. Only a file that does not
+// exist is "none": the Python read every OSError — a directory, a permission refusal — as
+// exists:false, which for the deferred list says nothing is deferred and for the threat model
+// sends a bootstrap to overwrite a file it could not read. Here those are an error.
+func read(path string) (text string, ok bool, err error) {
+	if path == "" {
+		return "", false, nil
+	}
+	b, err := os.ReadFile(path)
+	// ENOTDIR is info/ being a file: no ledger can be under it, so there is none, as the Python said.
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return decode(b), true, nil
+}
+
+// selftest refuses the Python's --selftest rather than reporting as if it were not there.
+// The Python's checks are this package's go tests; printing a report would answer a question
+// nobody asked, and printing "ok" would claim a check that did not run.
+func selftest(cmd string, args []string, errOut io.Writer) bool {
+	if len(args) > 0 && args[0] == "--selftest" {
+		fmt.Fprintf(errOut, "looper %s: --selftest was the Python's own check; looper's is "+
+			"`go test ./internal/ledger/`\n", cmd)
+		return true
+	}
+	return false
+}
+
+func emit(out io.Writer, v value) int {
+	if _, err := io.WriteString(out, encode(v)); err != nil {
+		return 1
+	}
+	return 0
+}
+
+// nulPath refuses a pin whose path holds a NUL byte. No file can be named that, and git cannot
+// be asked about it: the exec fails to start, which git() reads as "nothing moved", so the pin
+// would look fresh forever. The Python died on it with a ValueError; this says which pin.
+func nulPath(cmd string, pins []Pin, errOut io.Writer) bool {
+	for _, p := range pins {
+		if strings.ContainsRune(p.Path, 0) {
+			fmt.Fprintf(errOut, "looper %s: the pin on line %d names a path with a NUL byte, "+
+				"which git cannot be asked about — fix the pin\n", cmd, p.Line)
+			return true
+		}
+	}
+	return false
+}
+
+func unreadable(cmd, path string, err error, errOut io.Writer) int {
+	fmt.Fprintf(errOut, "looper %s: cannot read %s: %v — it exists, so it is not reported "+
+		"as missing\n", cmd, path, err)
+	return 1
+}
+
+// ThreatModel is `looper threat-model`: threat-model.py's report on
+// <git-common-dir>/info/review-loop-threat-model.md, from the working directory. Every OBSERVED
+// claim owes a pin; `uncited` counts those without one. Arguments are ignored, as the Python
+// ignored them, except --selftest. Exit 0 for a report, whatever it says.
+func ThreatModel(args []string, out, errOut io.Writer) int {
+	if selftest("threat-model", args, errOut) {
+		return 2
+	}
+	path, err := infoPath(ThreatModelFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "looper threat-model: %v\n", err)
+		return 1
+	}
+	text, ok, err := read(path)
+	if err != nil {
+		return unreadable("threat-model", path, err, errOut)
+	}
+	if !ok {
+		return emit(out, obj{{"path", path}, {"exists", false}, {"claims", 0},
+			{"stale", []value{}}, {"broken_pins", []value{}}, {"uncited", 0}})
+	}
+	claims, uncited := Citations(text, "OBSERVED:")
+	if nulPath("threat-model", claims, errOut) {
+		return 1
+	}
+	return emit(out, obj{
+		{"path", path},
+		{"exists", true},
+		{"claims", len(claims)},
+		{"stale", pinList(Stale(claims))},
+		// A claim pinned to an unresolvable sha returns nothing from Stale, so Step 2b's "skip
+		// the agent when stale is empty" would drop it — while it still looks pinned and stays
+		// out of uncited. For a `Not an issue here` dismissal that is a suppression nothing
+		// ever re-examines.
+		{"broken_pins", pinList(Broken(claims))},
+		{"uncited", uncited},
+	})
+}
+
+// entry is one DEFERRED finding, read as a block: its pin lives on the Grounding line, not
+// on the DEFERRED line.
+type entry struct {
+	line int
+	text string
+	pins []Pin
+}
+
+// first is the entry as the report names it: its line and the first line of its text.
+func (e entry) first() value {
+	return obj{{"line", e.line}, {"text", splitlines(e.text)[0]}}
+}
+
+// entries is deferred.entries. A block is the DEFERRED line plus every following line that is
+// indented and not blank; a blank or unindented line is skipped, not a terminator, so a later
+// indented line still joins the entry. Pin line numbers are the block-relative index plus the
+// entry's line, so a skipped line in between shifts them — what the Python reports.
+func entries(text string) []entry {
+	type block struct {
+		line  int
+		lines []string
+	}
+	var bs []block
+	for i, raw := range splitlines(text) {
+		if contains(raw, "DEFERRED") {
+			bs = append(bs, block{line: i + 1, lines: []string{raw}})
+		} else if len(bs) > 0 && strip(raw) != "" && startsWithSpace(raw) {
+			bs[len(bs)-1].lines = append(bs[len(bs)-1].lines, raw)
+		}
+	}
+	out := make([]entry, len(bs))
+	for i, b := range bs {
+		joined := strings.Join(b.lines, "\n")
+		pins, _ := Citations(joined, "")
+		for j := range pins {
+			pins[j].Line += b.line - 1
+		}
+		out[i] = entry{line: b.line, text: strip(joined), pins: pins}
+	}
+	return out
+}
+
+func startsWithSpace(s string) bool {
+	for _, r := range s {
+		return isSpace(r)
+	}
+	return false
+}
+
+// Deferred is `looper deferred`: deferred.py's report on
+// <git-common-dir>/info/review-loop-deferred.md, from the working directory. Arguments are
+// ignored, as the Python ignored them, except --selftest. Exit 0 for a report.
+func Deferred(args []string, out, errOut io.Writer) int {
+	if selftest("deferred", args, errOut) {
+		return 2
+	}
+	path, err := infoPath(DeferredFile)
+	if err != nil {
+		fmt.Fprintf(errOut, "looper deferred: %v\n", err)
+		return 1
+	}
+	text, ok, err := read(path)
+	if err != nil {
+		return unreadable("deferred", path, err, errOut)
+	}
+	if !ok {
+		// No broken_pins or unguarded here: the Python's missing-file report had neither key.
+		return emit(out, obj{{"path", path}, {"exists", false}, {"entries", 0},
+			{"stale", []value{}}, {"unpinned", []value{}}})
+	}
+	es := entries(text)
+	var all []Pin
+	unpinned, unguarded := []value{}, []value{}
+	for _, e := range es {
+		all = append(all, e.pins...)
+		if len(e.pins) == 0 {
+			// Named, not counted: an entry with no pin can never go stale, and the fix is to pin it.
+			unpinned = append(unpinned, e.first())
+		}
+		// "Guard: none, because ..." is an answer; no Guard at all means nobody asked.
+		if !contains(e.text, "Guard") {
+			unguarded = append(unguarded, e.first())
+		}
+	}
+	if nulPath("deferred", all, errOut) {
+		return 1
+	}
+	return emit(out, obj{
+		{"path", path},
+		{"exists", true},
+		{"entries", len(es)},
+		{"stale", pinList(Stale(all))},
+		{"unpinned", unpinned},
+		{"broken_pins", pinList(Broken(all))},
+		{"unguarded", unguarded},
+	})
+}

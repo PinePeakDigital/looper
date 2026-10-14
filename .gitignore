@@ -22,3 +22,5 @@ push.log
 report.log
 # And the stats package's oracle step, the same pairing.
 stats.log
+# And the ledger package's oracle step, the same pairing.
+ledger.log
