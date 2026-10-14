@@ -5,4 +5,4 @@ why:    a PR-history probe that failed reports history as confirmed, asserting a
 --- old
 		return true, "gh authenticated, but could not confirm PR history (" + why + ") — assuming reachable"
 --- new
-		return true, "gh authenticated, github remote present, PR history confirmed"
+		return true, "gh authenticated, github remote present, PR history confirmed" + why[:0]
