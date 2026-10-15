@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a lockfile below the root is review surface, so a dependency bump in a workspace drags a trivial change into the full fan-out
+--- old
+		args = append(args, ":(exclude,glob)**/"+f, ":(exclude,literal)"+f)
+--- new
+		args = append(args, ":(exclude,literal)"+f)

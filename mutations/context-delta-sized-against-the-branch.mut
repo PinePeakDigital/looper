@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a follow-up commit is sized as the whole branch, and a small re-entry reads as fan-out sized
+--- old
+			ns, _ := out("git", "diff", "--numstat", sha+"..HEAD")
+--- new
+			ns, _ := out("git", "diff", "--numstat", "origin/main...HEAD")

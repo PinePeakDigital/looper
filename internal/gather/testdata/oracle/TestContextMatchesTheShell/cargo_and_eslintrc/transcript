@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": "cargo test",
+  "lint_cmd": "eslint --fix",
+  "lint_fix": true,
+  "learnings": null,
+  "learnings_entries": 0,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " .eslintrc.json | 1 +\n Cargo.toml     | 1 +\n 2 files changed, 2 insertions(+)",
+  "changed_lines": 2,
+  "semantic_lines": 2,
+  "sizing_excluded": null,
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": null,
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---

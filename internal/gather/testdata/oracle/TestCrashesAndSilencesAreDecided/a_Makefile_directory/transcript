@@ -1,0 +1,4 @@
+exit=1
+--- stdout ---
+--- stderr ---
+IsADirectoryError: [Errno 21] Is a directory: 'Makefile'

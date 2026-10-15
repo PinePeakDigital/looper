@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a recorded sweep count above today's count is trusted, disarming the trigger until the file grows past a bad write
+--- old
+		if n, err := strconv.Atoi(*sweptAt); err == nil && n <= entries {
+--- new
+		if n, err := strconv.Atoi(*sweptAt); err == nil {

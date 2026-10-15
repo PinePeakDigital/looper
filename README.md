@@ -463,6 +463,62 @@ The divergences, each with its own test:
 `.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
 Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
 
+## `looper context`
+
+The review-loop's Step 0, a port of the skill's `context.sh` in `internal/gather`. From the
+working directory it resolves the base branch (the PR's base, else the repo default, else
+`origin/HEAD`) and fetches it. It also loads the learnings file and works out whether a staleness
+sweep is due, detects the test and lint commands, and sizes the branch diff. That size is given
+three ways: raw, as review surface (lockfiles, files `.gitattributes` marks
+`linguist-generated`, and whitespace-only lines are dropped, except in files where indentation
+is syntax), and since the last commit the review gate stamped. It prints one JSON object that
+`looper plan --context` reads.
+
+```text
+looper context > "$(git rev-parse --git-dir)/review-loop-context.json"
+```
+
+`TestContextMatchesTheShell` runs 40 scenarios through `looper context` and requires what
+context.sh printed for the same fixture repo, stub `gh` and review store, byte for byte, frozen
+under `internal/gather/testdata/oracle` (captured at narthur/skills 865f93d). The date is the one
+normalisation.
+
+The divergences, each with its own test:
+
+- **Arguments are not ignored.** `-h` prints a usage line and any other argument is a usage error
+  (exit 2); context.sh read none, so `context.sh -h` fetched and sized the whole branch
+  (`TestArgumentsAreNotIgnored`).
+- **package.json's `scripts` is read only as an object.** context.sh tested Python membership on
+  whatever was there. A string of scripts matched `test` as a substring and answered `npm test`.
+  A list of scripts, or a `lint` script that was a number or null, crashed it with no output at
+  all. (A `lint` script that is a list or an object answers as Python's `in` does, which is
+  parity.) A package.json using Python's JSON extensions, such as `NaN`, is not JSON, and reads as
+  no scripts (`TestPackageScriptsAreAnObject`).
+- **A Makefile that is not UTF-8 is still searched** for its `test:` target. context.sh's strict
+  decode crashed on it, losing the whole context (`TestALatin1MakefileIsRead`).
+- **Text that is not UTF-8 reaches the JSON with U+FFFD** for each bad byte, in the learnings and in
+  the diff stat. context.sh turned each such byte into a lone-surrogate escape (`\udcXX`), which
+  many JSON parsers refuse (`TestLatin1LearningsAreReplaced`). Learnings lines are matched as
+  bytes. context.sh's `grep` and `sed` matched by locale, which on some platforms skipped a line
+  holding invalid UTF-8 and took Unicode spaces as `[[:space:]]`.
+- **Where context.sh died or said nothing, looper answers** (`TestCrashesAndSilencesAreDecided`):
+  - A diff against `origin/<base>` that cannot be read (an unfetched or missing base) is named
+    in `sizing_excluded`. context.sh printed 0 lines and no reason, which reads as an empty diff.
+  - A base branch starting with `-` is refused (`base_branch: null`). `git fetch origin <base>`
+    would read it as an option, and git accepts no such branch name.
+  - No `HOME` means no review store. context.sh died under `set -u`, and a path relative to the
+    repo would trust a store the repo ships.
+  - A `Makefile` that is a directory has no test target. context.sh crashed on it.
+  - Learnings too big to pass through the environment are read. context.sh's Python never
+    started (exit 126).
+  - A changed file whose name is not UTF-8 (with `core.quotePath=false`) gets context.sh's
+    fallback: the raw count, with `sizing helper produced no count`. Decoding it with U+FFFD
+    instead would have sized on and under-counted.
+- **gh and `git fetch` give up after 30 seconds** (`TestAStalledProbeIsGivenUp`). context.sh waited
+  on them forever, so a stalled gh hung Step 0 with nothing printed. What a timed-out probe printed
+  stands, as for any other exit, and the base falls back past it when that is nothing. A gh that
+  exits while a grandchild (a credential helper) still holds its pipes is cut off a second later.
+
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates

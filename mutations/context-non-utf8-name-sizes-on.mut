@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestCrashesAndSilencesAreDecided'
+expect: --- FAIL:
+why:    a file name that is not UTF-8 is decoded and sizing carries on, under-counting where context.sh fell back to the raw total
+--- old
+	if !utf8.Valid(o) {
+--- new
+	if false {

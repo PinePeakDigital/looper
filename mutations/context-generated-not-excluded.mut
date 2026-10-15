@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    files .gitattributes marks generated count as review surface, though they are still named as excluded
+--- old
+			args = append(args, ":(exclude,literal)"+g)
+--- new
+			_ = g

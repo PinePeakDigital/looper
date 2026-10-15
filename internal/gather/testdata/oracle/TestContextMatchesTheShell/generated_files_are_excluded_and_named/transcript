@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": null,
+  "learnings_entries": 0,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " .gitattributes    | 2 ++\n app/[id]/page.tsx | 1 +\n app/a/page.tsx    | 1 +\n gen/out.js        | 4 ++++\n 4 files changed, 8 insertions(+)",
+  "changed_lines": 8,
+  "semantic_lines": 4,
+  "sizing_excluded": "4 line(s) in lockfiles or generated files; generated per .gitattributes: gen/out.js",
+  "fast_path_eligible_by_size": true,
+  "last_reviewed_sha": null,
+  "review_delta_lines": 0,
+  "fast_path_eligible_by_delta": false
+}
+--- stderr ---

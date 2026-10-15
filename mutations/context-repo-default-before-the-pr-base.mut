@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell|TestCrashesAndSilencesAreDecided'
+expect: --- FAIL:
+why:    the PR's own base is ignored for the repo default, so a PR into a release branch is sized against main
+--- old
+	if b := probe("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); b != "" {
+--- new
+	if b := probe("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); false {

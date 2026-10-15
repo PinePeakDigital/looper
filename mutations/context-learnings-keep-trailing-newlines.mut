@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    the learnings carry the trailing newlines a command substitution strips, unlike context.sh
+--- old
+	return strings.TrimRight(strings.ReplaceAll(string(b), "\x00", ""), "\n"), entries, last
+--- new
+	return string(b), entries, last

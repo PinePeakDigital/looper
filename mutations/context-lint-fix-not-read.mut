@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    an npm lint script that fixes (eslint . --fix) is reported as not fixing, so Step 3's autofix never runs
+--- old
+			fix = strings.Contains(v, "--fix")
+--- new
+			fix = v == "--fix"

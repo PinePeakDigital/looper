@@ -26,3 +26,5 @@ stats.log
 ledger.log
 # And the plan package's oracle step, the same pairing.
 plan.log
+# And the gather package's oracle step, the same pairing.
+context.log

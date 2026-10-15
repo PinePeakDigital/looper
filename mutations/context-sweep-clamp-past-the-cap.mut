@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a sweep that ended at or past 48 re-arms at 48, so a file of 56 relevant entries is due every run for zero evictions
+--- old
+			if n < learnCap-2 {
+--- new
+			if true {

@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a low-yield sweep re-arms past 48, after learn.py prune's blunt age-based cap has already taken over
+--- old
+				rearm = min(rearm, learnCap-2)
+--- new
+				_ = rearm

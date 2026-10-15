@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a sweep marker with a leading space, no space or a capital S is not read, and the trigger silently reverts to the bare count
+--- old
+var swept = regexp.MustCompile(`^[ \t\n\v\f\r]*<!--[ \t\n\v\f\r]*[Ss]wept:[ \t\n\v\f\r]*([0-9]+)`)
+--- new
+var swept = regexp.MustCompile(`^<!-- swept: [ \t\n\v\f\r]*([0-9]+)`)
