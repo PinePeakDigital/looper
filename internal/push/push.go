@@ -422,7 +422,8 @@ func Check(p CheckParams) (Result, error) {
 			// report" is the wrong instruction when the real problem is that neither probe
 			// ran. Said here rather than in the reason, which parity pins exactly.
 			fmt.Fprintf(p.Diag, "push-check: neither `gh pr view` nor `git rev-parse` could be "+
-				"run in %s (missing binary, not executable, or killed at the %s budget), so "+
+				"run in %s, or answered for certain (missing binary, not executable, killed at the %s "+
+				"budget, or a descendant held its output past the drain bound), so "+
 				"whether the report landed could not be determined; the refusal below fails "+
 				"closed and may not be about the report at all\n", p.Repo, shBudget)
 		}

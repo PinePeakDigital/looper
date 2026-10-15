@@ -5,4 +5,4 @@ why:    a descendant's bytes in the output pipe read as the child's answer: repo
 --- old
 		Drained: !errors.Is(err, exec.ErrWaitDelay), Code: -1, Out: o.Bytes(), Err: e.Bytes(), Error: err}
 --- new
-		Drained: true, Code: -1, Out: o.Bytes(), Err: e.Bytes(), Error: err}
+		Drained: true || !errors.Is(err, exec.ErrWaitDelay), Code: -1, Out: o.Bytes(), Err: e.Bytes(), Error: err}

@@ -1,7 +1,7 @@
 target: internal/report/post.go
 verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_hung_subprocess'
 expect: --- FAIL:
-why:    the budget is threaded through shTimeout so the kill branch can be exercised in milliseconds. Read inline from the const instead, that claim is false by construction — a const cannot be lowered by a test — so the one branch deciding whether a hung gh fails open or closed has no test and cannot have one. The comment on shBudget asserted the testability while the code foreclosed it, which is the same shape as a named test that does not exist.
+why:    the budget is threaded through shTimeout into run.Run so the kill branch can be exercised in milliseconds. Passing the shBudget const instead makes that claim false by construction (a const cannot be lowered by a test), so the one branch deciding whether a hung gh fails open or closed has no test and cannot have one.
 --- old
 	rr := run.Run(repo, budget, prog, args...)
 --- new

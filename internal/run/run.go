@@ -32,7 +32,8 @@ type Result struct {
 	// A child that was killed or failed reports that instead, with Drained true.
 	Drained bool
 	// Code is the exit status, or minus the signal that killed the child, as Python's
-	// returncode is. -1 when the child never started.
+	// returncode is. -1 when there is no exit status: the child never started, or waiting
+	// for it failed.
 	Code     int
 	Out, Err []byte
 	Error    error // what os/exec returned
