@@ -1311,7 +1311,7 @@ func storeLines(path string, limit int) ([]string, int, error) {
 
 	// Read with a bufio.Reader, not a Scanner. A Scanner caps the line length and then
 	// reports ErrTooLong, which aborted the WHOLE load and discarded every run already
-	// parsed — the exact opposite of the torn-line tolerance below, and on the same
+	// parsed — the exact opposite of LoadStore's torn-line tolerance, and on the same
 	// input: a half-written line from a concurrent writer is where an over-long read
 	// comes from. runlog.py iterates the file with no ceiling on record size, and its
 	// own comment says records are unbounded, so a ceiling here is a parity break too.
@@ -1327,7 +1327,7 @@ func storeLines(path string, limit int) ([]string, int, error) {
 	// resident (~600 MiB)", which was wrong three ways: the figure came from a store that
 	// was ONE 200 MiB line, it quoted a heap number as resident, and it blamed this slice
 	// when the identical store costs the identical amount at limit=0 — a single oversized
-	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
+	// record is bufio's fragment concatenation, which a ring buffer would not touch.
 	//
 	// Not fixed, and the honest reason is not "every caller passes 0": two tests do pass a
 	// limit, and `internal/push.Check` calls Load from the shipped binary. It is that 1.1x on
