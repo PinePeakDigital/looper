@@ -1309,8 +1309,8 @@ func cmdPending(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, rid := range evidence.PendingIDs(common) {
-		f, _ := evidence.PendingPath(common, rid) // PendingIDs returns only valid ids
+	for _, p := range evidence.PendingReports(common) {
+		f, rid := p.Path, p.ID
 		run := s.get(rid)
 		switch {
 		case run == nil:

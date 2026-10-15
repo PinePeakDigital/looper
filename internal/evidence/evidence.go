@@ -46,17 +46,18 @@ func PendingPath(commonDir, id string) (string, bool) {
 	return filepath.Join(commonDir, "info", "review-loop-pending-report."+id+".md"), true
 }
 
-// PendingIDs lists the run ids with a pending report under commonDir, sorted. A file whose
-// name does not carry a valid id is not one PendingPath could have built, so it is left out.
-func PendingIDs(commonDir string) []string {
+// Pending is a file at the pending-report location and the run id its name carries.
+type Pending struct{ Path, ID string }
+
+// PendingReports lists every file at the pending-report location under commonDir, sorted by
+// path as runlog.py's glob was. The ID is read off the name unchecked, so a stray file still
+// surfaces for the caller to name rather than vanishing.
+func PendingReports(commonDir string) []Pending {
 	files, _ := filepath.Glob(filepath.Join(commonDir, "info", "review-loop-pending-report.*.md"))
-	var ids []string
-	for _, f := range files {
-		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "review-loop-pending-report."), ".md")
-		if ValidRunID(id) {
-			ids = append(ids, id)
-		}
+	sort.Strings(files)
+	out := make([]Pending, len(files))
+	for i, f := range files {
+		out[i] = Pending{f, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "review-loop-pending-report."), ".md")}
 	}
-	sort.Strings(ids)
-	return ids
+	return out
 }

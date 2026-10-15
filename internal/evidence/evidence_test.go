@@ -30,17 +30,26 @@ func TestOnlyAPlainRunIDBuildsEvidence(t *testing.T) {
 	}
 }
 
-func TestPendingIDsListsOnlyWhatPendingPathBuilds(t *testing.T) {
+func TestPendingReportsReadsBackWhatPendingPathBuilds(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "info"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"b", "a", "x y"} {
-		if err := os.WriteFile(filepath.Join(dir, "info", "review-loop-pending-report."+id+".md"), nil, 0o644); err != nil {
+	var want []string
+	for _, id := range []string{"a", "a-1", "x y"} {
+		p := filepath.Join(dir, "info", "review-loop-pending-report."+id+".md")
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
+		want = append(want, p+"="+id)
 	}
-	if got := strings.Join(PendingIDs(dir), ","); got != "a,b" {
-		t.Errorf("PendingIDs = %q, want a,b", got)
+	var got []string
+	for _, p := range PendingReports(dir) {
+		got = append(got, p.Path+"="+p.ID)
+	}
+	// Path order, as runlog.py sorted: `-` sorts before `.`, so a-1's file precedes a's.
+	want[0], want[1] = want[1], want[0]
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
