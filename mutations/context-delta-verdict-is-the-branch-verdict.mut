@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a one-line follow-up on a big reviewed branch is sized against the whole branch, so re-entry never takes the fast path
+--- old
+		{"fast_path_eligible_by_delta", last != "" && 0 < delta && delta < 30},
+--- new
+		{"fast_path_eligible_by_delta", last != "" && 0 < changed && semantic < 30},
