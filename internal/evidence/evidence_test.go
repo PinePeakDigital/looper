@@ -30,7 +30,7 @@ func TestOnlyAPlainRunIDBuildsEvidence(t *testing.T) {
 	}
 }
 
-func TestPendingReportsReadsBackWhatPendingPathBuilds(t *testing.T) {
+func TestPendingReportsListsEveryFileInPathOrder(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "info"), 0o755); err != nil {
 		t.Fatal(err)
