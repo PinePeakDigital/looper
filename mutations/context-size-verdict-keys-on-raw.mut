@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    a lockfile regeneration beside a one-line edit is too big for the fast path, though its review surface is one line
+--- old
+		{"fast_path_eligible_by_size", 0 < changed && semantic < 30},
+--- new
+		{"fast_path_eligible_by_size", 0 < changed && changed < 30},

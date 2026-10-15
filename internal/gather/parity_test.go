@@ -215,6 +215,23 @@ var scenarios = []scenario{
 	{name: "reviewed nowhere on this branch", store: func(w world) string { return strings.Repeat("0", 40) + "\n" }},
 	{name: "a reviewed delta too big for the fast path", files: map[string]string{"big.js": strings.Repeat("x\n", 30)},
 		store: func(w world) string { return w.shas["main"] + "\n" }},
+	// The size verdict keys on semantic lines: raw is over 30 here, review surface is 1.
+	{name: "a lockfile bump beside a small edit", files: map[string]string{
+		"web/package-lock.json": "{\n" + strings.Repeat("  \"v\": 2,\n", 40) + "}\n", "b.js": "1\n"}},
+	// A path that looks generated is counted unless the repo marks it linguist-generated.
+	{name: "a dist path without the marker", files: map[string]string{"dist/out.js": "1\n2\n3\n"}},
+	// The regrowth margin from both sides: swept+7 is not due, swept+8 is.
+	{name: "learnings swept, one short of regrowth", learn: entries(43) + "<!-- swept: 36 -->\n"},
+	{name: "learnings swept, regrown by the margin", learn: entries(44) + "<!-- swept: 36 -->\n"},
+	// A big branch reviewed at its tip, then a one-line follow-up: the branch is still too big,
+	// the delta is not.
+	{name: "a small follow-up on a big reviewed branch", files: map[string]string{"big.js": strings.Repeat("x\n", 40)},
+		store: func(w world) string { return w.shas["feature"] + "\n" },
+		prep: func(t *testing.T, w world) {
+			write(t, filepath.Join(w.repo, "b.js"), "1\n")
+			git(t, w.repo, "add", "-A")
+			git(t, w.repo, "commit", "-q", "-m", "follow-up")
+		}},
 }
 
 func TestContextMatchesTheShell(t *testing.T) {

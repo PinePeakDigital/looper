@@ -478,7 +478,7 @@ is syntax), and since the last commit the review gate stamped. It prints one JSO
 looper context > "$(git rev-parse --git-dir)/review-loop-context.json"
 ```
 
-`TestContextMatchesTheShell` runs 40 scenarios through `looper context` and requires what
+`TestContextMatchesTheShell` runs 45 scenarios through `looper context` and requires what
 context.sh printed for the same fixture repo, stub `gh` and review store, byte for byte, frozen
 under `internal/gather/testdata/oracle` (captured at narthur/skills 865f93d). The date is the one
 normalisation.

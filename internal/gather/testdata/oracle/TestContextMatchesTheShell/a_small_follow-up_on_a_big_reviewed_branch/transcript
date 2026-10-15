@@ -1,0 +1,22 @@
+exit=0
+--- stdout ---
+{
+  "base_branch": "main",
+  "test_cmd": null,
+  "lint_cmd": null,
+  "lint_fix": false,
+  "learnings": null,
+  "learnings_entries": 0,
+  "learnings_compaction_due": false,
+  "learnings_swept_entries": null,
+  "today": "<today>",
+  "diff_stat": " b.js   |  1 +\n big.js | 40 ++++++++++++++++++++++++++++++++++++++++\n 2 files changed, 41 insertions(+)",
+  "changed_lines": 41,
+  "semantic_lines": 41,
+  "sizing_excluded": null,
+  "fast_path_eligible_by_size": false,
+  "last_reviewed_sha": "d6e0a8fdbb88b63ffa8314837c66d7ce99eeb46f",
+  "review_delta_lines": 1,
+  "fast_path_eligible_by_delta": true
+}
+--- stderr ---

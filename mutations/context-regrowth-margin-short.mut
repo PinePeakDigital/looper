@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestContextMatchesTheShell'
+expect: --- FAIL:
+why:    the sweep re-arms one entry early, re-spawning a compaction agent before the file has grown by the margin
+--- old
+	regrowth            = 8  // re-sweeping needs real growth since the last sweep
+--- new
+	regrowth            = 7  // re-sweeping needs real growth since the last sweep
