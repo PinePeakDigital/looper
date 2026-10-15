@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAStalledProbeIsGivenUp'
+expect: --- FAIL:
+why:    a gh that answered and exited reads as failed because its credential helper still held the pipes
+--- old
+	ok := err == nil || errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState.Success()
+--- new
+	ok := err == nil && errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState.Success()

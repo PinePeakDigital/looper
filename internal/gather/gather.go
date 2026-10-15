@@ -6,7 +6,9 @@ package gather
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +44,23 @@ func out(name string, args ...string) (string, bool) {
 	return strings.TrimRight(string(o), "\n"), err == nil
 }
 
+// netTimeout bounds the calls that reach the network (gh, git fetch), which context.sh left
+// unbounded: a stalled one hung Step 0 with nothing printed. A variable so a test can shorten it.
+var netTimeout = 30 * time.Second
+
+// probe is out for a call that reaches the network: past netTimeout it has failed. A child that
+// exited 0 while a grandchild (a credential helper) still holds its pipes has answered, so
+// WaitDelay's ErrWaitDelay on that path keeps the answer.
+func probe(name string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	o, err := cmd.Output()
+	ok := err == nil || errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState.Success()
+	return strings.TrimRight(string(o), "\n"), ok
+}
+
 // sum is `awk '{a+=$1; d+=$2} END {print a+d+0}'` over numstat: binary files' "-" count 0.
 func sum(numstat string) int {
 	n := 0
@@ -65,10 +84,10 @@ func awkNum(s string) int {
 }
 
 func baseBranch() string {
-	if b, _ := out("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); b != "" {
+	if b, _ := probe("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); b != "" {
 		return b
 	}
-	if b, _ := out("gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"); b != "" {
+	if b, _ := probe("gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"); b != "" {
 		return b
 	}
 	b, _ := out("git", "symbolic-ref", "refs/remotes/origin/HEAD")
@@ -346,7 +365,7 @@ func Command(args []string, stdout, errOut io.Writer) int {
 		base = ""
 	}
 	if base != "" {
-		exec.Command("git", "fetch", "origin", base).Run() // best effort, as context.sh did
+		probe("git", "fetch", "origin", base) // best effort, as context.sh did
 	}
 	learn, entries, sweptAt := learnings()
 

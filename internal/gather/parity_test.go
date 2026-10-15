@@ -40,7 +40,9 @@ func gitEnv(t *testing.T, base string) {
 	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
 		"GIT_OBJECT_DIRECTORY", "GIT_NAMESPACE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"} {
 		t.Setenv(k, "")
-		os.Unsetenv(k)
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for k, v := range map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
@@ -49,8 +51,8 @@ func gitEnv(t *testing.T, base string) {
 		t.Setenv(k, v)
 	}
 	ceil := base
-	if real, err := filepath.EvalSymlinks(base); err == nil && real != base {
-		ceil += string(os.PathListSeparator) + real
+	if resolved, err := filepath.EvalSymlinks(base); err == nil && resolved != base {
+		ceil += string(os.PathListSeparator) + resolved
 	}
 	t.Setenv("GIT_CEILING_DIRECTORIES", ceil)
 }
@@ -108,7 +110,9 @@ func (sc scenario) build(t *testing.T) world {
 	}
 	for p, body := range files {
 		if body == "DELETE" {
-			os.Remove(filepath.Join(w.repo, p))
+			if err := os.Remove(filepath.Join(w.repo, p)); err != nil {
+				t.Fatal(err)
+			}
 		} else {
 			write(t, filepath.Join(w.repo, p), body)
 		}
@@ -126,12 +130,16 @@ func (sc scenario) build(t *testing.T) world {
 		gh = "exit 1"
 	}
 	write(t, filepath.Join(bin, "gh"), "#!/bin/sh\n"+gh+"\n")
-	os.Chmod(filepath.Join(bin, "gh"), 0o755)
+	if err := os.Chmod(filepath.Join(bin, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(base, "home")
 	if sc.store != nil {
 		write(t, filepath.Join(home, ".claude", "review-loop", "reviewed-shas"), sc.store(w))
 	}
-	os.MkdirAll(home, 0o755)
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if sc.prep != nil {

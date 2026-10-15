@@ -478,7 +478,7 @@ is syntax), and since the last commit the review gate stamped. It prints one JSO
 looper context > "$(git rev-parse --git-dir)/review-loop-context.json"
 ```
 
-`TestContextMatchesTheShell` runs 38 scenarios through `looper context` and requires what
+`TestContextMatchesTheShell` runs 40 scenarios through `looper context` and requires what
 context.sh printed for the same fixture repo, stub `gh` and review store, byte for byte, frozen
 under `internal/gather/testdata/oracle` (captured at narthur/skills 865f93d). The date is the one
 normalisation.
@@ -512,8 +512,12 @@ The divergences, each with its own test:
   - Learnings too big to pass through the environment are read. context.sh's Python never
     started (exit 126).
   - A changed file whose name is not UTF-8 (with `core.quotePath=false`) gets context.sh's
-    fallback: the raw count, with `sizing_helper produced no count`. Decoding it with U+FFFD
+    fallback: the raw count, with `sizing helper produced no count`. Decoding it with U+FFFD
     instead would have sized on and under-counted.
+- **gh and `git fetch` give up after 30 seconds** (`TestAStalledProbeIsGivenUp`). context.sh waited
+  on them forever, so a stalled gh hung Step 0 with nothing printed. A probe that times out has
+  failed, and the base falls back as it would for any failure. A gh that exits while a grandchild
+  (a credential helper) still holds its pipes has answered, and its answer stands.
 
 ## `looper plan`
 

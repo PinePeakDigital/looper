@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinepeakdigital/looper/internal/golden"
 )
@@ -118,7 +119,9 @@ var decided = []struct {
 	{"no HOME is no store", divergence{scenario: scenario{store: func(w world) string { return w.shas["main"] + "\n" },
 		prep: func(t *testing.T, w world) {
 			t.Setenv("HOME", "")
-			os.Unsetenv("HOME")
+			if err := os.Unsetenv("HOME"); err != nil {
+				t.Fatal(err)
+			}
 			write(t, filepath.Join(w.repo, ".claude", "review-loop", "reviewed-shas"), w.shas["main"]+"\n")
 		}}}, []string{`"last_reviewed_sha": null,`}},
 	// A Makefile that is a directory has no test target. context.sh's read_text died on it.
@@ -142,10 +145,40 @@ func TestCrashesAndSilencesAreDecided(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			golden.Read(t, "transcript") // what context.sh did, kept beside the decision
 			code, out, _ := c.d.run(t)
+			if code != 0 {
+				t.Fatalf("exit %d:\n%s", code, out)
+			}
 			for _, w := range c.want {
-				if code != 0 || !strings.Contains(out, w) {
-					t.Errorf("exit %d, want %s in:\n%s", code, w, out)
+				if !strings.Contains(out, w) {
+					t.Errorf("want %s in:\n%s", w, out)
 				}
+			}
+		})
+	}
+}
+
+// gh and git fetch reach the network, and context.sh waited on them forever: a stalled gh hung
+// Step 0 with nothing printed. Past netTimeout looper gives up and falls back. A gh that exits
+// while a grandchild holds its pipes has still answered. There is no shell transcript: the shell
+// never finished.
+func TestAStalledProbeIsGivenUp(t *testing.T) {
+	for _, c := range []struct {
+		name, gh, want string
+		timeout        time.Duration
+	}{
+		{"a gh that never answers", `case "$1 $2" in "pr view") exec sleep 8 ;; *) exit 1 ;; esac`, `"base_branch": "main",`, 200 * time.Millisecond},
+		{"a gh whose grandchild lingers", `case "$1 $2" in "pr view") sleep 8 & echo release ;; *) exit 1 ;; esac`, `"base_branch": "release",`, 3 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			defer func(d time.Duration) { netTimeout = d }(netTimeout)
+			netTimeout = c.timeout
+			start := time.Now()
+			code, out, _ := divergence{scenario: scenario{gh: c.gh}}.run(t)
+			if took := time.Since(start); took > 6*time.Second {
+				t.Errorf("took %s", took)
+			}
+			if code != 0 || !strings.Contains(out, c.want) {
+				t.Errorf("exit %d, want %s in:\n%s", code, c.want, out)
 			}
 		})
 	}

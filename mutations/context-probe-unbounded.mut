@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAStalledProbeIsGivenUp'
+expect: --- FAIL:
+why:    a stalled gh hangs looper context, as it hung context.sh
+--- old
+	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
+--- new
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
