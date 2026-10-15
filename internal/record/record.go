@@ -332,74 +332,9 @@ type Store struct {
 
 // LoadStore is Load, keeping the store order and the unattributable row count.
 func LoadStore(path string, limit int) (*Store, error) {
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return &Store{}, nil
-	}
+	lines, dropped, err := storeLines(path, limit)
 	if err != nil {
 		return nil, err
-	}
-	defer f.Close()
-
-	// Read with a bufio.Reader, not a Scanner. A Scanner caps the line length and then
-	// reports ErrTooLong, which aborted the WHOLE load and discarded every run already
-	// parsed — the exact opposite of the torn-line tolerance below, and on the same
-	// input: a half-written line from a concurrent writer is where an over-long read
-	// comes from. runlog.py iterates the file with no ceiling on record size, and its
-	// own comment says records are unbounded, so a ceiling here is a parity break too.
-	//
-	// What this does NOT match is RETENTION, and the parity argument above covers only
-	// record size. `runlog.load()` iterates `deque(fh, maxlen=limit)`, which streams and holds at
-	// most `limit` lines; this holds every line and applies the limit afterwards, so
-	// retention is O(file) rather than O(limit).
-	//
-	// The cost, measured on a 200 MiB store built by repeating the real one (which averages
-	// 936 bytes a line): 231 MiB allocated and 218-231 MiB heap to return one run at
-	// limit=1. That is 1.1-1.2x. An earlier version of this comment said "3-4x file size
-	// resident (~600 MiB)", which was wrong three ways: the figure came from a store that
-	// was ONE 200 MiB line, it quoted a heap number as resident, and it blamed this slice
-	// when the identical store costs the identical amount at limit=0 — a single oversized
-	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
-	//
-	// Not fixed, and the honest reason is not "every caller passes 0": two tests do pass a
-	// limit, and `internal/push.Check` calls Load from the shipped binary. It is that 1.1x on
-	// a 143 KiB store buys nothing. (An earlier version of this sentence said "nothing outside
-	// this package's tests calls Load at all" — false once internal/push existed, which is the
-	// repo's dominant defect class sitting in the comment that argues against fixing this.) The claim worth keeping is the narrow one — `limit` bounds
-	// what is RETURNED, not what is read. Revisit when a caller passes a limit over a store
-	// big enough for the difference to matter.
-	var lines []string
-	br := bufio.NewReader(f)
-	for {
-		line, err := br.ReadString('\n')
-		if line != "" {
-			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
-			// records to runlog.py. Split here too, or the record writer (loadRaw) and this
-			// reader disagree about one store: measured, finish found a run's plan and then
-			// derived its convergence as unknown from the same file.
-			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-			for _, l := range strings.Split(line, "\r") {
-				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
-				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
-				// saw was invisible here.
-				lines = append(lines, pyStrip(l))
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err // a real I/O error still surfaces; only size does not
-		}
-	}
-	// How many lines the tail dropped, so the number in an error counts lines as Python's
-	// universal newlines do (\n, \r\n or a bare \r) — the line `sed -n Np` prints whenever
-	// the store has no bare \r. Computed before the slice, because after it
-	// the index is relative to the window and names the wrong row.
-	dropped := 0
-	if limit > 0 && len(lines) > limit {
-		dropped = len(lines) - limit
-		lines = lines[dropped:]
 	}
 
 	runs := map[string]*Run{}
@@ -1356,4 +1291,83 @@ func homeDirOrTilde() string {
 	// expanduser returns the path unexpanded when the passwd lookup raises KeyError. Returning
 	// "~" here reproduces that: the concatenation above rebuilds the original string.
 	return "~"
+}
+
+// storeLines is the run store as runlog.load's text mode reads it: lines split at \n, \r\n
+// AND a bare \r, each str.strip()ped, blank ones kept so the tail counts them as
+// deque(fh, maxlen=limit) does. With limit > 0, only the last limit lines, and how many the
+// tail dropped. A missing store is no lines. Both readers start here, loadRaw for the writer's
+// guards and LoadStore for verdicts: the same split, strip and tail written twice drifted four
+// times, each fix landing in one reader and the next reviewer finding the other.
+func storeLines(path string, limit int) ([]string, int, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, 0, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	// Read with a bufio.Reader, not a Scanner. A Scanner caps the line length and then
+	// reports ErrTooLong, which aborted the WHOLE load and discarded every run already
+	// parsed — the exact opposite of the torn-line tolerance below, and on the same
+	// input: a half-written line from a concurrent writer is where an over-long read
+	// comes from. runlog.py iterates the file with no ceiling on record size, and its
+	// own comment says records are unbounded, so a ceiling here is a parity break too.
+	//
+	// What this does NOT match is RETENTION, and the parity argument above covers only
+	// record size. `runlog.load()` iterates `deque(fh, maxlen=limit)`, which streams and holds at
+	// most `limit` lines; this holds every line and applies the limit afterwards, so
+	// retention is O(file) rather than O(limit).
+	//
+	// The cost, measured on a 200 MiB store built by repeating the real one (which averages
+	// 936 bytes a line): 231 MiB allocated and 218-231 MiB heap to return one run at
+	// limit=1. That is 1.1-1.2x. An earlier version of this comment said "3-4x file size
+	// resident (~600 MiB)", which was wrong three ways: the figure came from a store that
+	// was ONE 200 MiB line, it quoted a heap number as resident, and it blamed this slice
+	// when the identical store costs the identical amount at limit=0 — a single oversized
+	// record is bufio's fragment concatenation, which the ring buffer below would not touch.
+	//
+	// Not fixed, and the honest reason is not "every caller passes 0": two tests do pass a
+	// limit, and `internal/push.Check` calls Load from the shipped binary. It is that 1.1x on
+	// a 143 KiB store buys nothing. (An earlier version of this sentence said "nothing outside
+	// this package's tests calls Load at all" — false once internal/push existed, which is the
+	// repo's dominant defect class sitting in the comment that argues against fixing this.) The claim worth keeping is the narrow one — `limit` bounds
+	// what is RETURNED, not what is read. Revisit when a caller passes a limit over a store
+	// big enough for the difference to matter.
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if line != "" {
+			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
+			// records to runlog.py. When only one reader split here, the two disagreed about
+			// one store: measured, finish found a run's plan and then derived its convergence
+			// as unknown from the same file.
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does: json.Unmarshal refuses a trailing
+				// \x1c or U+00A0 that Python drops, so a row the writer saw was invisible to
+				// the reader that did not strip.
+				lines = append(lines, pyStrip(l))
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, 0, err // a real I/O error still surfaces; only size does not
+		}
+	}
+	// How many lines the tail dropped, so the number in an error counts lines as Python's
+	// universal newlines do (\n, \r\n or a bare \r) — the line `sed -n Np` prints whenever
+	// the store has no bare \r. Computed before the slice, because after it
+	// the index is relative to the window and names the wrong row.
+	dropped := 0
+	if limit > 0 && len(lines) > limit {
+		dropped = len(lines) - limit
+		lines = lines[dropped:]
+	}
+	return lines, dropped, nil
 }

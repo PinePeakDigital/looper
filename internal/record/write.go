@@ -82,24 +82,11 @@ func TailLines() int {
 // or `check` reports no open run and `finish` skips its plan-based refusals.
 func loadRaw(path string, limit int) (runStore, error) {
 	s := runStore{runs: map[string]map[string]any{}}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+	lines, _, err := storeLines(path, limit)
 	if err != nil {
 		return s, fail("runlog: cannot read the run store: %v", err)
 	}
-	// Python's text mode splits on \n, \r\n AND a bare \r, so a bare \r ends a record there too.
-	text := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n")
-	lines := strings.SplitAfter(text, "\n")
-	if n := len(lines); n > 0 && lines[n-1] == "" {
-		lines = lines[:n-1]
-	}
-	if limit > 0 && len(lines) > limit {
-		lines = lines[len(lines)-limit:]
-	}
 	for _, line := range lines {
-		line = pyStrip(line) // str.strip(): a trailing \x1c would otherwise fail atEOF and drop the row
 		if line == "" {
 			continue
 		}

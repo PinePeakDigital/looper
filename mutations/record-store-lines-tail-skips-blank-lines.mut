@@ -1,0 +1,10 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestStoreLinesAreRunlogsLines'
+expect: --- FAIL:
+why:    the tail counts LINES, blank ones included, as deque(fh, maxlen=limit) does; dropping blank lines before the tail moves the window, so a run the Python sees inside the tail falls outside it here, for both readers at once now that they share this stage
+--- old
+				lines = append(lines, pyStrip(l))
+--- new
+				if pyStrip(l) != "" {
+					lines = append(lines, pyStrip(l))
+				}
