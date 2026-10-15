@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,17 +47,16 @@ func out(name string, args ...string) (string, bool) {
 // unbounded: a stalled one hung Step 0 with nothing printed. A variable so a test can shorten it.
 var netTimeout = 30 * time.Second
 
-// probe is out for a call that reaches the network: past netTimeout it has failed. A child that
-// exited 0 while a grandchild (a credential helper) still holds its pipes has answered, so
-// WaitDelay's ErrWaitDelay on that path keeps the answer.
-func probe(name string, args ...string) (string, bool) {
+// probe is the stdout of a call that reaches the network, whatever its exit, as `$(...)` was:
+// cut off at netTimeout, and at a second after the child exits when a grandchild (a credential
+// helper) still holds its pipes.
+func probe(name string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
-	o, err := cmd.Output()
-	ok := err == nil || errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState.Success()
-	return strings.TrimRight(string(o), "\n"), ok
+	o, _ := cmd.Output()
+	return strings.TrimRight(string(o), "\n")
 }
 
 // sum is `awk '{a+=$1; d+=$2} END {print a+d+0}'` over numstat: binary files' "-" count 0.
@@ -84,10 +82,10 @@ func awkNum(s string) int {
 }
 
 func baseBranch() string {
-	if b, _ := probe("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); b != "" {
+	if b := probe("gh", "pr", "view", "--json", "baseRefName", "-q", ".baseRefName"); b != "" {
 		return b
 	}
-	if b, _ := probe("gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"); b != "" {
+	if b := probe("gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"); b != "" {
 		return b
 	}
 	b, _ := out("git", "symbolic-ref", "refs/remotes/origin/HEAD")

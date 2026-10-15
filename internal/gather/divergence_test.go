@@ -159,8 +159,8 @@ func TestCrashesAndSilencesAreDecided(t *testing.T) {
 
 // gh and git fetch reach the network, and context.sh waited on them forever: a stalled gh hung
 // Step 0 with nothing printed. Past netTimeout looper gives up and falls back. A gh that exits
-// while a grandchild holds its pipes has still answered. There is no shell transcript: the shell
-// never finished.
+// while a grandchild holds its pipes is cut off a second later. There is no shell transcript:
+// the shell never finished.
 func TestAStalledProbeIsGivenUp(t *testing.T) {
 	for _, c := range []struct {
 		name, gh, want string

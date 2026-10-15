@@ -515,9 +515,9 @@ The divergences, each with its own test:
     fallback: the raw count, with `sizing helper produced no count`. Decoding it with U+FFFD
     instead would have sized on and under-counted.
 - **gh and `git fetch` give up after 30 seconds** (`TestAStalledProbeIsGivenUp`). context.sh waited
-  on them forever, so a stalled gh hung Step 0 with nothing printed. A probe that times out has
-  failed, and the base falls back as it would for any failure. A gh that exits while a grandchild
-  (a credential helper) still holds its pipes has answered, and its answer stands.
+  on them forever, so a stalled gh hung Step 0 with nothing printed. What a timed-out probe printed
+  stands, as for any other exit, and the base falls back past it when that is nothing. A gh that
+  exits while a grandchild (a credential helper) still holds its pipes is cut off a second later.
 
 ## `looper plan`
 
