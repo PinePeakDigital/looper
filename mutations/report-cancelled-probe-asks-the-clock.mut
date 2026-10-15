@@ -5,4 +5,4 @@ why:    the deadline arm must test the ERROR's identity, not the clock. `Start` 
 --- old
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 --- new
-	case ctx.Err() != nil:
+	case rr.Expired:

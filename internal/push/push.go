@@ -9,19 +9,17 @@
 package push
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // BrokenOutcomes are the recorded outcomes that mean the tree is the problem, not the
@@ -260,33 +258,27 @@ func sh(repo, prog string, args ...string) (int, string) {
 const shBudget = 20 * time.Second
 
 func shTimeout(repo string, budget time.Duration, prog string, args ...string) (int, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, prog, args...)
-	cmd.Dir = repo
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			if code := ee.ExitCode(); code >= 0 {
-				return code, strings.TrimSpace(string(out))
-			}
-			// SIGNALLED, which is what the context's own kill looks like. Go reports -1 for
-			// a signal-terminated process; the Python's sh returns 1 for TimeoutExpired like
-			// any other SubprocessError, and -1 is not a value any caller here could read
-			// as "cannot tell". Measured: `sleep 5` under a one-millisecond context gives
-			// err "signal: killed", errors.As true, ExitCode() -1.
-			//
-			// Checked here rather than on ctx.Err(), which would be narrower AND redundant:
-			// a context kill satisfies both, and a signal from outside the context satisfies
-			// only this. An earlier version tested ctx.Err() first and the two together
-			// masked each other — removing either left the suite green, which is how a
-			// guard with no test behind it looks.
-			return 1, strings.TrimSpace(string(out))
-		}
+	r := run.Run(repo, budget, prog, args...)
+	out := strings.TrimSpace(string(r.Out))
+	switch {
+	// Never started, or an I/O failure reading a process that did: the Python's sh returns 1
+	// with no output for either, as for any other SubprocessError.
+	case !r.Started, r.Error != nil && r.Code == 0 && r.Drained:
 		return 1, ""
+	// The child exited cleanly while a descendant (a credential helper) held the pipes past
+	// run's drain bound. Its output may be the descendant's bytes, not gh's answer, so this
+	// cannot tell. Before the shared runner push had no drain bound at all, and such a
+	// descendant held the gate until it exited, whatever the budget said.
+	case !r.Drained:
+		return 1, ""
+	// SIGNALLED, which is what the budget's own kill looks like. -signal is not a value any
+	// caller here could read as "cannot tell"; the Python's sh returns 1 for TimeoutExpired
+	// like any other SubprocessError. Checked on the code rather than on Expired, which
+	// would be narrower: a signal from outside the budget satisfies only this.
+	case r.Code < 0:
+		return 1, out
 	}
-	return 0, strings.TrimSpace(string(out))
+	return r.Code, out
 }
 
 // Result is what the subcommand prints, field for field as push-check.py's JSON. Disclose is

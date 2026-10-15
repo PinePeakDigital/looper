@@ -3,6 +3,6 @@ verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/
 expect: --- FAIL:
 why:    cmd.WaitDelay bounds the drain even when the context never expired, so without this arm a child that exited CLEANLY inside its budget reads as a failure whenever any descendant still holds the inherited output pipe. Measured under the production 20s budget with a shim that prints "7", exits 0 and leaves `sleep 5 &` behind: Code=1 with Out="7" sitting right there, FindPR reading GhFailed, and on the Post path a `gh pr comment` that had ALREADY LANDED read as failed and deferred — after which Step 0c posts a second public disclosure. Nineteen of the twenty seconds were unused. `ctx.Err() == nil` is what separates it from the kill, which arrives as an ExitError. The arm is DISABLED rather than deleted to keep the diff one token wide. Not for the reason first given here — `exec.ErrWaitDelay` stays referenced either way, by the relabel in the default arm below, so deleting the whole case also compiles.
 --- old
-	case ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) &&
+	case !rr.Expired && !rr.Drained:
 --- new
-	case false && ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) &&
+	case false && !rr.Expired && !rr.Drained:

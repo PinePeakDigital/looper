@@ -1,8 +1,8 @@
-target: internal/plan/plan.go
-verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython'
+target: internal/run/run.go
+verify: go test ./internal/run/ -count=1 -run 'TestHowACommandEnded/a_signal'
 expect: --- FAIL:
 why:    a probe killed by a signal reports exit -1 where Python's returncode is minus the signal, and the recorded gate reason says so
 --- old
-		code = -int(ws.Signal())
+			r.Code = -int(ws.Signal())
 --- new
-		code = -1
+			r.Code = -1
