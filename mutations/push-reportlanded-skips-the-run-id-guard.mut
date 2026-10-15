@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedRefusesATraversingRunID'
+expect: no marker satisfied an invalid run id
+why:    reportProbe must stop when evidence.Marker refuses the id. Past that point the marker needle is "", which every string contains, so a PR comment carrying only the fingerprint satisfies the gate for an id that names nothing. The pending-file path still fails closed on its own (PendingPath refuses too), which is why only the PR-comment path can catch this.
+--- old
+	marker, ok := evidence.Marker(runID)
+	if !ok {
+--- new
+	marker, ok := evidence.Marker(runID)
+	if false && !ok {

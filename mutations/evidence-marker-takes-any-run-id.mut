@@ -1,7 +1,7 @@
 target: internal/evidence/evidence.go
 verify: go test ./internal/evidence/ -count=1
 expect: --- FAIL:
-why:    Marker is the only way to spell the marker, and both halves of the gate build it from a run id that reaches a public PR comment raw. An unchecked `a-->` closes the comment early and renders the rest of the id as markdown. Every caller also refuses first, so only evidence's own table sees this check alone.
+why:    Marker is the only way to spell the marker, and both halves of the gate build it from a run id that reaches a public PR comment raw. An unchecked `a-->` closes the comment early and renders the rest of the id as markdown. pr-report and push.Check refuse first and Render refuses too, so evidence's own table is where this check is seen alone.
 --- old
 func Marker(id string) (string, bool) {
 	if !ValidRunID(id) {

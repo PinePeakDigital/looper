@@ -1,0 +1,10 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/evidence/ -count=1 -run 'TestPendingIDsListsOnlyWhatPendingPathBuilds'
+expect: want a,b
+why:    `looper record pending` is Step 0c's worklist, and each id it yields is handed back to PendingPath. A filename whose id PendingPath would refuse was not written by pr-report, so it is not a report to post; listing it hands Step 0c a path no writer could have built.
+--- old
+		if ValidRunID(id) {
+			ids = append(ids, id)
+		}
+--- new
+		ids = append(ids, id)

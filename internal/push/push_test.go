@@ -641,9 +641,8 @@ func TestReportLandedWithoutAGitDir(t *testing.T) {
 	}
 }
 
-// The path guard belongs to ReportLanded, not to whoever remembers to call Check first — and
-// this package's own tests call ReportLanded directly, so until it was moved the guard was a
-// property of one caller. Asserted on the function that builds the path.
+// The run-id rule, checked end to end through the gate that reads the path: ReportLanded is
+// callable without Check, so its refusal cannot depend on Check having run first.
 func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 	shimGh(t, "exit 1")
 	dir, gitdir := repo(t)
@@ -677,6 +676,13 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 		if ReportLanded(bad, r, dir) {
 			t.Errorf("ReportLanded accepted run id %q", bad)
 		}
+	}
+
+	// The gh path too. Without the refusal the marker needle is "", so any PR comment
+	// carrying the fingerprint satisfies an id that names nothing.
+	shimGh(t, "printf '"+strings.Join(Fingerprint(r), "\\n")+"\\n'")
+	if ReportLanded("a/b", r, dir) {
+		t.Error("a PR comment with no marker satisfied an invalid run id")
 	}
 }
 

@@ -5,7 +5,7 @@
 // internal/report WRITES the evidence and internal/push READS it. Each half keeps its own
 // logic, so that a bug in one cannot be agreed with by the other. The format, though, lives
 // only here, because two copies of it are what allowed the `-->` forgery to ship with CI
-// green: the two run-id rules disagreed and no test compared them (cmd/looper/main_test.go,
+// green: the two run-id rules disagreed, and the test comparing them had no case for `>` (cmd/looper/main_test.go,
 // TestPrReportRefusesARunIDThatCouldForgeTheComment).
 package evidence
 
@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 )
 
 // A run id is interpolated raw into a path segment and into a public PR comment, so `../`
@@ -42,4 +44,19 @@ func PendingPath(commonDir, id string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(commonDir, "info", "review-loop-pending-report."+id+".md"), true
+}
+
+// PendingIDs lists the run ids with a pending report under commonDir, sorted. A file whose
+// name does not carry a valid id is not one PendingPath could have built, so it is left out.
+func PendingIDs(commonDir string) []string {
+	files, _ := filepath.Glob(filepath.Join(commonDir, "info", "review-loop-pending-report.*.md"))
+	var ids []string
+	for _, f := range files {
+		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "review-loop-pending-report."), ".md")
+		if ValidRunID(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }

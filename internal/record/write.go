@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/pinepeakdigital/looper/internal/evidence"
 )
 
 // DefaultAgentCap is runlog.DEFAULT_AGENT_CAP: a ceiling, not a target. review-stats derives
@@ -1307,11 +1309,8 @@ func cmdPending(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	files, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*.md"))
-	sort.Strings(files)
-	for _, f := range files {
-		base := filepath.Base(f)
-		rid := strings.TrimSuffix(strings.TrimPrefix(base, "review-loop-pending-report."), ".md")
+	for _, rid := range evidence.PendingIDs(common) {
+		f, _ := evidence.PendingPath(common, rid) // PendingIDs returns only valid ids
 		run := s.get(rid)
 		switch {
 		case run == nil:

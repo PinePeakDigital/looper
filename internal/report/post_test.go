@@ -382,14 +382,12 @@ func TestAnUnknownConvergenceAppliesNoLabel(t *testing.T) {
 }
 
 // The two halves of the gate, pinned to each other end to end: Render writes the artifact,
-// WritePending puts it where the gate looks, and push.ReportLanded is the reader. If the
-// marker, the `## review-loop` heading or the `N cycle(s) · M agent(s)` line moves on either
-// side, every push is refused on advice that cannot succeed — post the report, which this
-// run already did.
-//
-// Asserted by RUNNING the reader rather than by comparing format strings: the two constants
-// could agree while the line they produce is assembled differently, which is the whole class
-// of near-miss a string comparison misses.
+// WritePending puts it where the gate looks, and push.ReportLanded is the reader. The marker
+// and the path come from internal/evidence; the `## review-loop` heading and the
+// `N cycle(s) · M agent(s)` line are still assembled separately on each side, and if they
+// drift every push is refused on advice that cannot succeed — post the report, which this run
+// already did. Asserted by RUNNING the reader, since a string comparison misses a line that
+// matches its format but is assembled differently.
 func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
 	const id = "fp01"
 	dir := gitRepo(t)
