@@ -1222,10 +1222,6 @@ func (r *Run) Disclosure() (string, error) {
 // what push-check requires, so a report rendered off nothing SATISFIES the gate with no forgery.
 // Measured again in the report slice: `looper pr-report` on a nudge-only store printed a
 // complete, plausible report and exited 0.
-//
-// Deliberately NOT the shape ValidRunID takes, which internal/report duplicates on purpose so
-// the writer and the reader of the pending path cannot agree by accident. Here the opposite is
-// wanted — the two must agree — so there is one definition.
 func (r *Run) Empty() bool {
 	return r == nil || (r.Plan == nil && len(r.Cycles) == 0 && r.Finish == nil)
 }

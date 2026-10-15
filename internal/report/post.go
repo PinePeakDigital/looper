@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pinepeakdigital/looper/internal/evidence"
 )
 
 // shBudget bounds every subprocess this package starts.
@@ -485,14 +487,12 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	if r.Code != 0 || r.Out == "" || !r.Drained {
 		return "", fmt.Errorf("no git dir in %s — nowhere to defer the report to", repo)
 	}
-	// The run id reaches a PATH here, and it arrives from the caller's -run-id. A traversing
-	// id would write outside the repo: filepath.Join(gitdir, "info/...-report.../../../x.md")
-	// resolves wherever the dots lead. The record's own validator is the gate; this is the
-	// guard travelling with the interpolation, the way push.reportProbe's does.
-	if !ValidRunID(runID) {
+	// The run id reaches a PATH here, from the caller's -run-id, and a traversing one would
+	// write outside the repo. evidence.PendingPath refuses it.
+	path, ok := evidence.PendingPath(r.Out, runID)
+	if !ok {
 		return "", fmt.Errorf("run id %q is not a plain id — refusing to build a path from it", runID)
 	}
-	path := filepath.Join(r.Out, fmt.Sprintf(PendingName, runID))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -511,26 +511,4 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 		return "", err
 	}
 	return path, nil
-}
-
-// ValidRunID mirrors push.ValidRunID. Duplicated rather than imported: internal/push imports
-// nothing from here and must not start, or the two halves of the gate become one package that
-// can agree with itself by accident.
-//
-// Exported because the COMMAND needs it too: the run id reaches a public PR comment raw, in
-// the marker and the summary line, and `record.Load` places no constraint on `run_id`. Checked
-// at the command rather than in Render so Render stays byte-comparable with the oracle, and
-// because cell()ing the id would rewrite the marker push.Fingerprint matches exactly.
-func ValidRunID(s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
-	}
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
-		default:
-			return false
-		}
-	}
-	return true
 }

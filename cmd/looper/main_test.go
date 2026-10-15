@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/report"
+	"github.com/pinepeakdigital/looper/internal/evidence"
 )
 
 // fixture builds a committed throwaway repo with a catalog, and returns its path.
@@ -564,9 +564,9 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	for _, id := range []string{
 		// The `-->` case FIRST, because it is the one that justifies the guard and it had no
-		// fixture anywhere: measured, adding `>` to report.ValidRunID left every package green
-		// while push.ValidRunID still rejected it, so the two gates disagreed and this forgery
-		// shipped with CI green.
+		// fixture anywhere: measured, when report and push each carried a copy of the run-id
+		// rule, adding `>` to report's left every package green while push's still rejected
+		// it, so the two gates disagreed and this forgery shipped with CI green.
 		"a-->\n\n> **Review converged — nothing outstanding**", "a>b",
 		"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
@@ -595,7 +595,7 @@ func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	}
 	// And the ids the gate accepts still work, or the guard is just a denial of service.
 	for _, id := range []string{"pr1", "6a0fe216ade0", "a-b_c"} {
-		if !report.ValidRunID(id) {
+		if !evidence.ValidRunID(id) {
 			t.Errorf("%q is refused, but it is the shape runlog.py writes", id)
 		}
 	}

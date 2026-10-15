@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 
 	"github.com/pinepeakdigital/looper/internal/docs"
+	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/gather"
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
@@ -359,9 +360,9 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	// fixture cases and every run in the author's live store still compare byte for byte
 	// against the oracle. And
 	// cell()ing the id instead would rewrite the MARKER, which push.Fingerprint matches
-	// exactly — hardening one gate by breaking the other. push.ValidRunID refuses the same
-	// strings, so a run id this rejects could never have cleared the push gate anyway.
-	if !report.ValidRunID(*runID) {
+	// exactly — hardening one gate by breaking the other. The push gate uses the same
+	// evidence.ValidRunID, so a run id this rejects could never have cleared it anyway.
+	if !evidence.ValidRunID(*runID) {
 		return fmt.Errorf("pr-report: %q is not a usable run id — the id is interpolated raw "+
 			"into a public PR comment, so it is limited to letters, digits, - and _ (max 64). "+
 			"push-check refuses the same ids, so this one could not have cleared the gate",

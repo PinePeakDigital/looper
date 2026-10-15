@@ -1,0 +1,11 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestRenderRefusesARunIDThatCouldForgeTheMarker'
+expect: rendered:
+why:    the command refuses a forging run id first, but Render is exported and the refusal is the last thing between `a-->` and a public comment for any caller that skips the command.
+--- old
+	marker, ok := evidence.Marker(runID)
+	if !ok {
+		return "", fmt.Errorf("run id %q is not a plain id", runID)
+	}
+--- new
+	marker, _ := evidence.Marker(runID)

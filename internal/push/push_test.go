@@ -230,6 +230,14 @@ func cappedRun(id string) []string {
 	}
 }
 
+// The wire format, spelled out rather than taken from internal/evidence: pr-report.py writes
+// these bytes too, so a change to evidence's spelling must fail here, and the traversal test
+// needs to build a path evidence.PendingPath refuses to.
+const (
+	reportMarker = "<!-- review-loop:run=%s -->"
+	pendingFmt   = "info/review-loop-pending-report.%s.md"
+)
+
 func landReport(t *testing.T, gitdir, runID string, lines []string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(gitdir, "info"), 0o755); err != nil {
