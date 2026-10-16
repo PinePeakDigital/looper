@@ -1,0 +1,10 @@
+# Review Loop Learnings
+
+## Dismissed
+<!-- c -->
+- <today>: a new dismissal
+- 2026-01-01: foo bar (declined)
+
+## Accepted patterns
+<!-- c -->
+- 2026-02-01: keep the retry backoff

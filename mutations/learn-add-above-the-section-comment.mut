@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/add_'
+expect: --- FAIL:
+why:    the comment under each header says what the section is for; an entry inserted above it splits the header from its explanation, and every later add stacks above that.
+--- old
+			for j < len(lines) && strings.HasPrefix(py.Strip(lines[j]), "<!--") {
+--- new
+			for j < len(lines) && false {

@@ -1,0 +1,10 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/add_banned_dismissal'
+expect: --- FAIL:
+why:    a Dismissed entry suppresses a whole class of finding on every future run, so it is the busiest channel by which "code like this already exists here" quietly cuts review. learn.py applied runlog's precedent ban there; dropping it writes the dismissal.
+--- old
+			if err := record.RejectBanned("this dismissal", text); err != nil {
+				return refuse(err.Error())
+			}
+--- new
+			_ = record.RejectBanned

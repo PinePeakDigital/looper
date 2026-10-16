@@ -1,0 +1,3 @@
+usage: learn.py [-h] [--section {dismissed,accepted}] [--cap CAP] [--selftest]
+                [{add,bump,prune}] [file] [text]
+learn.py: error: argument cmd: invalid choice: 'rm' (choose from 'add', 'bump', 'prune')

@@ -1,0 +1,3 @@
+usage: learn.py [-h] [--section {dismissed,accepted}] [--cap CAP] [--selftest]
+                [{add,bump,prune}] [file] [text]
+learn.py: error: argument --section: invalid choice: 'other' (choose from 'dismissed', 'accepted')

@@ -298,6 +298,26 @@ jobs:
             grep -q -- "--- PASS: $d" context.log || { echo "divergence $d did not pass"; cat context.log; exit 1; }
           done
 
+      # internal/learn the same: `looper learn` against what learn.py did to the same file,
+      # frozen under internal/learn/testdata/oracle.
+      - name: go test (learn)
+        run: |
+          go test -count=1 -v ./internal/learn/ > learn.log 2>&1 || { cat learn.log; exit 1; }
+          tail -5 learn.log
+
+      - name: the learn parity gate actually ran
+        run: |
+          [ -r learn.log ] || { echo "learn.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' learn.log; then
+            echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
+          fi
+          c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
+          [ "$c" -ge 31 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 31"; cat learn.log; exit 1; }
+          echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
+          for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone; do
+            grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
+          done
+
       # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
       # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
       # shipped three golden directories named after subtests containing an apostrophe and could
@@ -383,7 +403,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 357 ] || { echo "only $n mutations, expected at least 357 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 367 ] || { echo "only $n mutations, expected at least 367 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

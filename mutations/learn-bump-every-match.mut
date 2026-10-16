@@ -1,0 +1,9 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/bump_'
+expect: --- FAIL:
+why:    bump re-dates the ONE entry the caller judged a re-match. A substring is loose, so re-dating every entry containing it would refresh unrelated entries and keep them from ever aging out.
+--- old
+			lines[i] = "- " + today + ": " + m[2]
+			return true
+--- new
+			lines[i] = "- " + today + ": " + m[2]

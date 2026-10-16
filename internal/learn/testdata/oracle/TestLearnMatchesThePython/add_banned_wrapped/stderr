@@ -1,0 +1,2 @@
+runlog: refusing to record this dismissal — its reason cites precedent ('how the rest of the codebase').
+Existing code being similar is not evidence it is correct; a copied pattern carries its bugs, and the copy is the cheapest place to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.

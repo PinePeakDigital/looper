@@ -519,6 +519,41 @@ The divergences, each with its own test:
   stands, as for any other exit, and the base falls back past it when that is nothing. A gh that
   exits while a grandchild (a credential helper) still holds its pipes is cut off a second later.
 
+## `looper learn`
+
+The review-loop's Step 11, a port of the skill's `learn.py` in `internal/learn`. It makes the
+mechanical edits to the learnings file; which entry matches, and which section a new one belongs
+in, stay the caller's judgment.
+
+```text
+looper learn add   <file> "<entry text, no date>" --section dismissed|accepted
+looper learn bump  <file> "<substring of the matched entry>"
+looper learn prune <file> [--cap 50]
+```
+
+`add` stamps today's date and inserts the entry at the top of its section, creating the file or
+the section when missing. A Dismissed entry that cites precedent is refused with the run record's
+own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
+the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
+among the arguments.
+
+`TestLearnMatchesThePython` runs 31 scenarios through `looper learn` and requires what learn.py did
+to the same file, byte for byte in its exit status, output and resulting file, frozen under
+`internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date is the one
+normalisation. A usage error is compared on exit status and file only: argparse's text names
+learn.py and its `--selftest`, which this command does not have.
+
+The divergences:
+
+- **`PATTERN —` is durable.** learn.py protected only `PATTERN:`, while the entries it was meant to
+  protect are written `PATTERN — …`, so prune evicted them first (`TestPruneKeepsAnEmDashPattern`).
+- **A file that is not UTF-8 is refused and left alone.** learn.py died on the decode and wrote
+  nothing; this says why (`TestANonUTF8FileIsLeftAlone`). Any other unreadable file is also an
+  error naming the cause, where learn.py printed a traceback.
+- **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
+  script's digits was an entry there and is ordinary text here.
+- **No `--selftest`.** The Go tests replace it.
+
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates
