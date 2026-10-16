@@ -133,18 +133,25 @@ func Prune(lines []string, limit int) (kept, dropped []string) {
 
 // looksLikeOption is argparse's test (3.13+): a leading dash, unless the argument is "-",
 // starts like a negative number, or contains a space — so an entry like "--no-verify was used"
-// is text. An --option=value is an option whatever its value holds.
+// is text. Option matches come first, as there: an --option=value is an option whatever its
+// value holds (an ambiguous one is an error, not text), and anything starting -h is help.
 func looksLikeOption(a string) bool {
 	if !strings.HasPrefix(a, "-") || a == "-" {
 		return false
 	}
+	if shortHelp(a) {
+		return true
+	}
 	if name, _, ok := strings.Cut(a, "="); ok {
-		if _, err := expand(name); err == "" {
+		if _, err := expand(name); err == "" || strings.HasPrefix(err, "ambiguous") {
 			return true
 		}
 	}
 	return !strings.Contains(a, " ") && !negNum.MatchString(a)
 }
+
+// shortHelp is argparse reading -h followed by anything as -h: "-hx" and "-h x" print help.
+func shortHelp(a string) bool { return strings.HasPrefix(a, "-h") }
 
 var negNum = regexp.MustCompile(`^-\.?\p{Nd}`)
 
@@ -160,7 +167,7 @@ func expand(name string) (string, string) {
 			hits = append(hits, o)
 		}
 	}
-	if name == "-h" {
+	if shortHelp(name) {
 		return "--help", ""
 	}
 	switch len(hits) {
@@ -195,7 +202,8 @@ func Command(args []string, out, errOut io.Writer) int {
 		name, val, hasVal := strings.Cut(a, "=")
 		long, err := expand(name)
 		if err != "" {
-			return usageErr(err)
+			// argparse names the whole argument, value and all, in its ambiguity error.
+			return usageErr(strings.Replace(err, name, a, 1))
 		}
 		switch long {
 		case "--help":

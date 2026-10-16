@@ -535,10 +535,12 @@ looper learn prune <file> [--cap 50]
 the section when missing. A Dismissed entry that cites precedent is refused with the run record's
 own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
 the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
-among the arguments, abbreviated as argparse allowed, with `--` ending them; text that starts
-with a dash is still text when it holds a space or is a negative number, as in argparse.
+among the arguments, abbreviated as argparse allowed, with `--` ending them. As in argparse
+3.13+, an argument starting with a dash is text when it starts like a negative number (`-5%`) or
+holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
+anything starting `-h` are options.
 
-`TestLearnMatchesThePython` runs 43 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 45 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
@@ -564,8 +566,8 @@ The divergences:
 - **Mixed bad arguments may report a different error.** argparse parses everything first and then
   reports, so with several faults (an unknown option and a bad choice, an invalid command and extra
   arguments) it can name a different one, or list every unknown argument where this names the
-  first. A trailing `--` after the last positional is accepted here and refused there, and `-hx` or
-  `--help=1` are help to one and an error to the other. Each case is a usage error in both, except
+  first. A trailing `--` after the last positional is accepted here and refused there, and
+  `--help=1` or `-h=1` is help here and an error there. Each case is a usage error in both, except
   that trailing `--`.
 
 ## `looper plan`

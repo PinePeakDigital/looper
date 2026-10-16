@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/ambiguous_abbreviation_with_a_spaced_value'
+expect: --- FAIL:
+why:    argparse matches option prefixes before it applies the space rule, so `--s=a b` is an ambiguous option and a usage error. Read as text, the same argument is silently written into the learnings file as an entry.
+--- old
+		if _, err := expand(name); err == "" || strings.HasPrefix(err, "ambiguous") {
+--- new
+		if _, err := expand(name); err == "" {
