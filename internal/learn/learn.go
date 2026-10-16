@@ -158,17 +158,18 @@ var negNum = regexp.MustCompile(`^-\.?\p{Nd}`)
 // expand resolves an abbreviation the way argparse's allow_abbrev does, over learn.py's own
 // options so that an abbreviation ambiguous there is ambiguous here.
 func expand(name string) (string, string) {
+	if shortHelp(name) {
+		return "--help", ""
+	}
 	var hits []string
-	for _, o := range []string{"--help", "--section", "--cap", "--selftest"} {
+	// A bare "-" or "--" before an `=` is a prefix of every option, as in argparse.
+	for _, o := range []string{"-h", "--help", "--section", "--cap", "--selftest"} {
 		if o == name {
 			return o, ""
 		}
-		if strings.HasPrefix(name, "--") && len(name) > 2 && strings.HasPrefix(o, name) {
+		if strings.HasPrefix(o, name) {
 			hits = append(hits, o)
 		}
-	}
-	if shortHelp(name) {
-		return "--help", ""
 	}
 	switch len(hits) {
 	case 1:

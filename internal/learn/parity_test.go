@@ -72,6 +72,8 @@ var scenarios = []scenario{
 	{name: "option_value_with_a_space", file: s(base), args: []string{"add", "{f}", "x", "--section=accepted now"}, usage: true},
 	{name: "ambiguous_abbreviation_with_a_spaced_value", file: s(base), args: []string{"add", "{f}", "--section", "dismissed", "--s=a b"}, usage: true},
 	{name: "short_help_with_a_space", file: s(base), args: []string{"add", "{f}", "--section", "dismissed", "-h x"}, usage: true},
+	{name: "bare_dashes_before_an_equals", file: s(base), args: []string{"add", "{f}", "--=x y z", "--section", "dismissed"}, usage: true},
+	{name: "plain_short_help", file: s(base), args: []string{"bump", "{f}", "-h"}, usage: true},
 	{name: "double_dash", file: s(base), args: []string{"add", "{f}", "--section", "accepted", "--", "-x"}},
 	{name: "abbreviated_option", file: s(base), args: []string{"add", "{f}", "x", "--sec", "dismissed"}},
 	{name: "abbreviated_cap", file: s("- 2026-01-01: a\n- 2026-01-02: b\n"), args: []string{"prune", "{f}", "--ca=1"}},

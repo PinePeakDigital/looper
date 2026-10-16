@@ -540,7 +540,7 @@ among the arguments, abbreviated as argparse allowed, with `--` ending them. As 
 holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
 anything starting `-h` are options.
 
-`TestLearnMatchesThePython` runs 45 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 47 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its

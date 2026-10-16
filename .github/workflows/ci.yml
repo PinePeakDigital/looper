@@ -312,7 +312,7 @@ jobs:
             echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
           fi
           c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
-          [ "$c" -ge 45 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 45"; cat learn.log; exit 1; }
+          [ "$c" -ge 47 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 47"; cat learn.log; exit 1; }
           echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
           for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone TestANonUTF8EntryIsRefused \
                    TestAnUnreadableFileIsAnError TestAnEntryDateIsASCIIDigits; do
