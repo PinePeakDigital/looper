@@ -535,13 +535,15 @@ looper learn prune <file> [--cap 50]
 the section when missing. A Dismissed entry that cites precedent is refused with the run record's
 own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
 the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
-among the arguments.
+among the arguments, abbreviated as argparse allowed, with `--` ending them; text that starts
+with a dash is still text when it holds a space or is a negative number, as in argparse.
 
-`TestLearnMatchesThePython` runs 31 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 40 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
-`internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date is the one
-normalisation. A usage error is compared on exit status and file only: argparse's text names
-learn.py and its `--selftest`, which this command does not have.
+`internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
+temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
+final error line: argparse's usage text names learn.py and its `--selftest`, which this command
+does not have.
 
 The divergences:
 
@@ -549,10 +551,16 @@ The divergences:
   protect are written `PATTERN — …`, so prune evicted them first (`TestPruneKeepsAnEmDashPattern`).
 - **A file that is not UTF-8 is refused and left alone.** learn.py died on the decode and wrote
   nothing; this says why (`TestANonUTF8FileIsLeftAlone`). Any other unreadable file is also an
-  error naming the cause, where learn.py printed a traceback.
+  error naming the cause, where learn.py printed a traceback (`TestAnUnreadableFileIsAnError`).
+- **Entry text that is not UTF-8 is refused.** learn.py truncated the file and then died encoding
+  it (`TestANonUTF8EntryIsRefused`).
 - **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
-  script's digits was an entry there and is ordinary text here.
-- **No `--selftest`.** The Go tests replace it.
+  script's digits was an entry there and is ordinary text here (`TestAnEntryDateIsASCIIDigits`).
+- **`--cap` is a plain decimal integer.** Python's `int()` also took surrounding whitespace,
+  underscores, other scripts' digits and values past 64 bits.
+- **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
+  points, so a header spelled with it could fall on the other side of the "dismiss" test.
+- **No `--selftest`.** The Go tests replace it; asking for it is a usage error.
 
 ## `looper plan`
 

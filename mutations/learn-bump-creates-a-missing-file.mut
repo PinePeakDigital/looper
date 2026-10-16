@@ -1,8 +1,0 @@
-target: internal/learn/learn.go
-verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/(bump|prune)_missing_file'
-expect: --- FAIL:
-why:    a bump or prune with no learnings file means the caller has the wrong path; only add may create the file, or a mistyped path gets a fresh skeleton and the real file never changes.
---- old
-		if cmd != "add" {
---- new
-		if false {

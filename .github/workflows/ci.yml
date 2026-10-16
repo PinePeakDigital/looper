@@ -312,9 +312,10 @@ jobs:
             echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
           fi
           c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
-          [ "$c" -ge 31 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 31"; cat learn.log; exit 1; }
+          [ "$c" -ge 40 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 40"; cat learn.log; exit 1; }
           echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
-          for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone; do
+          for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone TestANonUTF8EntryIsRefused \
+                   TestAnUnreadableFileIsAnError TestAnEntryDateIsASCIIDigits; do
             grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
           done
 
@@ -342,13 +343,13 @@ jobs:
         run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
 
       - name: go test (everything else)
-        # mapfile, not a bare $(...): the five packages above are excluded because they run
+        # mapfile, not a bare $(...): the packages above are excluded because they run
         # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
         # accident — so quoting the substitution would pass the whole list as ONE argument and
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$' -e '/internal/ledger$' -e '/internal/plan$' -e '/internal/gather$')
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$' -e '/internal/ledger$' -e '/internal/plan$' -e '/internal/gather$' -e '/internal/learn$')
           go test -count=1 "${pkgs[@]}"
 
       # Anchors and parsing before behaviour. The mutation score below takes about fifteen
@@ -403,7 +404,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 367 ] || { echo "only $n mutations, expected at least 367 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 371 ] || { echo "only $n mutations, expected at least 371 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

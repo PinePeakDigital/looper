@@ -2,6 +2,8 @@ package learn
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,10 +18,11 @@ import (
 // The parity gate: each scenario ran through learn.py and runs through Command on the same
 // starting file and must leave the same exit status, stdout, stderr and file. The Python's
 // side is frozen under testdata/oracle; LEARN_ORACLE=<path to learn.py> recaptures it while
-// that file still exists. The date an entry is stamped with is the one normalisation: <today>.
+// that file still exists. Two normalisations: the date an entry is stamped with is <today>,
+// and the temp file's path is {f}.
 //
-// A usage error is compared on exit status and file only: argparse's usage text names
-// learn.py and lists its --selftest, and this command has neither.
+// A usage error is compared on exit status, file and its final error line: argparse's usage
+// text names learn.py and lists its --selftest, and this command has neither.
 
 type scenario struct {
 	name  string
@@ -61,6 +64,15 @@ var scenarios = []scenario{
 	{name: "prune_bad_cap", file: s(base), args: []string{"prune", "{f}", "--cap", "x"}, usage: true},
 	{name: "crlf_and_no_final_newline", file: s("## Dismissed\r\n- 2026-01-01: a\r\n- 2026-01-02: b"), args: []string{"bump", "{f}", "a"}},
 	{name: "splitlines_breaks", file: s("## Dismissed\v- 2026-01-01: a\x1c- 2026-01-02: b tail\n"), args: []string{"bump", "{f}", "b"}},
+	{name: "dash_led_text_with_a_space", file: s(base), args: []string{"add", "{f}", "--no-verify was used", "--section", "accepted"}},
+	{name: "dash_led_bump_text", file: s(base), args: []string{"bump", "{f}", "- foo"}},
+	{name: "negative_number_text", file: s(base), args: []string{"add", "{f}", "-1", "--section", "accepted"}},
+	{name: "double_dash", file: s(base), args: []string{"add", "{f}", "--section", "accepted", "--", "-x"}},
+	{name: "abbreviated_option", file: s(base), args: []string{"add", "{f}", "x", "--sec", "dismissed"}},
+	{name: "abbreviated_cap", file: s("- 2026-01-01: a\n- 2026-01-02: b\n"), args: []string{"prune", "{f}", "--ca=1"}},
+	{name: "ambiguous_abbreviation", file: s(base), args: []string{"add", "{f}", "x", "--s", "dismissed"}, usage: true},
+	{name: "option_missing_its_value", file: s(base), args: []string{"add", "{f}", "x", "--section", "--cap", "1"}, usage: true},
+	{name: "empty_file_argument", args: []string{"add", "", "x", "--section", "accepted"}, usage: true},
 	{name: "no_arguments", usage: true},
 	{name: "unknown_command", file: s(base), args: []string{"rm", "{f}"}, usage: true},
 	{name: "too_many_arguments", file: s(base), args: []string{"bump", "{f}", "a", "b"}, usage: true},
@@ -68,7 +80,9 @@ var scenarios = []scenario{
 
 func TestLearnMatchesThePython(t *testing.T) {
 	oracle := os.Getenv("LEARN_ORACLE")
+	old := Today
 	Today = func() string { return "<today>" }
+	t.Cleanup(func() { Today = old })
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
 			if oracle != "" {
@@ -79,12 +93,16 @@ func TestLearnMatchesThePython(t *testing.T) {
 			code := Command(args, &out, &errOut)
 			norm := func(s string) string { return strings.ReplaceAll(s, f, "{f}") }
 			got := map[string]string{"exit": strconv.Itoa(code), "stdout": norm(out.String()),
-				"stderr": norm(errOut.String()), "file": readOr(f)}
+				"stderr": norm(errOut.String()), "file": readOr(t, f)}
 			keys := []string{"exit", "stdout", "stderr", "file"}
 			if sc.usage {
+				// The usage line names learn.py and its --selftest; the error line after it is
+				// compared, with the program's name swapped.
 				keys = []string{"exit", "file"}
-				if errOut.Len() == 0 {
-					t.Error("a usage error said nothing")
+				lines := strings.Split(strings.TrimSpace(golden.Read(t, "stderr")), "\n")
+				want := strings.Replace(lines[len(lines)-1], "learn.py:", "looper learn:", 1)
+				if !strings.HasSuffix(strings.TrimSpace(got["stderr"]), want) {
+					t.Errorf("stderr: got\n%q\nwant it to end with\n%q", got["stderr"], want)
 				}
 			}
 			for _, k := range keys {
@@ -110,10 +128,13 @@ func setup(t *testing.T, sc scenario) (string, []string) {
 	return f, args
 }
 
-func readOr(f string) string {
+func readOr(t *testing.T, f string) string {
 	b, err := os.ReadFile(f)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return "<absent>"
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	return string(b)
 }
@@ -126,8 +147,8 @@ func capture(t *testing.T, oracle string, sc scenario) {
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	code := 0
 	if err := cmd.Run(); err != nil {
-		ee, ok := err.(*exec.ExitError)
-		if !ok {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
 			t.Fatal(err)
 		}
 		code = ee.ExitCode()
@@ -139,7 +160,7 @@ func capture(t *testing.T, oracle string, sc scenario) {
 		t.Fatal(err)
 	}
 	for k, v := range map[string]string{"exit": strconv.Itoa(code), "stdout": norm(out.String()),
-		"stderr": norm(errOut.String()), "file": norm(readOr(f))} {
+		"stderr": norm(errOut.String()), "file": norm(readOr(t, f))} {
 		if err := os.WriteFile(filepath.Join(dir, k), []byte(v), 0o644); err != nil {
 			t.Fatal(err)
 		}

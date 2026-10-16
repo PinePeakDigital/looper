@@ -1,0 +1,10 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/ambiguous_abbreviation'
+expect: --- FAIL:
+why:    argparse refuses an abbreviation that matches two options. Taking the first match would read `--s` as --section where learn.py stopped, so a caller relying on the refusal gets a silent write instead.
+--- old
+	switch len(hits) {
+	case 1:
+--- new
+	switch len(hits) {
+	case 1, 2:
