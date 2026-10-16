@@ -538,7 +538,7 @@ the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options
 among the arguments, abbreviated as argparse allowed, with `--` ending them; text that starts
 with a dash is still text when it holds a space or is a negative number, as in argparse.
 
-`TestLearnMatchesThePython` runs 40 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 43 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
@@ -561,6 +561,12 @@ The divergences:
 - **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
   points, so a header spelled with it could fall on the other side of the "dismiss" test.
 - **No `--selftest`.** The Go tests replace it; asking for it is a usage error.
+- **Mixed bad arguments may report a different error.** argparse parses everything first and then
+  reports, so with several faults (an unknown option and a bad choice, an invalid command and extra
+  arguments) it can name a different one, or list every unknown argument where this names the
+  first. A trailing `--` after the last positional is accepted here and refused there, and `-hx` or
+  `--help=1` are help to one and an error to the other. Each case is a usage error in both, except
+  that trailing `--`.
 
 ## `looper plan`
 

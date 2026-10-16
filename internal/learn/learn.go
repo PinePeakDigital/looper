@@ -131,13 +131,22 @@ func Prune(lines []string, limit int) (kept, dropped []string) {
 	return kept, dropped
 }
 
-// looksLikeOption is argparse's test: a leading dash, unless the argument is "-", a negative
-// number, or contains a space — so an entry like "--no-verify was used" is text.
+// looksLikeOption is argparse's test (3.13+): a leading dash, unless the argument is "-",
+// starts like a negative number, or contains a space — so an entry like "--no-verify was used"
+// is text. An --option=value is an option whatever its value holds.
 func looksLikeOption(a string) bool {
-	return strings.HasPrefix(a, "-") && a != "-" && !strings.Contains(a, " ") && !negNum.MatchString(a)
+	if !strings.HasPrefix(a, "-") || a == "-" {
+		return false
+	}
+	if name, _, ok := strings.Cut(a, "="); ok {
+		if _, err := expand(name); err == "" {
+			return true
+		}
+	}
+	return !strings.Contains(a, " ") && !negNum.MatchString(a)
 }
 
-var negNum = regexp.MustCompile(`^-\d+$|^-\d*\.\d+$`)
+var negNum = regexp.MustCompile(`^-\.?\p{Nd}`)
 
 // expand resolves an abbreviation the way argparse's allow_abbrev does, over learn.py's own
 // options so that an abbreviation ambiguous there is ambiguous here.
