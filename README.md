@@ -199,8 +199,10 @@ practice that is `looper record finish --run-id <id>` (`record abandon` closes i
 `abandoned` then blocks as broken; `record skipped` and `record carried` mint runs of their
 own). The block sits ahead of every check but the empty record, so an operator who never
 reached Step 14 is told to close the run rather than to post a report or change branch. A
-session that died mid-loop gets out the same way: a `cycle-limit` finish is not broken, so
-the run pushes with whatever disclosure its cycles derive.
+session that died mid-loop does not get out that way: a `cycle-limit` finish would push, and
+stamp as reviewed, a tip its cycles only partly covered. Abandon the dead run with `looper
+record abandon --run-id <id> --missing <gates>` and start a fresh run. `abandoned` blocks only the dead run's
+id; the fresh run has its own, so this is not a dead end.
 
 stderr still carries a note naming the run and the store that was read, because the
 refusal cannot say *why* nothing was readable. A run whose rows were all torn is

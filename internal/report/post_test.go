@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1061,6 +1062,65 @@ func TestAFailedLabelRemovalIsReported(t *testing.T) {
 	}
 	if !strings.Contains(diag.String(), "label review:halted") {
 		t.Errorf("the add was not reported: %q", diag.String())
+	}
+}
+
+// The removals follow what the PR carries. A label it does not carry is not asked about, so a
+// removal that would have failed for it cannot warn "two may now stand at once" with nothing
+// standing; a label it does carry is still removed, and a failure there still warns. When the
+// labels cannot be read, every removal is tried and warned about, as before.
+func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
+	dir := gitRepo(t)
+	// Every removal fails, with an error that is not gh's "not found": only review:converged
+	// is on the PR, so it is the only one that may warn.
+	gh := `case "$*" in
+	  "pr list"*) echo '[{"number":9}]';;
+	  "pr view 9 --json labels") %s;;
+	  *"--remove-label"*) echo "HTTP 502" >&2; exit 1;;
+	  *) exit 0;;
+	esac`
+	log := shimGh(t, fmt.Sprintf(gh, `echo '{"labels":[{"name":"review:converged"},{"name":"bug"}]}'`))
+	var diag strings.Builder
+	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	c, d := calls(t, log), diag.String()
+	if !strings.Contains(c, "pr edit 9 --remove-label review:converged") {
+		t.Errorf("the label the PR carries was not removed:\n%s", c)
+	}
+	if !strings.Contains(d, "label review:converged not removed, so two may now stand at once: HTTP 502") {
+		t.Errorf("a failed removal of a label the PR carries was silent: %q", d)
+	}
+	for _, absent := range []string{"review:capped", "review:unknown", "risk:high", "risk:medium", "risk:low"} {
+		if strings.Contains(d, absent) {
+			t.Errorf("%s is not on the PR, yet it was warned about: %q", absent, d)
+		}
+		if strings.Contains(c, "--remove-label "+absent) {
+			t.Errorf("%s is not on the PR, yet its removal was asked for:\n%s", absent, c)
+		}
+	}
+
+	// Unreadable labels: the read failing, or answering without the key, falls back to trying
+	// every removal and warning on each failure.
+	for name, view := range map[string]string{
+		"the read fails":         `echo "HTTP 502" >&2; exit 1`,
+		"the key is missing":     `echo '{}'`,
+		"the answer is not JSON": `echo 'oops'`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			shimGh(t, fmt.Sprintf(gh, view))
+			var diag strings.Builder
+			if _, err := Post(PostParams{Repo: dir, RunID: "post02", Branch: "feat/x",
+				Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+				t.Fatalf("Post: %v", err)
+			}
+			for _, l := range []string{"review:converged", "review:capped", "review:unknown"} {
+				if !strings.Contains(diag.String(), "label "+l+" not removed") {
+					t.Errorf("with the labels unreadable, the failed removal of %s was silent: %q", l, diag.String())
+				}
+			}
+		})
 	}
 }
 
