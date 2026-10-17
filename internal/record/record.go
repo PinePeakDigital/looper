@@ -1101,7 +1101,7 @@ func (r *Run) Disclosure() (string, error) {
 	// An absent `applied` renders "?" where the Python renders "None" for an explicit null —
 	// a *int is nil for both, which is the one place the two-state pointer is visible. This
 	// is the divergence the type comment said would be decided here: cosmetic, enumerated in
-	// internal/push/parity_test.go's TestTheOneDisclosureDivergence — NOT this package's
+	// internal/push/parity_test.go's TestTheDisclosureWordingDivergence — NOT this package's
 	// parity_test.go, which holds no Disclosure test at all — and grounded on no row in the
 	// real store holding a null `applied`.
 	// Both spellings tell the reader the same thing, and restoring three-state decoding for

@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckRefusesAnUnfinishedRun$'
+expect: --- FAIL:
+why:    record.Load drops a torn line without an error, so a finish row that was written and then torn reads exactly like one never written; without the note, "close it with looper record finish" is the only advice, and it may be wrong.
+--- old
+		if d := p.Diag; d != nil {
+--- new
+		if d := p.Diag; false && d != nil {
