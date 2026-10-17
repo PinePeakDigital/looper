@@ -5,26 +5,9 @@
 # here. It must be IGNORED, not merely untracked: `git status --porcelain` lists
 # untracked paths, so the mutation-score step's clean-tree guard aborted on it.
 .parity-oracle/
-# CI writes the verbose record-package test output here so the next step can assert the
-# parity gate did not skip. Ignored for the same reason as above: the mutation-score step
-# runs afterwards and its clean-tree guard counts untracked paths.
-record.log
-# The same, for the push package's oracle step — and it was MISSED when that step was added,
-# which meant the mutation-score step could never run at all: `?? push.log` made
-# requireCleanTree abort with "refusing to run: 1 uncommitted change(s)", a message about
-# uncommitted work rather than about a log file. Every raise of the catalog floor since was
-# gating on a step that aborted. Nothing caught it because this branch has not reached CI yet,
-# so the lesson is the pairing: a step that writes a log into the workspace needs a line here
-# in the same commit.
-push.log
-# And the same again for the report package's oracle step. The pairing the push.log note
-# names: a step that writes a log into the workspace needs a line here in the same commit.
-report.log
-# And the stats package's oracle step, the same pairing.
-stats.log
-# And the ledger package's oracle step, the same pairing.
-ledger.log
-# And the plan package's oracle step, the same pairing.
-plan.log
-# And the gather package's oracle step, the same pairing.
-context.log
+# CI writes each oracle step's verbose test output to <pkg>.log at the root so the next
+# step can assert the parity gate did not skip. Ignored, not merely untracked: the
+# mutation-score step runs afterwards and its clean-tree guard counts untracked paths
+# ("refusing to run: 1 uncommitted change(s)"). One pattern rather than a name per step,
+# because push.log and then learn.log were each missed when their step was added.
+/*.log
