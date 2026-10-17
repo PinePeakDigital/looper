@@ -1,12 +1,12 @@
 target: internal/push/push.go
 verify: go test ./internal/push/ -count=1 -run 'TestCheckDiagnosesARunMissingFromTheStore'
 expect: want the empty-record refusal ahead of the
-why:    ordering, which is behaviour here because Decide returns on the FIRST failing check. Moving the empty-record block below the report and branch checks leaves it reachable only when all of those pass, so the common cases — a mistyped -run-id against a repo with no landed report — refuse with "run looper pr-report --run-id <id> --post first", an instruction that cannot fix them, and the operator never learns the record was empty. The refusal is correct either way, which is what makes the ordering silent: only the REASON changes, and the reason is the whole operator-facing value of this gate.
+why:    ordering, which is behaviour here because Decide returns on the FIRST failing check. Deleting the empty-record block — the limit of checking it late, and since the unfinished-run block skips an empty record, the run falls through to the report and branch checks — leaves nothing naming the store, so the common cases — a mistyped -run-id against a repo with no landed report — refuse with "run looper pr-report --run-id <id> --post first", an instruction that cannot fix them, and the operator never learns the record was empty. The refusal is correct either way, which is what makes the ordering silent: only the REASON changes, and the reason is the whole operator-facing value of this gate.
 --- old
 	if s.NoRecord {
 		return false, "no readable record for this run — convergence, the outcome and the " +
 			"report fingerprint would all come off an empty record; check -store and -run-id"
 	}
-	for _, bad := range BrokenOutcomes {
+	if s.Unfinished != "" {
 --- new
-	for _, bad := range BrokenOutcomes {
+	if s.Unfinished != "" {
