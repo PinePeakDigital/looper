@@ -444,27 +444,23 @@ func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 	}
 	// No answer removes every risk label rather than leaving one standing: a risk:low from an
 	// earlier run would claim a safety this run's plan can no longer vouch for.
-	diag("no risk label: the plan's inputs do not say whether a changed path is attacker-reachable (risk %q)", p.Risk)
-	removeFamily(p, num, Label{}, Risks, diag)
+	diag("no risk label: the plan's inputs do not give a risk level (risk %q)", p.Risk)
+	removeFamily(p, num, Label{}, Risks, "so a stale level may still stand", diag)
 }
 
 // moveLabel moves one at-a-glance signal, removing the rest of its family so two cannot
 // stand at once. Every call is best-effort: a label is a convenience, and failing the publish
 // over one would mean losing a posted report to a missing `labels` scope.
 func moveLabel(p PostParams, num string, want Label, family map[string]Label, diag func(string, ...any)) {
-	// Every one of these is checked, which four of the five were not. `// Every call is
-	// best-effort` described the add below and nothing else: a removal that failed left the
-	// PREVIOUS run's label standing beside the new one, the add still succeeded, and the diag
-	// still said the label had moved — a PR advertising two convergences at once with nothing
-	// anywhere saying so. Discarding the stream that says why a gh call failed is the exact
-	// defect this whole slice exists to stop doing.
+	// Create, remove the rest of the family, then add. Every call is checked; removeFamily
+	// says why that matters for the removals.
 	if r := sh(p.Repo, "gh", "label", "create", want.Name, "--color", want.Colour,
 		"--description", want.Description); !r.Runnable || r.Code != 0 {
 		// Ordinary: the label already exists from a previous run. Noted, not treated as a
 		// failure, because the add below is what actually has to work.
 		diag("label %s not created (it may already exist): %s", want.Name, firstLine(r.Err))
 	}
-	removeFamily(p, num, want, family, diag)
+	removeFamily(p, num, want, family, "so two may now stand at once", diag)
 	if r := sh(p.Repo, "gh", "pr", "edit", num, "--add-label", want.Name); !r.Runnable || r.Code != 0 {
 		diag("label %s failed: %s", want.Name, firstLine(r.Err))
 		return
@@ -472,8 +468,15 @@ func moveLabel(p PostParams, num string, want Label, family map[string]Label, di
 	diag("label %s", want.Name)
 }
 
-// removeFamily removes every label of family but keep from the PR.
-func removeFamily(p PostParams, num string, keep Label, family map[string]Label, diag func(string, ...any)) {
+// removeFamily removes every label of family but keep from the PR; harm says what a failed
+// removal leaves behind.
+//
+// Each removal is checked. It once was not: a removal that failed left the PREVIOUS run's
+// label standing beside the new one, the add still succeeded, and the diag still said the
+// label had moved — a PR advertising two convergences at once with nothing anywhere saying
+// so. Discarding the stream that says why a gh call failed is the exact defect this whole
+// slice exists to stop doing.
+func removeFamily(p PostParams, num string, keep Label, family map[string]Label, harm string, diag func(string, ...any)) {
 	for _, l := range family {
 		if l.Name == keep.Name {
 			continue
@@ -486,7 +489,7 @@ func removeFamily(p PostParams, num string, keep Label, family map[string]Label,
 			if strings.Contains(r.Err, "'"+l.Name+"' not found") {
 				continue
 			}
-			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
+			diag("label %s not removed, %s: %s", l.Name, harm, firstLine(r.Err))
 		}
 	}
 }

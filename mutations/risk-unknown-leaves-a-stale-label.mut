@@ -3,6 +3,6 @@ verify: go test ./internal/report/ -count=1 -run 'TestNoRiskRemovesEveryRiskLabe
 expect: --- FAIL:
 why:    with no risk answer a risk:low from an earlier run would stay on the PR, claiming a safety this run's plan cannot vouch for.
 --- old
-	removeFamily(p, num, Label{}, Risks, diag)
+	removeFamily(p, num, Label{}, Risks, "so a stale level may still stand", diag)
 --- new
 	_ = Risks

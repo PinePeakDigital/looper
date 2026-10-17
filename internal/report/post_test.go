@@ -372,6 +372,16 @@ func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
 	if !strings.Contains(diag.String(), "no risk label") {
 		t.Errorf("stderr does not say no risk label was applied: %q", diag.String())
 	}
+	// A failed removal there leaves one stale label, not two, and says so.
+	shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; *"--remove-label risk:low"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	diag.Reset()
+	if _, err := Post(PostParams{Repo: dir, RunID: "post02", Branch: "feat/x",
+		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if !strings.Contains(diag.String(), "label risk:low not removed, so a stale level may still stand: HTTP 502") {
+		t.Errorf("a failed stale-label removal was not reported as one: %q", diag.String())
+	}
 }
 
 // The comment-failed path labels too, risk included, and keeps the risk line in the note.
@@ -383,8 +393,11 @@ func TestACommentFailureStillMovesTheRiskLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Post: %v", err)
 	}
-	if c := calls(t, log); !strings.Contains(c, "pr edit 9 --add-label risk:high") {
-		t.Errorf("the risk label was not applied when the comment failed:\n%s", c)
+	c := calls(t, log)
+	for _, want := range []string{"pr edit 9 --add-label risk:high", "pr edit 9 --add-label review:capped"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("%q missing when the comment failed:\n%s", want, c)
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

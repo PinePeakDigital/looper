@@ -7,7 +7,6 @@ why:    attacker_reachable is the input that could have made the answer high, so
 		return ""
 	case *attacker:
 --- new
-	case attacker == nil:
-		attacker = new(bool)
-		fallthrough
-	case *attacker:
+	case attacker == nil && false:
+		return ""
+	case attacker != nil && *attacker:
