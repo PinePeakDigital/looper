@@ -269,7 +269,8 @@ jobs:
           done
           for d in TestAnAbbreviatedFlagIsRefused TestAFailedRecordSaysSo TestAnUnmeasuredDiffPlansWide \
                    TestATimedOutProbeStopsAtItsTimeout TestHelpGoesToStdout TestTheDeltaAnswerLeavesTheRiskAlone \
-                   TestAProbeWithALingeringGrandchildIsAnswered TestAGarbledDeltaAnswerIsAUsageError; do
+                   TestAProbeWithALingeringGrandchildIsAnswered TestAGarbledDeltaAnswerIsAUsageError \
+                   TestEveryDocumentedDeltaAnswerIsRead; do
             grep -q -- "--- PASS: $d" plan.log || { echo "divergence $d did not pass"; cat plan.log; exit 1; }
           done
 

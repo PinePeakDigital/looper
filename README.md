@@ -647,7 +647,7 @@ The divergences, each with its own test:
   branch small enough on its own keeps plan.py's size reason. Because its "no" lowers the floor,
   `--delta-logic` takes only yes or no (`y`/`true`/`1`, `n`/`false`/`0`, any case); anything else
   is a usage error, exit 2, where plan.py's reading of its own flags would make a typo a "no"
-  (`TestAGarbledDeltaAnswerIsAUsageError`). The re-entry fields are
+  (`TestAGarbledDeltaAnswerIsAUsageError`, `TestEveryDocumentedDeltaAnswerIsRead`). The re-entry fields are
   type-checked as the others are; plan.py ignored any value in them
   (`TestAReEntryIsSizedAgainstTheDelta`, `TestAWrongReEntryFieldIsAnError`, whose goldens were
   captured from looper before the change, when it matched plan.py on every frozen scenario; a

@@ -1126,6 +1126,9 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 			if !strings.Contains(diag.String(), "the PR's labels") {
 				t.Errorf("the labels read failed without saying so: %q", diag.String())
 			}
+			if name == "the read fails" && !strings.Contains(diag.String(), "every removal is tried: HTTP 502") {
+				t.Errorf("the failed labels read did not say why: %q", diag.String())
+			}
 		})
 	}
 

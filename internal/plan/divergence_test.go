@@ -336,6 +336,30 @@ func TestAGarbledDeltaAnswerIsAUsageError(t *testing.T) {
 	}
 }
 
+// Strict is not narrower than documented: every spelling the README promises still answers.
+func TestEveryDocumentedDeltaAnswerIsRead(t *testing.T) {
+	for v, want := range map[string][]string{
+		"y": {`"tier_floor": "full"`, `"delta_logic": true`}, "true": {`"tier_floor": "full"`, `"delta_logic": true`},
+		"1": {`"tier_floor": "full"`, `"delta_logic": true`}, "YES": {`"tier_floor": "full"`, `"delta_logic": true`},
+		"n": {`"tier_floor": "fast"`, `"delta_logic": false`}, "false": {`"tier_floor": "fast"`, `"delta_logic": false`},
+		"0": {`"tier_floor": "fast"`, `"delta_logic": false`}, "NO": {`"tier_floor": "fast"`, `"delta_logic": false`},
+	} {
+		t.Run(v, func(t *testing.T) {
+			d := divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`),
+				args: with("--delta-logic", v)}}
+			code, out, errOut, _ := d.run(t)
+			if code != 0 {
+				t.Fatalf("--delta-logic %s: exit %d, stderr %q", v, code, errOut)
+			}
+			for _, s := range want {
+				if !strings.Contains(out, s) {
+					t.Errorf("--delta-logic %s: want %s in:\n%s", v, s, out)
+				}
+			}
+		})
+	}
+}
+
 // The delta answer is recorded for the run record's sake only: the risk label is the branch's
 // and reads --logic, so a logic-free follow-up on a branch with logic stays risk:medium.
 // Answering --logic about the delta is what flipped skills#11 to risk:low.
