@@ -194,6 +194,12 @@ reaches here unfinished skipped a step, and the report it posted rendered no out
 tier. The Python read the finish only for a broken outcome, so it never noticed; the Stop
 hook was the only thing that did, once per run and only when the session ended. Asserted by
 `TestTheUnfinishedRunDivergence`, against the Python's frozen verdict for such a store.
+Any finish row closes a run, whatever its outcome: `looper record finish`, and the rows
+`record abandon`, `record skipped` and `record carried` write. A nudge does not. The block sits
+second, after the empty record and ahead of every other check, so an operator who never
+reached Step 14 is told to close the run rather than to post a report or change branch. A
+session that died mid-loop gets out the same way: a `cycle-limit` finish keeps the disclosure
+and pushes.
 
 stderr still carries a note naming the run and the store that was read, because the
 refusal cannot say *why* nothing was readable. A run whose rows were all torn is

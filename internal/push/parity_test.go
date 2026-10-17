@@ -200,6 +200,36 @@ func TestParityWithPushCheck(t *testing.T) {
 	}
 }
 
+// parity02 runs Check on the store TestTheDisclosureWordingDivergence's golden was captured
+// from — a plan and one cycle with a null applied, report landed — optionally plus a clean
+// finish row. One builder, because TestTheUnfinishedRunDivergence reuses that golden and is
+// only valid while the two stores differ by the finish row alone.
+func parity02(t *testing.T, finished bool) Result {
+	t.Helper()
+	shimGh(t, "exit 1")
+	const id = "parity02"
+	dir, gitdir := repo(t)
+	rows := []string{
+		fmt.Sprintf(`{"run_id":%q,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`, id),
+		fmt.Sprintf(`{"run_id":%q,"phase":"cycle","n":1,"applied":null,"agents":4}`, id),
+	}
+	if finished {
+		rows = append(rows, fmt.Sprintf(`{"run_id":%q,"phase":"finish","outcome":"clean"}`, id))
+	}
+	store := writeStore(t, rows...)
+	runs, err := record.Load(store, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landReport(t, gitdir, id, Fingerprint(runs[id]))
+	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return got
+}
+
 // The one place the two disagree on purpose, and the whole of it. A *int is nil for an
 // absent key and for an explicit null alike, so `applied: null` renders "?" here where the
 // Python renders "None". Enumerated rather than compared, with the grounding that would
@@ -210,28 +240,11 @@ func TestParityWithPushCheck(t *testing.T) {
 // Stated as a TEST, not a comment, so the day someone makes the pointer three-state this
 // says which half moved. The Python half is frozen; it changes only by editing its golden.
 func TestTheDisclosureWordingDivergence(t *testing.T) {
-	shimGh(t, "exit 1")
-	const id = "parity02"
-	dir, gitdir := repo(t)
-	store := writeStore(t,
-		fmt.Sprintf(`{"run_id":%q,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`, id),
-		fmt.Sprintf(`{"run_id":%q,"phase":"cycle","n":1,"applied":null,"agents":4}`, id),
-		// Not in the captured store. A clean finish cannot move the Python's answer — it
-		// reads the finish only for a broken outcome — and without one this side refuses
-		// for the unfinished-run divergence below, before the wording is reached.
-		fmt.Sprintf(`{"run_id":%q,"phase":"finish","outcome":"clean"}`, id))
-	runs, err := record.Load(store, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	landReport(t, gitdir, id, Fingerprint(runs[id]))
-
+	// The finish row is not in the captured store. A clean finish cannot move the Python's
+	// answer — it reads the finish only for a broken outcome — and without one this side
+	// refuses for the unfinished-run divergence, before the wording is reached.
+	got := parity02(t, true)
 	py := pyPushCheck(t)
-	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
-		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
 	// Everything but the one word must still agree, which is what makes this a divergence
 	// rather than a disagreement: same verdict, same reason, same convergence.
 	if py.Push != got.Push || py.Reason != got.Reason || py.Convergence != got.Convergence {
@@ -253,50 +266,7 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 	}
 }
 
-// The third enumerated divergence, a VERDICT: a run with a record but no finish row. The
-// Python never looked, so it permitted. This side refuses, because Step 14 closes the record
-// before it posts the report or asks the gate, so reaching here unfinished means a step was
-// skipped — and the report already posted rendered no outcome and no tier.
-//
-// The golden is TestTheDisclosureWordingDivergence's capture, copied: that store had no
-// finish row, and push-check.py has since been deleted, so no new capture is possible. Its
-// verdict is the evidence the Python permitted exactly this state.
-func TestTheUnfinishedRunDivergence(t *testing.T) {
-	shimGh(t, "exit 1")
-	const id = "parity02"
-	dir, gitdir := repo(t)
-	store := writeStore(t,
-		fmt.Sprintf(`{"run_id":%q,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`, id),
-		fmt.Sprintf(`{"run_id":%q,"phase":"cycle","n":1,"applied":null,"agents":4}`, id))
-	runs, err := record.Load(store, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	landReport(t, gitdir, id, Fingerprint(runs[id]))
-
-	py := pyPushCheck(t)
-	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
-		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if !py.Push {
-		t.Errorf("the frozen golden no longer records the Python permitting an unfinished run "+
-			"(%q) — it was edited, and this enumerated divergence needs restating", py.Reason)
-	}
-	if got.Push {
-		t.Fatalf("this side permitted a push for a run with no finish row: %+v", got)
-	}
-	if !strings.Contains(got.Reason, "never finished") {
-		t.Errorf("reason = %q, want the unfinished-run refusal — a refusal for some other "+
-			"reason would close this hole only by accident", got.Reason)
-	}
-	if py.Convergence != got.Convergence {
-		t.Errorf("convergence diverged too (py %q, go %q)", py.Convergence, got.Convergence)
-	}
-}
-
-// The second enumerated divergence, and the first that changes a VERDICT rather than a
+// The second enumerated divergence, and the first of two that change a VERDICT rather than a
 // word: a run id that resolves to no readable record. The Python permitted with an `unknown`
 // disclosure, because the design's split says "we stopped looking" discloses and pushes. This
 // side refuses, because an empty record is not a run that stopped looking — it is the absence
@@ -344,5 +314,33 @@ func TestTheEmptyRecordDivergence(t *testing.T) {
 	if py.Convergence != got.Convergence {
 		t.Errorf("convergence diverged too (py %q, go %q) — the derivation is meant to be "+
 			"identical and only the decision different", py.Convergence, got.Convergence)
+	}
+}
+
+// The third enumerated divergence, and the second that changes a VERDICT: a run with a
+// record but no finish row. The Python never looked, so it permitted. This side refuses,
+// because Step 14 closes the record before it posts the report or asks the gate, so reaching
+// here unfinished means a step was skipped — and the report already posted rendered no
+// outcome and no tier.
+//
+// The golden is TestTheDisclosureWordingDivergence's capture, copied: that store had no
+// finish row, and push-check.py has since been deleted, so no new capture is possible. Its
+// verdict is the evidence the Python permitted exactly this state.
+func TestTheUnfinishedRunDivergence(t *testing.T) {
+	got := parity02(t, false)
+	py := pyPushCheck(t)
+	if !py.Push {
+		t.Errorf("the frozen golden no longer records the Python permitting an unfinished run "+
+			"(%q) — it was edited, and this enumerated divergence needs restating", py.Reason)
+	}
+	if got.Push {
+		t.Fatalf("this side permitted a push for a run with no finish row: %+v", got)
+	}
+	if !strings.Contains(got.Reason, "never finished") {
+		t.Errorf("reason = %q, want the unfinished-run refusal — a refusal for some other "+
+			"reason would close this hole only by accident", got.Reason)
+	}
+	if py.Convergence != got.Convergence {
+		t.Errorf("convergence diverged too (py %q, go %q)", py.Convergence, got.Convergence)
 	}
 }

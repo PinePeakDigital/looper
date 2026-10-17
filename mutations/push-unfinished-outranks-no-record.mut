@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestTheUnfinishedBlockOrder$'
+expect: --- FAIL:
+why:    an empty record must name the store: deferring it to the unfinished block would send an operator with a mistyped run id to finish a run that is not there.
+--- old
+	if s.NoRecord {
+--- new
+	if s.NoRecord && s.Unfinished == "" {

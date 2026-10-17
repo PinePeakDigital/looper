@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestTheUnfinishedBlockOrder$'
+expect: --- FAIL:
+why:    Decide returns on the first failing check, so checking the unfinished block only once the report and branch pass would tell an operator who never reached Step 14 to post a report or change branch, when the fix is closing the run.
+--- old
+	if s.Unfinished != "" {
+--- new
+	if s.Unfinished != "" && s.Unreported == "" && s.Branch != s.DefaultBranch {

@@ -3,6 +3,6 @@ verify: go test ./internal/push/ -count=1 -run 'TestTheUnfinishedRunDivergence$'
 expect: --- FAIL:
 why:    Step 14 closes the record before it asks the gate, so a run with no finish row skipped a step and its posted report rendered no outcome and no tier; without the block it pushes, as push-check.py did.
 --- old
-		Unfinished:     !noRecord && r.Finish == nil,
+		Unfinished:     unfinished,
 --- new
-		Unfinished:     false,
+		Unfinished:     "",
