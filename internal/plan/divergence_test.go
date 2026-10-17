@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/pinepeakdigital/looper/internal/report"
 )
 
 // Where plan.py crashed, answered falsely, or is spelled differently on purpose, looper decides
@@ -53,9 +55,10 @@ var usageAndInput = []struct {
 	d      divergence
 	stderr []string
 }{
-	{"context not JSON", divergence{scenario: scenario{ctx: "{not json"}}, []string{"context is not valid JSON"}},
-	{"context trailing data", divergence{scenario: scenario{ctx: ctxDefault + " {}"}}, []string{"context is not valid JSON"}},
-	{"context file missing", divergence{scenario: scenario{ctx: ctxDefault, args: with("--context", "/nonexistent/ctx.json")}}, []string{"cannot read the context file (", "Run context.sh first and point --context at what it wrote"}},
+	// context.sh is gone: the sentences name the command that writes the context now.
+	{"context not JSON", divergence{scenario: scenario{ctx: "{not json"}}, []string{"context is not valid JSON — run looper context first"}},
+	{"context trailing data", divergence{scenario: scenario{ctx: ctxDefault + " {}"}}, []string{"context is not valid JSON — run looper context first"}},
+	{"context file missing", divergence{scenario: scenario{ctx: ctxDefault, args: with("--context", "/nonexistent/ctx.json")}}, []string{"cannot read the context file (", "Run looper context first and point --context at what it wrote"}},
 	{"no model", divergence{scenario: scenario{ctx: ctxDefault}, raw: append(with(), "--dry-run")}, []string{"--model"}},
 	{"no answers", divergence{scenario: scenario{ctx: ctxDefault, args: []string{"--logic", "yes"}}}, []string{"--behavioral-goal, --runtime-change, --attacker-reachable"}},
 	{"unknown flag", divergence{scenario: scenario{ctx: ctxDefault, args: with("--frobnicate", "yes")}}, []string{"frobnicate"}},
@@ -91,7 +94,7 @@ func TestUsageAndInputErrorsExitAsThePythonDid(t *testing.T) {
 // traceback, and a string where a count belongs passed straight through into the plan JSON
 // and the record. context.sh writes neither; the check is what the plan's arithmetic assumes.
 var badContext = []struct{ name, ctx, stderr string }{
-	{"context is a list", `[1, 2]`, "not a JSON object"},
+	{"context is a list", `[1, 2]`, "not a JSON object — run looper context first"},
 	{"a count is a string", ctx(`{"changed_lines": "40"}`), "changed_lines is \"40\", not a whole number"},
 	{"a count is fractional", ctx(`{"semantic_lines": 12.5}`), "semantic_lines is 12.5, not a whole number"},
 	{"a flag is a number", ctx(`{"fast_path_eligible_by_size": 1}`), "fast_path_eligible_by_size is 1, not true or false"},
@@ -226,11 +229,143 @@ func TestAProbeWithALingeringGrandchildIsAnswered(t *testing.T) {
 	}
 }
 
-// -h prints the usage to stdout and exits 0, as argparse did; its text is Go's flag package's.
+// -h prints the usage to stdout and exits 0, as argparse did; its text is Go's flag package's,
+// and --context names the command that writes the file, not the retired context.sh.
 func TestHelpGoesToStdout(t *testing.T) {
 	var o, e bytes.Buffer
 	if code := Command([]string{"-h"}, strings.NewReader(""), &o, &e); code != 0 || e.Len() != 0 ||
-		!strings.Contains(o.String(), "-attacker-reachable") {
+		!strings.Contains(o.String(), "-attacker-reachable") || !strings.Contains(o.String(), "-delta-logic") ||
+		!strings.Contains(o.String(), "looper context") || strings.Contains(o.String(), "context.sh") {
 		t.Errorf("exit %d, stdout %q, stderr %q", code, o.String(), e.String())
+	}
+}
+
+// A follow-up after a clean exit is floored on the delta since the last reviewed sha when
+// `looper context` says it is fast-path sized and the orchestrator answers --delta-logic no
+// (SKILL.md's fast-path re-entry). --logic stays the whole branch's answer: the risk label
+// reads it, and a branch with reviewed logic in it is the case the re-entry is for. plan.py
+// predates the re-entry and never read the field, so it floored a small follow-up on a big
+// branch at full, and `record finish` then refused the fast tier the skill prescribes.
+//
+// These goldens were captured by hand from looper before the change, which matched plan.py on
+// every frozen scenario and, like plan.py, ignored context keys it did not name. Without
+// --delta-logic the plan must be that golden byte for byte. With it, the golden is looper's
+// own refusal of an unknown flag, in Go's words; plan.py's argparse refused it with exit 2 too.
+const reentry = `, "last_reviewed_sha": "abc1234", "review_delta_lines": 12`
+
+const reentryReason = `"tier_reason": "fast-path re-entry: 12 raw lines since the last reviewed sha abc1234 (fast path is <30) and no program logic in them; the branch has 40 lines of review surface"`
+
+var reEntry = []struct {
+	name string
+	d    divergence
+	// With --delta-logic: looper's floor, and text that must be in looper's transcript.
+	floor string
+	want  []string
+}{
+	{"a logic-free delta on a branch with logic is fast",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--delta-logic", "no")}},
+		"fast", []string{reentryReason, `"logic": true`, `"delta_logic": false`}},
+	{"a logic-free delta on a logic-free branch is fast",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"fast", []string{reentryReason}},
+	{"a recorded re-entry floors the row at fast and records the answer",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--delta-logic", "no"), record: true}},
+		"fast", []string{"tier_floor=\"fast\"\n", `"delta_logic":false`, `"logic":true`}},
+	{"a delta with logic in it is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "yes")}},
+		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`, `"delta_logic": true`}},
+	{"a delta not fast-path sized is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": false, "last_reviewed_sha": "abc1234", "review_delta_lines": 30}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
+	{"no reviewed sha is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": false, "last_reviewed_sha": null, "review_delta_lines": 0}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
+	{"a null delta verdict is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": null` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
+	// Fast-path sized branch-wide as well: plan.py's size reason stands.
+	{"a small branch keeps the size reason",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_size": true, "changed_lines": 12, "semantic_lines": 12, "fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"fast", []string{`"tier_reason": "12 lines of review surface and no program logic touched"`}},
+	// Unasked, nothing is lowered: an orchestrator that predates --delta-logic plans as before.
+	{"without a delta-logic answer a small delta is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no")}}, "", nil},
+	{"without a delta-logic answer a branch with logic is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`)}}, "", nil},
+}
+
+func TestAReEntryIsSizedAgainstTheDelta(t *testing.T) {
+	for _, c := range reEntry {
+		t.Run(c.name, func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			code, out, errOut, w := c.d.run(t)
+			got := w.result(t, code, out, errOut)
+			if c.floor == "" {
+				if got != py {
+					t.Errorf("--- python (frozen) ---\n%s\n--- looper ---\n%s", py, got)
+				}
+				return
+			}
+			// The record of what is being diverged from: plan.py had no such flag.
+			if !strings.HasPrefix(py, "exit=2\n") || !strings.Contains(py, "delta-logic") {
+				t.Fatalf("the frozen oracle no longer records plan.py refusing --delta-logic:\n%s", py)
+			}
+			want := append([]string{"exit=0\n", `"tier_floor": "` + c.floor + `"`}, c.want...)
+			for _, s := range want {
+				if !strings.Contains(got, s) {
+					t.Errorf("want %s in:\n%s", s, got)
+				}
+			}
+		})
+	}
+}
+
+// The delta answer is recorded for the run record's sake only: the risk label is the branch's
+// and reads --logic, so a logic-free follow-up on a branch with logic stays risk:medium.
+// Answering --logic about the delta is what flipped skills#11 to risk:low.
+func TestTheDeltaAnswerLeavesTheRiskAlone(t *testing.T) {
+	d := divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`),
+		args: with("--runtime-change", "no", "--delta-logic", "no"), record: true}}
+	code, _, errOut, w := d.run(t)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	runs, err := record.Load(w.store, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p *record.Plan
+	for _, r := range runs {
+		if r.Plan != nil {
+			p = r.Plan
+		}
+	}
+	if p == nil || p.TierFloor != "fast" {
+		t.Fatalf("no fast plan row in %+v", runs)
+	}
+	if got := report.Risk(p); got != "medium" {
+		t.Errorf("risk %q with --logic yes and --delta-logic no; want medium", got)
+	}
+}
+
+// The re-entry fields are type-checked as every other field is. plan.py never read them, so
+// any value planned as if the field were absent.
+var badReEntry = []struct{ name, ctx, stderr string }{
+	{"the delta verdict is a number", ctx(`{"fast_path_eligible_by_delta": 1}`), "fast_path_eligible_by_delta is 1, not true or false"},
+	{"the delta is a string", ctx(`{"review_delta_lines": "12"}`), "review_delta_lines is \"12\", not a whole number"},
+	{"the reviewed sha is a number", ctx(`{"last_reviewed_sha": 7}`), "last_reviewed_sha is 7, not a string"},
+}
+
+func TestAWrongReEntryFieldIsAnError(t *testing.T) {
+	for _, c := range badReEntry {
+		t.Run(c.name, func(t *testing.T) {
+			if py := golden.Read(t, "transcript"); !strings.HasPrefix(py, "exit=0\n") {
+				t.Fatalf("the frozen oracle no longer records the field being ignored:\n%s", py)
+			}
+			code, out, errOut, _ := divergence{scenario: scenario{ctx: c.ctx}}.run(t)
+			if code != 1 || out != "" || !strings.Contains(errOut, c.stderr) {
+				t.Errorf("exit %d, stdout %q, stderr %q; want exit 1, no stdout, stderr naming %q", code, out, errOut, c.stderr)
+			}
+		})
 	}
 }
