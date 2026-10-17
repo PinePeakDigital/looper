@@ -597,12 +597,13 @@ The divergences:
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates
-run and the tier floor, from context.sh's JSON and four answers only the orchestrator can give.
+run and the tier floor, from `looper context`'s JSON and four answers only the orchestrator can give.
 
 ```text
 looper plan --model <orchestrator model> --logic yes|no --behavioral-goal yes|no \
             --runtime-change yes|no --attacker-reachable yes|no \
-            [--spec-artifact yes|no] [--context <context.json>] [--dry-run]
+            [--spec-artifact yes|no] [--delta-logic yes|no] \
+            [--context <context.json>] [--dry-run]
 ```
 
 It prints the plan as JSON (`json.dumps(indent=2)`, byte for byte) and the Step 0 alarm, if
@@ -623,16 +624,35 @@ timestamps are the only normalisations.
 
 The divergences, each with its own test:
 
-- **Error sentences are looper's own** and say `looper plan`. The exit statuses are plan.py's:
-  1 for a context that cannot be read or parsed, 2 for a usage error. Nothing reaches stdout
-  either way (`TestUsageAndInputErrorsExitAsThePythonDid`). `-h` prints Go's usage text to
-  stdout and exits 0, where argparse printed its own (`TestHelpGoesToStdout`).
+- **Error sentences are looper's own** and say `looper plan`. Where plan.py said to run
+  context.sh, which no longer exists, they and `--context`'s help name `looper context`. The
+  exit statuses are plan.py's: 1 for a context that cannot be read or parsed, 2 for a usage
+  error. Nothing reaches stdout either way (`TestUsageAndInputErrorsExitAsThePythonDid`). `-h`
+  prints Go's usage text to stdout and exits 0, where argparse printed its own
+  (`TestHelpGoesToStdout`).
+- **A follow-up after a clean exit is floored on the delta** since the last reviewed sha, as
+  the skill's fast-path re-entry says. A new optional answer, `--delta-logic`, says whether the
+  delta since `last_reviewed_sha` changes program logic. With `fast_path_eligible_by_delta` true
+  and `--delta-logic no`, the floor is `fast` even when the branch as a whole is too big for it
+  or holds logic, and `tier_reason` says it is a re-entry and gives the delta's raw size and sha
+  beside the branch's review surface. plan.py predates the field and never read it, so a small
+  follow-up on a big branch floored at `full` and `looper record finish` then refused the fast
+  tier. `--logic` stays the whole branch's answer, and the risk label still reads only it: the
+  delta answer is recorded in the plan row's inputs as `delta_logic`, only when given, so the
+  record shows why a floor was lowered (`TestTheDeltaAnswerLeavesTheRiskAlone`). Without
+  `--delta-logic` nothing is lowered and the plan is byte for byte what it was; with a false,
+  `null` or missing verdict, or `--delta-logic yes`, the floor is what plan.py's would be, and a
+  branch small enough on its own keeps plan.py's size reason. The re-entry fields are
+  type-checked as the others are; plan.py ignored any value in them
+  (`TestAReEntryIsSizedAgainstTheDelta`, `TestAWrongReEntryFieldIsAnError`, whose goldens were
+  captured from looper before the change, when it matched plan.py on every frozen scenario; a
+  golden for a case that passes `--delta-logic` records that looper refusing the unknown flag).
 - **A context that is not an object, or a field of the wrong type,** exits 1 naming it. A count
   must be a whole number, a flag true or false, a name a string; `null` and a missing field
   read as plan.py's defaults, except a `null` `learnings_entries`, which plan.py printed as
   "None learnings entries" or crashed on, and which is an error here. plan.py read the JSON through `dict.get` and truthiness, so a list
   crashed it and a string where a count belongs passed through into the plan and the record.
-  context.sh writes neither (`TestAWrongContextIsAnError`).
+  `looper context` writes neither (`TestAWrongContextIsAnError`).
 - **An abbreviated flag is a usage error.** argparse took any unambiguous prefix, such as
   `--log`; Go's flag package takes none (`TestAnAbbreviatedFlagIsRefused`).
 - **A failed record write** passes the record's error and exit status on and then says nothing

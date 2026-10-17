@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestHelpGoesToStdout'
+expect: --- FAIL:
+why:    --context's help names context.sh, which no longer exists, so a reader looking for what writes the file finds nothing
+--- old
+	ctxPath := fs.String("context", "", "the JSON file looper context wrote (default: stdin)")
+--- new
+	ctxPath := fs.String("context", "", "context.sh JSON file (default: stdin)")

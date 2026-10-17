@@ -1,5 +1,5 @@
 // Package plan is `looper plan`: review-loop's plan.py, the Step 0b review plan. It decides
-// which gates run and the tier floor from context.sh's JSON, four yes/no answers only the
+// which gates run and the tier floor from `looper context`'s JSON, four yes/no answers only the
 // orchestrator can give, and what git, gh and the two ledgers report; then, unless
 // --dry-run, writes the plan row of the run record and prints its run_id last.
 //
@@ -199,14 +199,26 @@ func biggestChangedFile(base string) (int, string) {
 // is where improvisation re-enters wearing a manifest.
 type answers struct {
 	logic, behavioralGoal, runtimeChange, attackerReachable, specArtifact bool
+
+	// deltaLogic is whether the delta since last_reviewed_sha touches program logic, asked
+	// only for the fast-path re-entry. Optional and fail-closed: unasked, no floor is lowered.
+	// logic stays the whole branch's answer, which the risk label reads.
+	deltaLogic, deltaLogicGiven bool
 }
 
-// context is what plan.py read from context.sh's JSON.
+// context is what plan.py read from context.sh's JSON, plus the re-entry fields `looper
+// context` adds, which plan.py never read.
 type contextJSON struct {
 	changed, semantic, entries int
 	excluded, base             *string
 	fastBySize, due            bool
 	swept                      string // f"{swept}": the count, or None
+
+	// The fast-path re-entry: the newest reviewed ancestor of HEAD and the raw size of
+	// everything since it. A context that predates them reads as no re-entry.
+	lastReviewed *string
+	delta        int
+	fastByDelta  bool
 }
 
 func readContext(raw []byte) (contextJSON, error) {
@@ -215,11 +227,11 @@ func readContext(raw []byte) (contextJSON, error) {
 	d.UseNumber()
 	var v any
 	if !json.Valid(raw) || d.Decode(&v) != nil {
-		return c, errors.New("context is not valid JSON — run context.sh first")
+		return c, errors.New("context is not valid JSON — run looper context first")
 	}
 	m, isObj := v.(map[string]any)
 	if !isObj {
-		return c, errors.New("context is not a JSON object — run context.sh first")
+		return c, errors.New("context is not a JSON object — run looper context first")
 	}
 	num := func(k string) (int, bool, error) {
 		v, ok := m[k]
@@ -289,7 +301,16 @@ func readContext(raw []byte) (contextJSON, error) {
 	if c.fastBySize, err = flag("fast_path_eligible_by_size"); err != nil {
 		return c, err
 	}
-	c.due, err = flag("learnings_compaction_due")
+	if c.due, err = flag("learnings_compaction_due"); err != nil {
+		return c, err
+	}
+	if c.lastReviewed, err = str("last_reviewed_sha"); err != nil {
+		return c, err
+	}
+	if c.delta, _, err = num("review_delta_lines"); err != nil {
+		return c, err
+	}
+	c.fastByDelta, err = flag("fast_path_eligible_by_delta")
 	return c, err
 }
 
@@ -313,13 +334,24 @@ func build(c contextJSON, a answers) obj {
 
 	// --- tier floor: every threshold keys on the semantic count, the review surface.
 	var tier, tierReason string
-	if c.fastBySize && !a.logic {
+	switch {
+	case c.fastBySize && !a.logic:
 		tier = "fast"
 		tierReason = fmt.Sprintf("%d lines of review surface and no program logic touched", c.semantic)
 		if excluded != "" {
 			tierReason += fmt.Sprintf(" (%d raw; excluded %s)", c.changed, excluded)
 		}
-	} else {
+	case c.fastByDelta && a.deltaLogicGiven && !a.deltaLogic:
+		// The fast-path re-entry: a follow-up after a clean exit is sized against what changed
+		// since the last reviewed sha, not the whole branch. plan.py never read the field, so
+		// a small follow-up on a big branch floored at full and `record finish` refused fast.
+		// `looper context` says true only when there is a reviewed sha to size against. The
+		// logic question is the delta's own: the branch may well hold logic already reviewed.
+		tier = "fast"
+		tierReason = fmt.Sprintf("fast-path re-entry: %d raw lines since the last reviewed sha %s "+
+			"(fast path is <30) and no program logic in them; the branch has %d lines of review surface",
+			c.delta, orEmpty(c.lastReviewed), c.semantic)
+	default:
 		tier = "full"
 		var why []string
 		if !c.fastBySize {
@@ -448,6 +480,18 @@ func build(c contextJSON, a answers) obj {
 		set("measurement_gate", gate("skip", "no user-facing behavior change"))
 	}
 
+	inputs := obj{
+		{"logic", a.logic},
+		{"behavioral_goal", a.behavioralGoal},
+		{"runtime_behavior_change", a.runtimeChange},
+		{"attacker_reachable", a.attackerReachable},
+		{"spec_artifact", a.specArtifact},
+	}
+	// Recorded only when asked, so the run record shows why a floor was lowered and a plan
+	// without it is byte for byte what it was. report.Risk reads its three keys by name.
+	if a.deltaLogicGiven {
+		inputs = append(inputs, py.Field{Key: "delta_logic", Val: a.deltaLogic})
+	}
 	return obj{
 		{"tier_floor", tier},
 		{"tier_reason", tierReason},
@@ -458,13 +502,7 @@ func build(c contextJSON, a answers) obj {
 		{"semantic_lines", c.semantic},
 		{"sizing_excluded", c.excluded},
 		{"base_branch", c.base},
-		{"inputs", obj{
-			{"logic", a.logic},
-			{"behavioral_goal", a.behavioralGoal},
-			{"runtime_behavior_change", a.runtimeChange},
-			{"attacker_reachable", a.attackerReachable},
-			{"spec_artifact", a.specArtifact},
-		}},
+		{"inputs", inputs},
 		{"gates", gates},
 	}
 }
@@ -520,10 +558,11 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 	// Help to stdout, as argparse printed it; a usage error to stderr.
 	fs.SetOutput(io.Discard)
 	var a answers
-	ctxPath := fs.String("context", "", "context.sh JSON file (default: stdin)")
+	ctxPath := fs.String("context", "", "the JSON file looper context wrote (default: stdin)")
 	model := fs.String("model", "", "the ORCHESTRATOR's model id — the only model that varies across runs")
 	dry := fs.Bool("dry-run", false, "print the plan without recording it")
 	required := map[string]*yesno{}
+	var deltaLogic *yesno
 	for _, f := range []struct {
 		name string
 		v    *bool
@@ -534,11 +573,15 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 		{"runtime-change", &a.runtimeChange, "yes|no: does runtime behavior change? (gates the evidence + measurement gates)"},
 		{"attacker-reachable", &a.attackerReachable, "yes|no: is any changed path attacker-reachable?"},
 		{"spec-artifact", &a.specArtifact, "yes|no: did Step 4b capture a written spec artifact verbatim? (gates #11)"},
+		{"delta-logic", &a.deltaLogic, "yes|no: does the delta since last_reviewed_sha change program logic? (the fast-path re-entry; unasked, no floor is lowered)"},
 	} {
 		y := &yesno{v: f.v}
 		fs.Var(y, f.name, f.help)
-		if f.name != "spec-artifact" {
+		if f.name != "spec-artifact" && f.name != "delta-logic" {
 			required[f.name] = y
+		}
+		if f.name == "delta-logic" {
+			deltaLogic = y
 		}
 	}
 	if err := fs.Parse(args); err != nil {
@@ -569,12 +612,13 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 		fmt.Fprintf(errOut, "looper plan: the following arguments are required: %s\n", strings.Join(missing, ", "))
 		return 2
 	}
+	a.deltaLogicGiven = deltaLogic.set
 
 	var raw []byte
 	var err error
 	if *ctxPath != "" {
 		if raw, err = os.ReadFile(*ctxPath); err != nil {
-			fmt.Fprintf(errOut, "looper plan: cannot read the context file (%v). Run context.sh first "+
+			fmt.Fprintf(errOut, "looper plan: cannot read the context file (%v). Run looper context first "+
 				"and point --context at what it wrote.\n", err)
 			return 1
 		}
