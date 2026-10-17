@@ -263,9 +263,10 @@ deferred case would be a divergence rather than a fix.
 
 `-label` also applies a risk label from the plan's recorded inputs, the change's blast radius
 beside the review's completeness: `risk:high` when a changed path is attacker-reachable,
-`risk:medium` when logic or runtime behaviour changes, `risk:low` when the plan said neither.
-The other two are removed. When the inputs cannot say (absent, unreadable, or no
-`attacker_reachable`), every risk label is removed rather than one left standing from an
+`risk:medium` when logic or runtime behaviour changes, `risk:low` when the plan recorded all
+three as false. The other two are removed. When the inputs cannot say (absent or unreadable,
+no readable `attacker_reachable`, or `attacker_reachable` false with `logic` or
+`runtime_behavior_change` unreadable and neither true), every risk label is removed rather than one left standing from an
 earlier run, and the local copy's note says so; when they can, the note carries the commands
 Step 0c needs to apply it. Not in the retired Python.
 
