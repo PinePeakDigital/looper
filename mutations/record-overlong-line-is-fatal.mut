@@ -9,14 +9,14 @@ why:    a bufio.Scanner caps the line length and then reports ErrTooLong, which 
 		line, err := br.ReadString('\n')
 		if line != "" {
 			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
-			// records to runlog.py. Split here too, or the record writer (loadRaw) and this
-			// reader disagree about one store: measured, finish found a run's plan and then
-			// derived its convergence as unknown from the same file.
+			// records to runlog.py. When only one reader split here, the two disagreed about
+			// one store: measured, finish found a run's plan and then derived its convergence
+			// as unknown from the same file.
 			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 			for _, l := range strings.Split(line, "\r") {
-				// And strip each the way str.strip() does, as loadRaw does: json.Unmarshal
-				// refuses a trailing \x1c or U+00A0 that Python drops, so a row the writer
-				// saw was invisible here.
+				// And strip each the way str.strip() does: json.Unmarshal refuses a trailing
+				// \x1c or U+00A0 that Python drops, so a row the writer saw was invisible to
+				// the reader that did not strip.
 				lines = append(lines, pyStrip(l))
 			}
 		}
@@ -24,7 +24,7 @@ why:    a bufio.Scanner caps the line length and then reports ErrTooLong, which 
 			if err == io.EOF {
 				break
 			}
-			return nil, err // a real I/O error still surfaces; only size does not
+			return nil, 0, err // a real I/O error still surfaces; only size does not
 		}
 	}
 --- new
@@ -35,7 +35,7 @@ why:    a bufio.Scanner caps the line length and then reports ErrTooLong, which 
 		lines = append(lines, sc.Text())
 	}
 	if err := sc.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	_ = io.EOF
 	_ = strings.TrimRight

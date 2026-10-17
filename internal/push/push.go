@@ -5,7 +5,8 @@
 // halted run pushes and owes the line record.Disclosure derives, because a cap that strands
 // commits just moves the decision back to a human every time. "It is broken" is a BLOCK: a
 // recorded broken outcome, a blocked evidence gate, an unresolved finding, the default
-// branch. Conflating the two is what made the old `--clean-exit` flag the whole gate.
+// branch. So is "there is no evidence": no readable record, or a record never finished.
+// Conflating the two is what made the old `--clean-exit` flag the whole gate.
 package push
 
 import (
@@ -63,7 +64,8 @@ type State struct {
 	// It blocks, and that is a DELIBERATE DIVERGENCE from push-check.py, which permits here
 	// with a disclosure. See the enumerated divergence in parity_test.go. The Python's
 	// behaviour follows from the design's own split — `unknown` means "we stopped looking",
-	// which discloses and pushes — but an empty record is not a run that stopped looking, it
+	// which discloses and pushes (once the run has finished; see Unfinished) — but an empty
+	// record is not a run that stopped looking, it
 	// is the absence of any evidence that a run happened. Everything the gate reads comes off
 	// it: convergence derives `unknown`, no recorded outcome can block, and the required
 	// report fingerprint collapses to the two lines pr-report.py renders for a run with no
@@ -72,6 +74,17 @@ type State struct {
 	// the store the cheapest way to make this gate say yes, which is the one thing it exists
 	// to prevent.
 	NoRecord bool
+	// Unfinished is the refusal for a run that has a record but no finish row, "" when it
+	// has one. A reason rather than a bool, like Unreported, so it can name the run. Step 14
+	// closes the record before it posts the report or asks this, so an unfinished run here
+	// skipped a step — and the report it posted rendered no outcome and no tier. Blocks; a
+	// DELIBERATE DIVERGENCE from push-check.py, which never looked.
+	//
+	// A session that died mid-loop lands here too. Its way out is the same command: a
+	// `cycle-limit` finish is not a broken outcome, so the run pushes with whatever
+	// disclosure its cycles derive, and the commits are not stranded. Abandoning is not a
+	// way out — `abandoned` is a broken outcome.
+	Unfinished string
 }
 
 // Decide answers push/no-push with the reason. First failing check wins, mirroring SKILL.md
@@ -83,6 +96,9 @@ func Decide(s State) (bool, string) {
 	if s.NoRecord {
 		return false, "no readable record for this run — convergence, the outcome and the " +
 			"report fingerprint would all come off an empty record; check -store and -run-id"
+	}
+	if s.Unfinished != "" {
+		return false, s.Unfinished
 	}
 	for _, bad := range BrokenOutcomes {
 		if s.Outcome == bad {
@@ -342,8 +358,8 @@ func Check(p CheckParams) (Result, error) {
 		return Result{}, err
 	}
 	// A run id absent from the store derives UNKNOWN, never converged — absence is the
-	// cheapest thing to produce, so it cannot buy a better answer than a recorded unfinished
-	// run. The empty Run is still built, because Convergence and Disclosure must answer for
+	// cheapest thing to produce, so it cannot buy a better answer than a recorded run. The
+	// empty Run is still built, because Convergence and Disclosure must answer for
 	// it, but `noRecord` blocks the push outright: see State.NoRecord for why disclosing was
 	// not enough, and parity_test.go for the enumerated divergence this creates.
 	r := runs[p.RunID]
@@ -363,7 +379,8 @@ func Check(p CheckParams) (Result, error) {
 		if p.Diag != nil {
 			// Every derivation below now comes off an EMPTY record, and each one reads as a
 			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
-			// outcome can block, and the required fingerprint collapses to the two lines
+			// outcome can block (the unfinished-run block is skipped for an empty record,
+			// which NoRecord refuses first), and the required fingerprint collapses to the two lines
 			// pr-report.py renders for a run with no cycles. On this store that collides
 			// with a real report for about HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 19:50 — the store gains runs several times a day, so re-derive rather than trust the figure: group its rows by run_id and count those with no `cycle` row),
 			// so this can GRANT as easily as refuse.
@@ -428,6 +445,18 @@ func Check(p CheckParams) (Result, error) {
 				"closed and may not be about the report at all\n", p.Repo, shBudget)
 		}
 	}
+	var unfinished string
+	if !noRecord && r.Finish == nil {
+		unfinished = "run " + p.RunID + " was never finished — close it with `looper record " +
+			"finish --run-id " + p.RunID + "`, re-post its report with `looper pr-report " +
+			"--run-id " + p.RunID + " --post`, then ask again"
+		if d := p.Diag; d != nil {
+			// record.Load drops a torn line without an error, so a finish row that was
+			// written and then torn reads exactly like one never written.
+			fmt.Fprintf(d, "push-check: run %q has no readable finish row in %q; if a "+
+				"finish was recorded, its line may be torn\n", p.RunID, p.Store)
+		}
+	}
 	push, reason := Decide(State{
 		Convergence:    conv,
 		GateState:      p.GateState,
@@ -438,6 +467,7 @@ func Check(p CheckParams) (Result, error) {
 		Outcome:        outcome,
 		Unreported:     unreported,
 		NoRecord:       noRecord,
+		Unfinished:     unfinished,
 	})
 	res := Result{Push: push, Reason: reason, Convergence: conv}
 	if disclose != "" {
