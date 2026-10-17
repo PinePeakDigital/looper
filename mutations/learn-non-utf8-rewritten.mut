@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestANonUTF8FileIsLeftAlone'
+expect: --- FAIL:
+why:    decoding replaces each invalid byte with U+FFFD and the write then makes that permanent across the whole file. learn.py died on the decode and wrote nothing, which is the safe half of its behaviour.
+--- old
+	case !utf8.Valid(b):
+--- new
+	case false && !utf8.Valid(b):

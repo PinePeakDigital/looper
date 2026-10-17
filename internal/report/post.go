@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pinepeakdigital/looper/internal/evidence"
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // shBudget bounds every subprocess this package starts.
@@ -53,33 +56,12 @@ func sh(repo, prog string, args ...string) result {
 }
 
 func shTimeout(repo string, budget time.Duration, prog string, args ...string) result {
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, prog, args...)
-	cmd.Dir = repo
-	// WaitDelay, or the budget above bounds NOTHING. CommandContext kills the direct child
-	// only, and because these sinks are strings.Builders os/exec drains them through pipes a
-	// GRANDCHILD inherits — a credential helper gh starts, a git subprocess, a shell wrapper's
-	// background job. With WaitDelay zero, Wait blocks until every holder closes its end.
-	// Measured against a shim whose last line is `sleep 10 &`: a 300ms budget returned after
-	// 10.15s, and returned code 0 — a success verdict for a call that blew its deadline by 34x.
-	// The hung-subprocess subtest cannot see it: it asserts the error text and not the elapsed
-	// time, and at its budget the kill usually wins the race against the shell's fork. The
-	// subtest after it asserts the bound deterministically, by backgrounding the sleep so a
-	// grandchild exists for certain.
-	//
-	// After the delay fires Wait reports exec.ErrWaitDelay when the child itself exited
-	// cleanly — measured, NOT an ExitError, so it lands in the default arm and reads as
-	// ran-and-failed, which is the honest verdict for a call that could not be drained. When
-	// the child was also killed, the ExitError wins and nothing changes. One second rather
-	// than something tighter: it bounds the DRAIN, not the deadline, and a healthy gh never
-	// reaches it.
-	cmd.WaitDelay = time.Second
-	var out, errOut strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	err := cmd.Run()
+	// internal/run bounds the call: the budget, and a drain bound so a grandchild holding the
+	// pipes cannot hold the call past it. What each ending means here is decided below.
+	rr := run.Run(repo, budget, prog, args...)
+	err := rr.Error
 	r := result{Runnable: true, Drained: true,
-		Out: strings.TrimSpace(out.String()), Err: strings.TrimSpace(errOut.String())}
+		Out: strings.TrimSpace(string(rr.Out)), Err: strings.TrimSpace(string(rr.Err))}
 	switch {
 	case err == nil:
 		return r
@@ -97,14 +79,9 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	// FindPR said "PR #42", and the disclosure was commented onto a PR that does not exist for
 	// this branch. The descendant is not a bystander; it writes into the same fd.
 	//
-	// NOT a kill-versus-drain test. `ctx.Err()` is read AFTER the up-to-WaitDelay drain, so for
-	// any budget at or below WaitDelay the deadline has always passed by the time this runs and
-	// the arm cannot fire — measured, the same shim gives code 0 at a 20s budget and code 1 at
-	// 300ms. An earlier comment here claimed this distinguished the kill, which it does not; a
-	// kill is an ExitError and the default arm takes it either way. What the condition actually
-	// buys is that a call whose own deadline expired is never reported as a success.
-	case ctx.Err() == nil && errors.Is(err, exec.ErrWaitDelay) &&
-		!errors.As(err, new(*exec.ExitError)):
+	// `!rr.Expired` means a call whose own deadline expired is never reported as a success.
+	// It cannot tell a kill from a drain: a kill is an ExitError, which the default arm takes.
+	case !rr.Expired && !rr.Drained:
 		r.Drained = false
 		drain := "a descendant held the output pipe past the drain bound (" + err.Error() +
 			"), so the output cannot be trusted; the subprocess itself exited cleanly"
@@ -116,43 +93,23 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 		r.Err = drain
 		return r
 	// OUR OWN budget cancelled the probe before the fork. `Start` checks the context after
-	// LookPath and returns `ctx.Err()`, which is not an ExitError, so without this arm it fell
-	// to the "never started" test below and answered "install gh" for a gh the caller's own
-	// deadline cancelled — the advice the default arm's comment says must never be given for a
-	// gh that was killed. Measured: budget 1ns gives `context deadline exceeded`; budget 1ms
-	// gives `signal: killed`, an ExitError, which the default arm already handles.
+	// LookPath and returns `ctx.Err()`, so without this arm it fell to the "never started"
+	// test below and answered "install gh" for a gh the caller's own deadline cancelled.
 	//
-	// The test is on the ERROR's identity and NOT on `ctx.Err() != nil`, which was the first
+	// The test is on the ERROR's identity and NOT on `rr.Expired`, which was the first
 	// attempt and asked the clock instead. `Start` returns a missing binary's lookPathErr
 	// BEFORE it consults the context, so with both true at once that arm claimed an uninstalled
 	// gh and reported "gh ran and failed" — measured, `Runnable=true Code=1` with "executable
-	// file not found in $PATH" in the very same string. Trading one wrong assertion for another:
-	// an expired clock is not evidence about what went wrong.
+	// file not found in $PATH" in the very same string.
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		r.Code = 1
 		if r.Err == "" {
 			r.Err = err.Error()
 		}
 		return r
-	// Never STARTED. `Cmd.Process` is the underlying process "once started", so a nil one
-	// after Run is exactly that and nothing else. Enumerating sentinels — ErrNotFound,
-	// ErrNotExist, ErrPermission — missed the binary that exists, is executable, and is the
-	// wrong format: measured, a chmod +x text file gives a *fs.PathError ("exec format
-	// error") matching none of the three, so it fell to the default and reported "gh ran and
-	// failed" for a gh that never ran. That is the wrong remedy twice over — it tells the
-	// operator to wait for GitHub when the fix is to reinstall. The inverse test
-	// `!errors.As(err, new(*exec.ExitError))` replaced the enumeration and was wrong in the
-	// other direction: os/exec documents "other error types may be returned for I/O
-	// problems", and these sinks are strings.Builders, so os/exec allocates pipes and copy
-	// goroutines and Wait reports a copy failure — for a process that DID run. ErrWaitDelay is
-	// the second such error and now the one that actually fires: setting WaitDelay above made
-	// it reachable, and it is what a grandchild holding the pipes produces. (An earlier wording
-	// here said it "cannot arise because cmd.WaitDelay is never set" — true when written, false
-	// one commit later, which is what a claim resting on the absence of a line is worth.)
-	// Measured: it is NOT an ExitError, so it falls to the default arm and reads as ran-and-
-	// failed, which is the honest verdict for a call that could not be drained. Asking the Cmd
-	// whether it started answers the question this branch is actually about.
-	case cmd.Process == nil:
+	// Never STARTED: not installed, not executable, the wrong format. The remedy is to
+	// install gh, which is never the advice for a gh that ran.
+	case !rr.Started:
 		r.Runnable, r.Code = false, 127
 		if r.Err == "" {
 			r.Err = err.Error()
@@ -161,24 +118,17 @@ func shTimeout(repo string, budget time.Duration, prog string, args ...string) r
 	default:
 		// Everything else RAN. Including a signalled process killed by something other than
 		// this function's own budget, which is deliberately not folded in with "not
-		// installed": the two call for opposite actions, and "install gh" is the wrong
-		// advice for a gh that was killed mid-call. Go reports -1 for a signal-terminated
-		// process, which is not a value any caller here could read as "cannot tell", so it
-		// becomes 1 with the signal named in Err. Also the I/O copy error the inverse test used to
-		// misfile as never-started, which names a process that did run.
+		// installed": the two call for opposite actions. A signal is not a value any caller
+		// here could read as "cannot tell", so it becomes 1 with the signal named in Err.
+		// Also an I/O copy error, which names a process that did run, and a drain failure on
+		// a call whose budget had expired.
 		r.Code = 1
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			if code := ee.ExitCode(); code >= 0 {
-				r.Code = code
-			}
+		if errors.As(err, new(*exec.ExitError)) && rr.Code >= 0 {
+			r.Code = rr.Code
 		}
-		// The DRAIN cause has to be stated even when gh wrote to stderr, or the guard below
-		// lets gh's own words stand as the cause of a failure they had nothing to do with.
-		// Adding cmd.WaitDelay made this arm reachable for a call that otherwise SUCCEEDED, so
-		// a deprecation warning on a working `gh pr comment` rendered as "gh ran and failed
-		// (warning: ...) — Step 0c can flush it once gh works": a cause nothing checked, the
-		// very class this file exists to remove, introduced by the fix for the budget. The
+		// The DRAIN cause has to be stated even when gh wrote to stderr, or gh's own words
+		// stand as the cause of a failure they had nothing to do with: a deprecation warning
+		// on a working `gh pr comment` rendered as "gh ran and failed (warning: ...)". The
 		// drain reason goes first and gh's stderr is labelled as possibly unrelated.
 		if errors.Is(err, exec.ErrWaitDelay) {
 			drain := "the subprocess outlived the drain bound (" + err.Error() + ")"
@@ -508,14 +458,12 @@ func WritePending(repo, runID, conv, risk, body string) (string, error) {
 	if r.Code != 0 || r.Out == "" || !r.Drained {
 		return "", fmt.Errorf("no git dir in %s — nowhere to defer the report to", repo)
 	}
-	// The run id reaches a PATH here, and it arrives from the caller's -run-id. A traversing
-	// id would write outside the repo: filepath.Join(gitdir, "info/...-report.../../../x.md")
-	// resolves wherever the dots lead. The record's own validator is the gate; this is the
-	// guard travelling with the interpolation, the way push.reportProbe's does.
-	if !ValidRunID(runID) {
+	// The run id reaches a PATH here, from the caller's -run-id, and a traversing one would
+	// write outside the repo. evidence.PendingPath refuses it.
+	path, ok := evidence.PendingPath(r.Out, runID)
+	if !ok {
 		return "", fmt.Errorf("run id %q is not a plain id — refusing to build a path from it", runID)
 	}
-	path := filepath.Join(r.Out, fmt.Sprintf(PendingName, runID))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -547,26 +495,4 @@ func WritePending(repo, runID, conv, risk, body string) (string, error) {
 		return "", err
 	}
 	return path, nil
-}
-
-// ValidRunID mirrors push.ValidRunID. Duplicated rather than imported: internal/push imports
-// nothing from here and must not start, or the two halves of the gate become one package that
-// can agree with itself by accident.
-//
-// Exported because the COMMAND needs it too: the run id reaches a public PR comment raw, in
-// the marker and the summary line, and `record.Load` places no constraint on `run_id`. Checked
-// at the command rather than in Render so Render stays byte-comparable with the oracle, and
-// because cell()ing the id would rewrite the marker push.Fingerprint matches exactly.
-func ValidRunID(s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
-	}
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
-		default:
-			return false
-		}
-	}
-	return true
 }

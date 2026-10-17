@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/double_dash'
+expect: --- FAIL:
+why:    `--` is the escape for text that would otherwise parse as an option; without it a dash-led entry with no space has no way in at all.
+--- old
+		if a == "--" {
+--- new
+		if false && a == "--" {

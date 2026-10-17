@@ -23,18 +23,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
-
-// Marker is the per-run needle push-check looks for. Keyed on the run id so one repo's
-// concurrent worktree sessions cannot satisfy each other's gate.
-const Marker = "<!-- review-loop:run=%s -->"
-
-// PendingName is the deferral path, relative to --git-common-dir. Per RUN, not per repo: that
-// directory is shared by every worktree of a repo, so a single fixed name let two concurrent
-// sessions overwrite each other's report — after which one push was refused and Step 0c posted
-// the survivor to the wrong branch's PR.
-const PendingName = "info/review-loop-pending-report.%s.md"
 
 // Label is one at-a-glance signal on the PR, so a reader need not open a comment. Two
 // families use it: Labels (review:*), whose vocabulary is runlog's derived one exactly, and
@@ -213,6 +204,11 @@ func raw(p *int) string {
 // Render builds the report body. conv is the DERIVED convergence, passed in rather than
 // recomputed so the caller's label, the disclosure and this body cannot disagree.
 func Render(r *record.Run, runID, conv, narrative string) (string, error) {
+	// The command refuses a bad id first, with an explanation; this is the backstop.
+	marker, ok := evidence.Marker(runID)
+	if !ok {
+		return "", fmt.Errorf("run id %q is not a plain id", runID)
+	}
 	disclose, err := r.Disclosure()
 	if err != nil {
 		return "", err
@@ -220,7 +216,7 @@ func Render(r *record.Run, runID, conv, narrative string) (string, error) {
 	var out []string
 	add := func(lines ...string) { out = append(out, lines...) }
 
-	add(fmt.Sprintf(Marker, runID), "", "## review-loop", "")
+	add(marker, "", "## review-loop", "")
 
 	// Disclosure first and unabbreviated. A capped run is allowed to push BECAUSE it says
 	// so, and burying that under a table would make the push silent in practice.

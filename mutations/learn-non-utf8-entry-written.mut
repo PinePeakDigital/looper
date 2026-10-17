@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestANonUTF8EntryIsRefused'
+expect: --- FAIL:
+why:    an entry written as it came puts a byte in the file that every later call refuses ("not UTF-8 — left as it is"), so one bad add locks the learnings file against the tool that wrote it.
+--- old
+	if !utf8.ValidString(text) {
+--- new
+	if false && !utf8.ValidString(text) {

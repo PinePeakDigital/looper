@@ -1,7 +1,0 @@
-target: internal/report/post.go
-verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/a_grandchild'
-expect: --- FAIL:
-why:    shBudget is the one thing this port adds over pr-report.py, which passes no timeout at all — and without WaitDelay it bounds NOTHING. CommandContext kills the direct child only, and because the sinks are strings.Builders os/exec drains them through pipes a grandchild inherits, so Wait blocks until every holder closes its end. Measured against a shim whose last line is `sleep 10 &`: a 300ms budget returned after 10.15s AND with code 0 — a success verdict for a call that blew its deadline by 34x, which is worse than a slow failure because every caller here tests `Code != 0`. The sibling subtest's `sleep 5` shim does fork a grandchild — bash 3.2 forks the last command of a script file — but at its 50ms budget the kill wins the race every time (measured 0 of 20 over a second), so the bound cannot be asserted there. This fixture uses 300ms, where the race is 11 of 20, plus an explicit `&` and a warmed shim, which is what makes it settled.
---- old
-	cmd.WaitDelay = time.Second
---- new

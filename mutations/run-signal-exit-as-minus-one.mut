@@ -1,0 +1,8 @@
+target: internal/run/run.go
+verify: go test ./internal/run/ -count=1 -run 'TestHowACommandEnded/a_signal'
+expect: --- FAIL:
+why:    a probe killed by a signal reports exit -1 where Python's returncode is minus the signal, and the recorded gate reason says so
+--- old
+			r.Code = -int(ws.Signal())
+--- new
+			r.Code = -1

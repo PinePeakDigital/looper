@@ -138,7 +138,8 @@ looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
 a human every time. **"It is broken" is a block**: a recorded `test-failure`,
 `blocked` or `abandoned` outcome, a blocked evidence gate, a finding skipped with no
 recorded dismissal, or the default branch. **"There is no evidence either way" is also
-a block**, and that one is a deliberate divergence from the Python — see below.
+a block**, and so is a run that was never finished; both are deliberate divergences from
+the Python — see below.
 
 Two things are read from the record rather than accepted as arguments, and both used
 to be flags:
@@ -168,8 +169,8 @@ reason for exact equality against what the Python printed, and it had no second 
 for a report that is genuinely unposted stays silent, so the note's presence is the
 signal.
 
-**An empty record blocks, and the Python permits — the one deliberate divergence in
-the verdict.** When the run id resolves to no readable row — a wrong `-store`, a
+**An empty record blocks, and the Python permits — a deliberate divergence in the
+verdict.** When the run id resolves to no readable row — a wrong `-store`, a
 missing file, a mistyped `-run-id`, or every row for that run torn — the record loads
 as empty *with no error*. Convergence then reads `unknown`, which is a disclosure
 rather than a block; no recorded outcome can block, because there is none; and the
@@ -186,6 +187,20 @@ port refuses, because an empty record is not a run that stopped looking — it i
 absence of any evidence that a run happened, and misresolving the store is otherwise
 the cheapest way to make this gate say yes. The divergence is asserted rather than
 left to drift, by `TestTheEmptyRecordDivergence`, against the Python's frozen output.
+
+**A run with no finish row blocks too, and the Python permitted it.** Step 14 closes the
+record (`looper record finish`) before it posts the report or asks this gate, so a run that
+reaches here unfinished skipped a step, and the report it posted rendered no outcome and no
+tier. The Python read the finish only for a broken outcome, so it never noticed; the Stop
+hook was the only thing that did, once per run and only when the session ended. Asserted by
+`TestTheUnfinishedRunDivergence`, against the Python's frozen verdict for such a store.
+Any finish row under this run's id closes it, whatever its outcome; a nudge does not. In
+practice that is `looper record finish --run-id <id>` (`record abandon` closes it too, but
+`abandoned` then blocks as broken; `record skipped` and `record carried` mint runs of their
+own). The block sits ahead of every check but the empty record, so an operator who never
+reached Step 14 is told to close the run rather than to post a report or change branch. A
+session that died mid-loop gets out the same way: a `cycle-limit` finish is not broken, so
+the run pushes with whatever disclosure its cycles derive.
 
 stderr still carries a note naming the run and the store that was read, because the
 refusal cannot say *why* nothing was readable. A run whose rows were all torn is
@@ -527,6 +542,57 @@ The divergences, each with its own test:
   on them forever, so a stalled gh hung Step 0 with nothing printed. What a timed-out probe printed
   stands, as for any other exit, and the base falls back past it when that is nothing. A gh that
   exits while a grandchild (a credential helper) still holds its pipes is cut off a second later.
+
+## `looper learn`
+
+The review-loop's Step 11, a port of the skill's `learn.py` in `internal/learn`. It makes the
+mechanical edits to the learnings file; which entry matches, and which section a new one belongs
+in, stay the caller's judgment.
+
+```text
+looper learn add   <file> "<entry text, no date>" --section dismissed|accepted
+looper learn bump  <file> "<substring of the matched entry>"
+looper learn prune <file> [--cap 50]
+```
+
+`add` stamps today's date and inserts the entry at the top of its section, creating the file or
+the section when missing. A Dismissed entry that cites precedent is refused with the run record's
+own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
+the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
+among the arguments, abbreviated as argparse allowed, with `--` ending them. As in argparse
+3.13+, an argument starting with a dash is text when it starts like a negative number (`-5%`) or
+holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
+anything starting `-h` are options.
+
+`TestLearnMatchesThePython` runs 47 scenarios through `looper learn` and requires what learn.py did
+to the same file, byte for byte in its exit status, output and resulting file, frozen under
+`internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
+temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
+final error line: argparse's usage text names learn.py and its `--selftest`, which this command
+does not have.
+
+The divergences:
+
+- **`PATTERN —` is durable.** learn.py protected only `PATTERN:`, while the entries it was meant to
+  protect are written `PATTERN — …`, so prune evicted them first (`TestPruneKeepsAnEmDashPattern`).
+- **A file that is not UTF-8 is refused and left alone.** learn.py died on the decode and wrote
+  nothing; this says why (`TestANonUTF8FileIsLeftAlone`). Any other unreadable file is also an
+  error naming the cause, where learn.py printed a traceback (`TestAnUnreadableFileIsAnError`).
+- **Entry text that is not UTF-8 is refused.** learn.py truncated the file and then died encoding
+  it (`TestANonUTF8EntryIsRefused`).
+- **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
+  script's digits was an entry there and is ordinary text here (`TestAnEntryDateIsASCIIDigits`).
+- **`--cap` is a plain decimal integer.** Python's `int()` also took surrounding whitespace,
+  underscores, other scripts' digits and values past 64 bits.
+- **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
+  points, so a header spelled with it could fall on the other side of the "dismiss" test.
+- **No `--selftest`.** The Go tests replace it; asking for it is a usage error.
+- **Mixed bad arguments may report a different error.** argparse parses everything first and then
+  reports, so with several faults (an unknown option and a bad choice, an invalid command and extra
+  arguments) it can name a different one, or list every unknown argument where this names the
+  first. A trailing `--` after the last positional is accepted here and refused there, and
+  `--help=1` or `-h=1` is help here and an error there. Each case is a usage error in both, except
+  that trailing `--`.
 
 ## `looper plan`
 

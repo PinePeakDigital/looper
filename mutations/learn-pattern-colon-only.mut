@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestPruneKeepsAnEmDashPattern'
+expect: --- FAIL:
+why:    learn.py protected only "PATTERN:", while the durable entries it exists to protect are written "PATTERN — …" (41 of 43 in looper's own learnings file), so prune evicted the very entries it promised never to touch, oldest — the most established — first.
+--- old
+	return strings.Contains(text, "PATTERN:") || strings.Contains(text, "PATTERN —")
+--- new
+	return strings.Contains(text, "PATTERN:")

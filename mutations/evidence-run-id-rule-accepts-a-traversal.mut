@@ -1,0 +1,8 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedRefusesATraversingRunID'
+expect: accepted run id
+why:    the run id is spliced into the pending-report path, so a rule that accepts `../` lets the push gate read its evidence from outside the git dir. Measured when the guard sat in Check only: a run id of six `../` segments resolved the path outside .git entirely, and a real satisfying report planted there satisfied the gate. The guard now lives in the one rule every marker and path is built through, so this is where breaking it has to be caught — through the gate that reads the path, not just evidence's own table.
+--- old
+func ValidRunID(id string) bool { return runIDRe.MatchString(id) }
+--- new
+func ValidRunID(id string) bool { return id != "" }

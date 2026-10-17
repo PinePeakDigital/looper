@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/add_header_with_spaces'
+expect: --- FAIL:
+why:    learn.py matched a header with surrounding whitespace stripped. Matching it exactly appends a duplicate section to a hand-edited file instead of adding to the one there.
+--- old
+		if py.Strip(ln) == header {
+--- new
+		if ln == header {

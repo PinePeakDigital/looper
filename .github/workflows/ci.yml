@@ -147,11 +147,11 @@ jobs:
           # count starts measuring the wrong thing.
           c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
           [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
-          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence; do
+          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence TestTheUnfinishedRunDivergence; do
             grep -q -- "--- PASS: $d" push.log || {
               echo "enumerated divergence $d did not pass"; cat push.log; exit 1; }
           done
-          echo "$c push parity subtests compared against the frozen oracle, plus 2 enumerated divergences"
+          echo "$c push parity subtests compared against the frozen oracle, plus 3 enumerated divergences"
 
       # internal/report is the same: the whole report body against what pr-report.py
       # rendered before it was retired, frozen under internal/report/testdata/oracle.
@@ -181,11 +181,10 @@ jobs:
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
             echo "$c $t subtests compared against the frozen oracle"
           done
-          # The divergences with no subtests of their own — FOUR, not the two an earlier
-          # version of this comment claimed while looping over four names. Each is the only
+          # The divergences with no subtests of their own, one name each. Each is the only
           # thing asserting which side owns which answer, so none can be left to an aggregate.
           for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
-                   TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
+                   TestThePushGateFindsWhatThisPackageWrites; do
             grep -q -- "--- PASS: $d" report.log || {
               echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
           done
@@ -298,6 +297,27 @@ jobs:
             grep -q -- "--- PASS: $d" context.log || { echo "divergence $d did not pass"; cat context.log; exit 1; }
           done
 
+      # internal/learn the same: `looper learn` against what learn.py did to the same file,
+      # frozen under internal/learn/testdata/oracle.
+      - name: go test (learn)
+        run: |
+          go test -count=1 -v ./internal/learn/ > learn.log 2>&1 || { cat learn.log; exit 1; }
+          tail -5 learn.log
+
+      - name: the learn parity gate actually ran
+        run: |
+          [ -r learn.log ] || { echo "learn.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' learn.log; then
+            echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
+          fi
+          c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
+          [ "$c" -ge 47 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 47"; cat learn.log; exit 1; }
+          echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
+          for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone TestANonUTF8EntryIsRefused \
+                   TestAnUnreadableFileIsAnError TestAnEntryDateIsASCIIDigits; do
+            grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
+          done
+
       # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
       # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
       # shipped three golden directories named after subtests containing an apostrophe and could
@@ -322,13 +342,13 @@ jobs:
         run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
 
       - name: go test (everything else)
-        # mapfile, not a bare $(...): the five packages above are excluded because they run
+        # mapfile, not a bare $(...): the packages above are excluded because they run
         # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
         # accident — so quoting the substitution would pass the whole list as ONE argument and
         # silently test nothing. An array says that explicitly and clears the last actionlint
         # finding on this file, so a real one is not lost in a standing warning.
         run: |
-          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$' -e '/internal/ledger$' -e '/internal/plan$' -e '/internal/gather$')
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$' -e '/internal/ledger$' -e '/internal/plan$' -e '/internal/gather$' -e '/internal/learn$')
           go test -count=1 "${pkgs[@]}"
 
       # Anchors and parsing before behaviour. The mutation score below takes about fifteen
@@ -383,7 +403,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 368 ] || { echo "only $n mutations, expected at least 368 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 393 ] || { echo "only $n mutations, expected at least 393 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

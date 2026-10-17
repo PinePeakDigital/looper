@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/prune_'
+expect: --- FAIL:
+why:    the date is the freshness signal bump maintains and the Step 2a sweep reads; evicting newest first throws away the entries a recent run just confirmed.
+--- old
+		return cand[a].date < cand[b].date
+--- new
+		return cand[a].date > cand[b].date

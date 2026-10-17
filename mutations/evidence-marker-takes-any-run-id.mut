@@ -1,0 +1,10 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/evidence/ -count=1
+expect: --- FAIL:
+why:    Marker is the only way to spell the marker, and both halves of the gate build it from a run id that reaches a public PR comment raw. An unchecked `a-->` closes the comment early and renders the rest of the id as markdown. pr-report and push.Check refuse first with their own ValidRunID call, so they stay green; Render's refusal IS this check, so its test and evidence's table are where it shows.
+--- old
+func Marker(id string) (string, bool) {
+	if !ValidRunID(id) {
+--- new
+func Marker(id string) (string, bool) {
+	if false && !ValidRunID(id) {

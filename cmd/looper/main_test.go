@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/report"
+	"github.com/pinepeakdigital/looper/internal/evidence"
 )
 
 // fixture builds a committed throwaway repo with a catalog, and returns its path.
@@ -222,6 +222,7 @@ func TestPushCheck(t *testing.T) {
 	rows := []string{
 		`{"run_id":"pc1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
 		`{"run_id":"pc1","phase":"cycle","n":1,"applied":0,"asked":0,"agents":3}`,
+		`{"run_id":"pc1","phase":"finish","outcome":"clean"}`,
 	}
 	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -262,11 +263,47 @@ func TestPushCheck(t *testing.T) {
 	if got.Push {
 		t.Errorf("a run with no report landed was permitted: %q", out)
 	}
+	if !strings.Contains(got.Reason, "looper pr-report --run-id pc1 --post") {
+		t.Errorf("reason = %q, want the owed-report refusal this case is about", got.Reason)
+	}
 	if got.Convergence != "converged" {
 		t.Errorf("convergence = %q, want converged", got.Convergence)
 	}
 	if got.Disclose != nil {
 		t.Errorf("a converged run owes no disclosure, got %q", *got.Disclose)
+	}
+}
+
+// A run with a record but no finish row refuses through the same channel as every other
+// refusal — exit 0, JSON on stdout — naming the run and the commands that close it.
+func TestPushCheckRefusesAnUnfinishedRun(t *testing.T) {
+	dir := t.TempDir()
+	store := filepath.Join(dir, "runs.jsonl")
+	rows := []string{
+		`{"run_id":"pc4","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`,
+		`{"run_id":"pc4","phase":"cycle","n":1,"applied":0,"asked":0,"agents":3}`,
+	}
+	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := doRun(t, "push-check", "-run-id", "pc4", "-store", store,
+		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
+	if code != 0 {
+		t.Fatalf("a refusal exited %d: stdout %q stderr %q", code, out, errOut)
+	}
+	var got struct {
+		Push   bool   `json:"push"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the JSON Step 14 reads: %v\n%q", err, out)
+	}
+	if got.Push || !strings.Contains(got.Reason, "run pc4 was never finished") ||
+		!strings.Contains(got.Reason, "looper record finish --run-id pc4") {
+		t.Errorf("an unfinished run was not refused as one: %q", out)
+	}
+	if !strings.Contains(errOut, "may be torn") {
+		t.Errorf("stderr does not mention a torn finish row: %q", errOut)
 	}
 }
 
@@ -317,6 +354,7 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 	rows := []string{
 		`{"run_id":"pc2","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"pc2","phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":"pc2","phase":"finish","outcome":"cycle-limit"}`,
 	}
 	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -368,6 +406,7 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 	rows := []string{
 		`{"run_id":"pc3","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"pc3","phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":"pc3","phase":"finish","outcome":"clean"}`,
 	}
 	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -564,9 +603,9 @@ func TestPrReportRefusesARunItCannotRead(t *testing.T) {
 func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	for _, id := range []string{
 		// The `-->` case FIRST, because it is the one that justifies the guard and it had no
-		// fixture anywhere: measured, adding `>` to report.ValidRunID left every package green
-		// while push.ValidRunID still rejected it, so the two gates disagreed and this forgery
-		// shipped with CI green.
+		// fixture anywhere: measured, when report and push each carried a copy of the run-id
+		// rule, adding `>` to report's left every package green while push's still rejected
+		// it, so the two gates disagreed and this forgery shipped with CI green.
 		"a-->\n\n> **Review converged — nothing outstanding**", "a>b",
 		"a\nb", "a b", "a\r\nb", "../escape", "a|b", "a`b", strings.Repeat("x", 65)} {
 		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
@@ -595,7 +634,7 @@ func TestPrReportRefusesARunIDThatCouldForgeTheComment(t *testing.T) {
 	}
 	// And the ids the gate accepts still work, or the guard is just a denial of service.
 	for _, id := range []string{"pr1", "6a0fe216ade0", "a-b_c"} {
-		if !report.ValidRunID(id) {
+		if !evidence.ValidRunID(id) {
 			t.Errorf("%q is refused, but it is the shape runlog.py writes", id)
 		}
 	}

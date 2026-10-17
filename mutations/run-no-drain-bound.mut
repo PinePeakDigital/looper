@@ -1,0 +1,8 @@
+target: internal/run/run.go
+verify: go test ./internal/run/ -count=1 -run 'TestHowACommandEnded'
+expect: --- FAIL:
+why:    without a drain bound the budget bounds nothing: a grandchild holding the pipes (a credential helper under gh) holds the call until it exits. report, plan and context each found this separately, and push never did; this one line is now where all of them get it
+--- old
+	cmd.WaitDelay = drainBound
+--- new
+	_ = drainBound

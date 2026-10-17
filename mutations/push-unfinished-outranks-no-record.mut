@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestTheUnfinishedBlockOrder$'
+expect: --- FAIL:
+why:    pins Decide's order for a State carrying both flags: the empty record names the store. Check never builds that State today (it skips the unfinished block for an empty record), so this is the invariant that keeps a future caller from sending an operator with a mistyped run id to finish a run that is not there.
+--- old
+	if s.NoRecord {
+--- new
+	if s.NoRecord && s.Unfinished == "" {
