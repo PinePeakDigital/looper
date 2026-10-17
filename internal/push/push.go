@@ -66,7 +66,8 @@ type State struct {
 	// It blocks, and that is a DELIBERATE DIVERGENCE from push-check.py, which permits here
 	// with a disclosure. See the enumerated divergence in parity_test.go. The Python's
 	// behaviour follows from the design's own split — `unknown` means "we stopped looking",
-	// which discloses and pushes (for a run that has finished; see Unfinished) — but an empty record is not a run that stopped looking, it
+	// which discloses and pushes (once the run has finished; see Unfinished) — but an empty
+	// record is not a run that stopped looking, it
 	// is the absence of any evidence that a run happened. Everything the gate reads comes off
 	// it: convergence derives `unknown`, no recorded outcome can block, and the required
 	// report fingerprint collapses to the two lines pr-report.py renders for a run with no
@@ -82,8 +83,9 @@ type State struct {
 	// DELIBERATE DIVERGENCE from push-check.py, which never looked.
 	//
 	// A session that died mid-loop lands here too. Its way out is the same command: a
-	// `cycle-limit` finish keeps the capped/halted disclosure and pushes, so the commits are
-	// not stranded — the "stopped looking" class still pushes, once it has said so.
+	// `cycle-limit` finish is not a broken outcome, so the run pushes with whatever
+	// disclosure its cycles derive, and the commits are not stranded. Abandoning is not a
+	// way out — `abandoned` is a broken outcome.
 	Unfinished string
 }
 
@@ -386,7 +388,7 @@ func Check(p CheckParams) (Result, error) {
 			// Every derivation below now comes off an EMPTY record, and each one reads as a
 			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
 			// outcome can block (the unfinished-run block is skipped for an empty record,
-			// which this one already refuses), and the required fingerprint collapses to the two lines
+			// which NoRecord refuses first), and the required fingerprint collapses to the two lines
 			// pr-report.py renders for a run with no cycles. On this store that collides
 			// with a real report for about HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 19:50 — the store gains runs several times a day, so re-derive rather than trust the figure: group its rows by run_id and count those with no `cycle` row),
 			// so this can GRANT as easily as refuse.
@@ -453,8 +455,8 @@ func Check(p CheckParams) (Result, error) {
 	var unfinished string
 	if !noRecord && r.Finish == nil {
 		unfinished = "run " + p.RunID + " was never finished — close it with `looper record " +
-			"finish --run-id " + p.RunID + "` (or `looper record abandon`), re-post its report " +
-			"with `looper pr-report --run-id " + p.RunID + " --post`, then ask again"
+			"finish --run-id " + p.RunID + "`, re-post its report with `looper pr-report " +
+			"--run-id " + p.RunID + " --post`, then ask again"
 		if d := p.Diag; d != nil {
 			// record.Load drops a torn line without an error, so a finish row that was
 			// written and then torn reads exactly like one never written.
