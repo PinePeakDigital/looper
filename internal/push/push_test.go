@@ -150,6 +150,7 @@ func TestEveryBlockingReasonIsDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for _, s := range []State{
 		with(ok, func(s *State) { s.Outcome = "test-failure" }),
+		with(ok, func(s *State) { s.Unfinished = "run r was never finished" }),
 		with(ok, func(s *State) { s.Unreported = "no report" }),
 		with(ok, func(s *State) { s.GateState = "blocked" }),
 		with(ok, func(s *State) { s.UnresolvedSkip = true }),
@@ -164,6 +165,65 @@ func TestEveryBlockingReasonIsDistinct(t *testing.T) {
 			t.Errorf("two different blockers share the reason %q (%s)", reason, prev)
 		}
 		seen[reason] = fmt.Sprintf("%+v", s)
+	}
+}
+
+// Decide returns on the first failing check, so order is behaviour: only the REASON changes,
+// and the reason is what the operator acts on. An unfinished run names closing it, not the
+// report or branch problems that follow from never reaching Step 14; an empty record still
+// names the store.
+func TestTheUnfinishedBlockOrder(t *testing.T) {
+	const unfinished = "run r was never finished"
+	all := with(ok, func(s *State) {
+		s.Unfinished, s.Unreported, s.GateState, s.UnresolvedSkip = unfinished, "no report", "blocked", true
+		s.Branch, s.DefaultBranch = "main", "main"
+	})
+	if push, reason := Decide(all); push || reason != unfinished {
+		t.Errorf("with every later blocker set, reason = %q, want the unfinished one", reason)
+	}
+	if push, reason := Decide(with(all, func(s *State) { s.NoRecord = true })); push ||
+		!strings.Contains(reason, "no readable record") {
+		t.Errorf("an empty record did not outrank an unfinished one: %q", reason)
+	}
+}
+
+// Every outcome a finish row can carry gets past the unfinished block: the block reads
+// whether the row exists, not what it says. Broken outcomes then block on their own.
+func TestEveryFinishOutcomeClosesTheRun(t *testing.T) {
+	shimGh(t, "exit 1")
+	for _, outcome := range []string{"clean", "cycle-limit", "skipped", "carried", "test-failure"} {
+		dir, gitdir := repo(t)
+		store := writeStore(t,
+			`{"run_id":"fin1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
+			`{"run_id":"fin1","phase":"cycle","n":1,"applied":0,"agents":2}`,
+			`{"run_id":"fin1","phase":"finish","outcome":"`+outcome+`"}`)
+		runs, err := record.Load(store, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		landReport(t, gitdir, "fin1", Fingerprint(runs["fin1"]))
+		got, err := Check(CheckParams{Store: store, RunID: "fin1", GateState: "passed",
+			Branch: "feat/x", DefaultBranch: "main", Repo: dir})
+		if err != nil {
+			t.Fatalf("%s: Check: %v", outcome, err)
+		}
+		if strings.Contains(got.Reason, "never finished") {
+			t.Errorf("%s: a finished run was refused as unfinished: %q", outcome, got.Reason)
+		}
+		if broken := outcome == "test-failure"; got.Push == broken {
+			t.Errorf("%s: push = %v (%q)", outcome, got.Push, got.Reason)
+		}
+	}
+	// A nudge alone is not a finish — and with nothing else, not a record either.
+	store := writeStore(t, `{"run_id":"fin2","phase":"nudge","nudged_at":"2026-01-01T00:00:00"}`)
+	dir, _ := repo(t)
+	got, err := Check(CheckParams{Store: store, RunID: "fin2", GateState: "passed",
+		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
+	if err != nil {
+		t.Fatalf("nudge-only: Check: %v", err)
+	}
+	if got.Push || !strings.Contains(got.Reason, "no readable record") {
+		t.Errorf("a nudge-only run = %+v, want the empty-record refusal", got)
 	}
 }
 
@@ -527,6 +587,25 @@ func TestShFailsClosedWhenItCannotRun(t *testing.T) {
 		}
 		if out != "" {
 			t.Errorf("sh returned %q from a killed process", out)
+		}
+	})
+
+	// A gh that exits cleanly while its credential helper holds the pipes: the "42" may be
+	// the helper's bytes, so this cannot tell, and the call returns at run's drain bound
+	// instead of when the helper exits. Before the shared runner it waited the whole 8s and
+	// answered (0, "42").
+	t.Run("a descendant that holds the pipes", func(t *testing.T) {
+		shim := filepath.Join(dir, "lingers")
+		if err := os.WriteFile(shim, []byte("#!/bin/sh\nsleep 8 &\necho 42\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		rc, out := sh(dir, shim)
+		if took := time.Since(start); took > 4*time.Second {
+			t.Errorf("sh took %s with a lingering descendant", took)
+		}
+		if rc != 1 || out != "" {
+			t.Errorf("sh = (%d, %q), want (1, \"\") — the output may be the descendant's", rc, out)
 		}
 	})
 

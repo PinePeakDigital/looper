@@ -1,0 +1,8 @@
+target: internal/run/run.go
+verify: go test ./internal/run/ -count=1 -run 'TestHowACommandEnded'
+expect: --- FAIL:
+why:    a descendant's bytes in the output pipe read as the child's answer: report once commented a disclosure onto PR #42, which a credential helper printed
+--- old
+		Drained: !errors.Is(err, exec.ErrWaitDelay), Code: -1, Out: o.Bytes(), Err: e.Bytes(), Error: err}
+--- new
+		Drained: true || !errors.Is(err, exec.ErrWaitDelay), Code: -1, Out: o.Bytes(), Err: e.Bytes(), Error: err}

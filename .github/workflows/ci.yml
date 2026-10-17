@@ -147,11 +147,11 @@ jobs:
           # count starts measuring the wrong thing.
           c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
           [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
-          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence; do
+          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence TestTheUnfinishedRunDivergence; do
             grep -q -- "--- PASS: $d" push.log || {
               echo "enumerated divergence $d did not pass"; cat push.log; exit 1; }
           done
-          echo "$c push parity subtests compared against the frozen oracle, plus 2 enumerated divergences"
+          echo "$c push parity subtests compared against the frozen oracle, plus 3 enumerated divergences"
 
       # internal/report is the same: the whole report body against what pr-report.py
       # rendered before it was retired, frozen under internal/report/testdata/oracle.
@@ -382,7 +382,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 361 ] || { echo "only $n mutations, expected at least 361 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 367 ] || { echo "only $n mutations, expected at least 367 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

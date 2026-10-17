@@ -5,22 +5,21 @@
 // halted run pushes and owes the line record.Disclosure derives, because a cap that strands
 // commits just moves the decision back to a human every time. "It is broken" is a BLOCK: a
 // recorded broken outcome, a blocked evidence gate, an unresolved finding, the default
-// branch. Conflating the two is what made the old `--clean-exit` flag the whole gate.
+// branch. So is "there is no evidence": no readable record, or a record never finished.
+// Conflating the two is what made the old `--clean-exit` flag the whole gate.
 package push
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // BrokenOutcomes are the recorded outcomes that mean the tree is the problem, not the
@@ -55,7 +54,8 @@ type State struct {
 	// It blocks, and that is a DELIBERATE DIVERGENCE from push-check.py, which permits here
 	// with a disclosure. See the enumerated divergence in parity_test.go. The Python's
 	// behaviour follows from the design's own split — `unknown` means "we stopped looking",
-	// which discloses and pushes — but an empty record is not a run that stopped looking, it
+	// which discloses and pushes (once the run has finished; see Unfinished) — but an empty
+	// record is not a run that stopped looking, it
 	// is the absence of any evidence that a run happened. Everything the gate reads comes off
 	// it: convergence derives `unknown`, no recorded outcome can block, and the required
 	// report fingerprint collapses to the two lines pr-report.py renders for a run with no
@@ -64,6 +64,17 @@ type State struct {
 	// the store the cheapest way to make this gate say yes, which is the one thing it exists
 	// to prevent.
 	NoRecord bool
+	// Unfinished is the refusal for a run that has a record but no finish row, "" when it
+	// has one. A reason rather than a bool, like Unreported, so it can name the run. Step 14
+	// closes the record before it posts the report or asks this, so an unfinished run here
+	// skipped a step — and the report it posted rendered no outcome and no tier. Blocks; a
+	// DELIBERATE DIVERGENCE from push-check.py, which never looked.
+	//
+	// A session that died mid-loop lands here too. Its way out is the same command: a
+	// `cycle-limit` finish is not a broken outcome, so the run pushes with whatever
+	// disclosure its cycles derive, and the commits are not stranded. Abandoning is not a
+	// way out — `abandoned` is a broken outcome.
+	Unfinished string
 }
 
 // Decide answers push/no-push with the reason. First failing check wins, mirroring SKILL.md
@@ -75,6 +86,9 @@ func Decide(s State) (bool, string) {
 	if s.NoRecord {
 		return false, "no readable record for this run — convergence, the outcome and the " +
 			"report fingerprint would all come off an empty record; check -store and -run-id"
+	}
+	if s.Unfinished != "" {
+		return false, s.Unfinished
 	}
 	for _, bad := range BrokenOutcomes {
 		if s.Outcome == bad {
@@ -249,33 +263,27 @@ func sh(repo, prog string, args ...string) (int, string) {
 const shBudget = 20 * time.Second
 
 func shTimeout(repo string, budget time.Duration, prog string, args ...string) (int, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, prog, args...)
-	cmd.Dir = repo
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			if code := ee.ExitCode(); code >= 0 {
-				return code, strings.TrimSpace(string(out))
-			}
-			// SIGNALLED, which is what the context's own kill looks like. Go reports -1 for
-			// a signal-terminated process; the Python's sh returns 1 for TimeoutExpired like
-			// any other SubprocessError, and -1 is not a value any caller here could read
-			// as "cannot tell". Measured: `sleep 5` under a one-millisecond context gives
-			// err "signal: killed", errors.As true, ExitCode() -1.
-			//
-			// Checked here rather than on ctx.Err(), which would be narrower AND redundant:
-			// a context kill satisfies both, and a signal from outside the context satisfies
-			// only this. An earlier version tested ctx.Err() first and the two together
-			// masked each other — removing either left the suite green, which is how a
-			// guard with no test behind it looks.
-			return 1, strings.TrimSpace(string(out))
-		}
+	r := run.Run(repo, budget, prog, args...)
+	out := strings.TrimSpace(string(r.Out))
+	switch {
+	// Never started, or an I/O failure reading a process that did: the Python's sh returns 1
+	// with no output for either, as for any other SubprocessError.
+	case !r.Started, r.Error != nil && r.Code == 0 && r.Drained:
 		return 1, ""
+	// The child exited cleanly while a descendant (a credential helper) held the pipes past
+	// run's drain bound. Its output may be the descendant's bytes, not gh's answer, so this
+	// cannot tell. Before the shared runner push had no drain bound at all, and such a
+	// descendant held the gate until it exited, whatever the budget said.
+	case !r.Drained:
+		return 1, ""
+	// SIGNALLED, which is what the budget's own kill looks like. -signal is not a value any
+	// caller here could read as "cannot tell"; the Python's sh returns 1 for TimeoutExpired
+	// like any other SubprocessError. Checked on the code rather than on Expired, which
+	// would be narrower: a signal from outside the budget satisfies only this.
+	case r.Code < 0:
+		return 1, out
 	}
-	return 0, strings.TrimSpace(string(out))
+	return r.Code, out
 }
 
 // Result is what the subcommand prints, field for field as push-check.py's JSON. Disclose is
@@ -328,8 +336,8 @@ func Check(p CheckParams) (Result, error) {
 		return Result{}, err
 	}
 	// A run id absent from the store derives UNKNOWN, never converged — absence is the
-	// cheapest thing to produce, so it cannot buy a better answer than a recorded unfinished
-	// run. The empty Run is still built, because Convergence and Disclosure must answer for
+	// cheapest thing to produce, so it cannot buy a better answer than a recorded run. The
+	// empty Run is still built, because Convergence and Disclosure must answer for
 	// it, but `noRecord` blocks the push outright: see State.NoRecord for why disclosing was
 	// not enough, and parity_test.go for the enumerated divergence this creates.
 	r := runs[p.RunID]
@@ -349,7 +357,8 @@ func Check(p CheckParams) (Result, error) {
 		if p.Diag != nil {
 			// Every derivation below now comes off an EMPTY record, and each one reads as a
 			// legitimate answer: convergence is `unknown`, Finish is nil so no recorded
-			// outcome can block, and the required fingerprint collapses to the two lines
+			// outcome can block (the unfinished-run block is skipped for an empty record,
+			// which NoRecord refuses first), and the required fingerprint collapses to the two lines
 			// pr-report.py renders for a run with no cycles. On this store that collides
 			// with a real report for about HALF the runs in the author's live store (22 of 45 when last counted, 2026-10-10 19:50 — the store gains runs several times a day, so re-derive rather than trust the figure: group its rows by run_id and count those with no `cycle` row),
 			// so this can GRANT as easily as refuse.
@@ -408,9 +417,22 @@ func Check(p CheckParams) (Result, error) {
 			// report" is the wrong instruction when the real problem is that neither probe
 			// ran. Said here rather than in the reason, which parity pins exactly.
 			fmt.Fprintf(p.Diag, "push-check: neither `gh pr view` nor `git rev-parse` could be "+
-				"run in %s (missing binary, not executable, or killed at the %s budget), so "+
+				"run in %s, or answered for certain (missing binary, not executable, killed at the %s "+
+				"budget, or a descendant held its output past the drain bound), so "+
 				"whether the report landed could not be determined; the refusal below fails "+
 				"closed and may not be about the report at all\n", p.Repo, shBudget)
+		}
+	}
+	var unfinished string
+	if !noRecord && r.Finish == nil {
+		unfinished = "run " + p.RunID + " was never finished — close it with `looper record " +
+			"finish --run-id " + p.RunID + "`, re-post its report with `looper pr-report " +
+			"--run-id " + p.RunID + " --post`, then ask again"
+		if d := p.Diag; d != nil {
+			// record.Load drops a torn line without an error, so a finish row that was
+			// written and then torn reads exactly like one never written.
+			fmt.Fprintf(d, "push-check: run %q has no readable finish row in %q; if a "+
+				"finish was recorded, its line may be torn\n", p.RunID, p.Store)
 		}
 	}
 	push, reason := Decide(State{
@@ -423,6 +445,7 @@ func Check(p CheckParams) (Result, error) {
 		Outcome:        outcome,
 		Unreported:     unreported,
 		NoRecord:       noRecord,
+		Unfinished:     unfinished,
 	})
 	res := Result{Push: push, Reason: reason, Convergence: conv}
 	if disclose != "" {
