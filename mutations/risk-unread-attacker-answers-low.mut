@@ -1,8 +1,0 @@
-target: internal/report/report.go
-verify: go test ./internal/report/ -count=1 -run 'TestRisk$'
-expect: --- FAIL:
-why:    attacker_reachable is the input that could have made the answer high, so an unread one must answer no label, never medium or low.
---- old
-	if json.Unmarshal(p.Inputs, &in) != nil || in.Attacker == nil {
---- new
-	if json.Unmarshal(p.Inputs, &in) != nil || in.Attacker == nil && false {

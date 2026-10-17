@@ -516,6 +516,28 @@ func TestLoadsStructuralRulesThatNothingElseAsserts(t *testing.T) {
 		}
 	})
 
+	t.Run("a malformed inputs leaves the run readable; a folded one does not", func(t *testing.T) {
+		// Plan.Inputs is raw so report.Risk can answer no label for a bad value without the
+		// run itself becoming undecodable. A key folding onto it is refused like any other.
+		for _, in := range []string{`"nope"`, `[1]`, `5`, `null`, `{"logic":"yes"}`} {
+			runs, err := Load(store(t, `{"run_id":"r","phase":"plan","agent_cap":40,"inputs":`+in+`,"gates":{}}`,
+				`{"run_id":"r","phase":"cycle","n":1,"applied":0,"asked":0,"agents":2}`), 0)
+			if err != nil {
+				t.Fatalf("Load must not fail: %v", err)
+			}
+			if r := runs["r"]; r.Err != nil || r.Plan == nil {
+				t.Errorf("inputs %s made the run undecodable: %v", in, r.Err)
+			}
+		}
+		runs, err := Load(store(t, `{"run_id":"r","phase":"plan","agent_cap":40,"Inputs":{"attacker_reachable":false},"gates":{}}`), 0)
+		if err != nil {
+			t.Fatalf("Load must not fail: %v", err)
+		}
+		if runs["r"].Err == nil {
+			t.Error("a key folding onto inputs decoded")
+		}
+	})
+
 	t.Run("a misplaced or folded outcome cannot unblock a push", func(t *testing.T) {
 		// `outcome` is the first run-level field anything in this REPO reads, and it is read
 		// to BLOCK: push.Decide refuses a push on test-failure, blocked or abandoned. No

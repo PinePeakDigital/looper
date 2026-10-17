@@ -36,8 +36,9 @@ const Marker = "<!-- review-loop:run=%s -->"
 // the survivor to the wrong branch's PR.
 const PendingName = "info/review-loop-pending-report.%s.md"
 
-// Label is the at-a-glance signal, so a reader need not open a comment to learn whether the
-// review finished. The vocabulary is runlog's derived one, exactly.
+// Label is one at-a-glance signal on the PR, so a reader need not open a comment. Two
+// families use it: Labels (review:*), whose vocabulary is runlog's derived one exactly, and
+// Risks (risk:*).
 type Label struct {
 	Name, Colour, Description string
 }
@@ -64,24 +65,34 @@ var Risks = map[string]Label{
 // behaviour changes, "low" when the plan said none of the three, and "" when it cannot tell.
 // An absent or unreadable attacker_reachable answers "", never a lower level: it is the one
 // input that could have made the answer high.
+//
+// Each key is read exactly and on its own. A struct decode would fold `ATTACKER_REACHABLE`
+// onto the field (the forgery record.foldedKeys refuses elsewhere), and one bad neighbour
+// such as `"logic":"yes"` would fail the whole decode and drop a readable attacker_reachable.
 func Risk(p *record.Plan) string {
-	if p == nil || len(p.Inputs) == 0 {
+	if p == nil {
 		return ""
 	}
-	var in struct {
-		Logic    *bool `json:"logic"`
-		Runtime  *bool `json:"runtime_behavior_change"`
-		Attacker *bool `json:"attacker_reachable"`
-	}
-	if json.Unmarshal(p.Inputs, &in) != nil || in.Attacker == nil {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(p.Inputs, &m) != nil {
 		return ""
 	}
+	in := func(k string) *bool {
+		var b bool
+		if raw, ok := m[k]; !ok || string(raw) == "null" || json.Unmarshal(raw, &b) != nil {
+			return nil
+		}
+		return &b
+	}
+	attacker, logic, runtime := in("attacker_reachable"), in("logic"), in("runtime_behavior_change")
 	switch {
-	case *in.Attacker:
+	case attacker == nil:
+		return ""
+	case *attacker:
 		return "high"
-	case in.Logic != nil && *in.Logic, in.Runtime != nil && *in.Runtime:
+	case logic != nil && *logic, runtime != nil && *runtime:
 		return "medium"
-	case in.Logic != nil && in.Runtime != nil:
+	case logic != nil && runtime != nil:
 		return "low"
 	}
 	return ""

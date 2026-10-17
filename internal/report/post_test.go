@@ -306,7 +306,17 @@ func TestRisk(t *testing.T) {
 		`{"logic":true,"runtime_behavior_change":true}`:                              "",
 		`{"logic":false,"attacker_reachable":false}`:                                 "",
 		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":"no"}`:  "",
-		``: "",
+		`{"runtime_behavior_change":false,"attacker_reachable":false}`:               "",
+		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":null}`:  "",
+		// One bad neighbour must not drop a readable attacker_reachable.
+		`{"logic":"yes","attacker_reachable":true}`: "high",
+		// Exact keys: a case-folded spelling is not the key.
+		`{"logic":false,"runtime_behavior_change":false,"ATTACKER_REACHABLE":true,"attacker_reachable":false}`: "low",
+		`{"logic":false,"runtime_behavior_change":false,"Attacker_Reachable":false}`:                           "",
+		`null`: "",
+		`[]`:   "",
+		`"x"`:  "",
+		``:     "",
 	} {
 		if got := Risk(&record.Plan{Inputs: json.RawMessage(in)}); got != want {
 			t.Errorf("Risk(%s) = %q, want %q", in, got, want)
@@ -340,16 +350,48 @@ func TestPostMovesTheRiskLabel(t *testing.T) {
 	}
 }
 
-// With no risk answer, no risk label is touched at all.
-func TestNoRiskTouchesNoRiskLabel(t *testing.T) {
+// With no risk answer every risk label is removed and none added: a risk:low left by an
+// earlier run would claim a safety this run's plan cannot vouch for. Said on stderr too.
+func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
 	dir := gitRepo(t)
 	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
-		Convergence: "capped", Body: postBody, Label: true}); err != nil {
+		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
 		t.Fatalf("Post: %v", err)
 	}
-	if c := calls(t, log); strings.Contains(c, "risk:") {
-		t.Errorf("a risk label was touched with no risk answer:\n%s", c)
+	c := calls(t, log)
+	for _, l := range []string{"risk:high", "risk:medium", "risk:low"} {
+		if !strings.Contains(c, "pr edit 9 --remove-label "+l) {
+			t.Errorf("%s was not removed with no risk answer:\n%s", l, c)
+		}
+		if strings.Contains(c, "--add-label "+l) || strings.Contains(c, "label create "+l) {
+			t.Errorf("%s was applied with no risk answer:\n%s", l, c)
+		}
+	}
+	if !strings.Contains(diag.String(), "no risk label") {
+		t.Errorf("stderr does not say no risk label was applied: %q", diag.String())
+	}
+}
+
+// The comment-failed path labels too, risk included, and keeps the risk line in the note.
+func TestACommentFailureStillMovesTheRiskLabel(t *testing.T) {
+	dir := gitRepo(t)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; "pr comment"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	path, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "capped", Risk: "high", Body: postBody, Label: true})
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if c := calls(t, log); !strings.Contains(c, "pr edit 9 --add-label risk:high") {
+		t.Errorf("the risk label was not applied when the comment failed:\n%s", c)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "label risk:high also owed") {
+		t.Errorf("the kept report does not owe the risk label:\n%s", b)
 	}
 }
 
@@ -364,8 +406,21 @@ func TestThePendingNoteNamesTheRiskLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "--add-label risk:high") {
-		t.Errorf("the pending note does not name the risk label:\n%s", b)
+	for _, want := range []string{"gh label create risk:high --color d93f0b", "--add-label risk:high"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the pending note does not carry %q:\n%s", want, b)
+		}
+	}
+	// And with no risk answer the note says to remove, never to add.
+	path, err = WritePending(dir, "abc124", "halted", "", postBody)
+	if err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if b, err = os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "no risk label for run abc124") || strings.Contains(string(b), "--add-label risk:") {
+		t.Errorf("the no-risk note is wrong:\n%s", b)
 	}
 }
 

@@ -119,9 +119,9 @@ type Plan struct {
 	ChangedLines      *int   `json:"changed_lines"`
 	SemanticLines     *int   `json:"semantic_lines"`
 	SizingExcluded    string `json:"sizing_excluded"`
-	// Inputs is the four booleans the plan was given, raw: read only by report.Risk, which
-	// answers no label for anything it cannot read, so a malformed value here must not make
-	// the whole run undecodable.
+	// Inputs is the booleans the plan was given, raw: read only by report.Risk, which answers
+	// no label for anything it cannot read, so a malformed value here must not make the whole
+	// run undecodable.
 	Inputs json.RawMessage `json:"inputs"`
 }
 
@@ -516,7 +516,7 @@ func LoadStore(path string, limit int) (*Store, error) {
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
 			if err := foldedKeys([]byte(line), "agent_cap", "gates", "orchestrator_model",
-				"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded"); err != nil {
+				"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded", "inputs"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}

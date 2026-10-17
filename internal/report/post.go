@@ -349,8 +349,8 @@ type PostParams struct {
 	// Convergence is the DERIVED word, used for the label and written into the pending file's
 	// "label still owed" note so Step 0c applies the same one.
 	Convergence string
-	// Risk is report.Risk's answer, "" for none: labelled beside the convergence, and named
-	// in the pending note the same way.
+	// Risk is report.Risk's answer, "" when the plan cannot say: labelled beside the
+	// convergence and named in the pending note the same way. "" removes any risk label.
 	Risk  string
 	Body  string
 	Label bool
@@ -424,33 +424,34 @@ func Post(p PostParams) (pending string, err error) {
 	return pending, nil
 }
 
-// applyLabels moves the review label and, when the run has one, the risk label.
+// applyLabels moves the review label and the risk label.
 func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 	conv := p.Convergence
 	if conv == "" {
 		conv = "unknown"
 	}
 	if want, ok := Labels[conv]; ok {
-		applyLabel(p, num, want, Labels, diag)
+		moveLabel(p, num, want, Labels, diag)
 	} else {
 		// record.Convergence answers only the four words, so this is unreachable from the
 		// record — but Convergence is a plain string on the way in, and a caller that
 		// mistypes it would otherwise take a nil-map read.
 		diag("no label for convergence %q — none applied", conv)
 	}
-	// ponytail: no risk answer leaves a previous run's risk label standing; it was right for
-	// that run's inputs, and removing it would need the gh calls an unknown cannot justify.
 	if want, ok := Risks[p.Risk]; ok {
-		applyLabel(p, num, want, Risks, diag)
-	} else if p.Risk != "" {
-		diag("no label for risk %q — none applied", p.Risk)
+		moveLabel(p, num, want, Risks, diag)
+		return
 	}
+	// No answer removes every risk label rather than leaving one standing: a risk:low from an
+	// earlier run would claim a safety this run's plan can no longer vouch for.
+	diag("no risk label: the plan's inputs do not say whether a changed path is attacker-reachable (risk %q)", p.Risk)
+	removeFamily(p, num, Label{}, Risks, diag)
 }
 
-// applyLabel moves one at-a-glance signal, removing the rest of its family so two cannot
+// moveLabel moves one at-a-glance signal, removing the rest of its family so two cannot
 // stand at once. Every call is best-effort: a label is a convenience, and failing the publish
 // over one would mean losing a posted report to a missing `labels` scope.
-func applyLabel(p PostParams, num string, want Label, family map[string]Label, diag func(string, ...any)) {
+func moveLabel(p PostParams, num string, want Label, family map[string]Label, diag func(string, ...any)) {
 	// Every one of these is checked, which four of the five were not. `// Every call is
 	// best-effort` described the add below and nothing else: a removal that failed left the
 	// PREVIOUS run's label standing beside the new one, the add still succeeded, and the diag
@@ -463,8 +464,18 @@ func applyLabel(p PostParams, num string, want Label, family map[string]Label, d
 		// failure, because the add below is what actually has to work.
 		diag("label %s not created (it may already exist): %s", want.Name, firstLine(r.Err))
 	}
+	removeFamily(p, num, want, family, diag)
+	if r := sh(p.Repo, "gh", "pr", "edit", num, "--add-label", want.Name); !r.Runnable || r.Code != 0 {
+		diag("label %s failed: %s", want.Name, firstLine(r.Err))
+		return
+	}
+	diag("label %s", want.Name)
+}
+
+// removeFamily removes every label of family but keep from the PR.
+func removeFamily(p PostParams, num string, keep Label, family map[string]Label, diag func(string, ...any)) {
 	for _, l := range family {
-		if l.Name == want.Name {
+		if l.Name == keep.Name {
 			continue
 		}
 		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
@@ -478,11 +489,6 @@ func applyLabel(p PostParams, num string, want Label, family map[string]Label, d
 			diag("label %s not removed, so two may now stand at once: %s", l.Name, firstLine(r.Err))
 		}
 	}
-	if r := sh(p.Repo, "gh", "pr", "edit", num, "--add-label", want.Name); !r.Runnable || r.Code != 0 {
-		diag("label %s failed: %s", want.Name, firstLine(r.Err))
-		return
-	}
-	diag("label %s", want.Name)
 }
 
 // WritePending writes the report where Step 0c will find it: the fallback channel for
@@ -519,11 +525,20 @@ func WritePending(repo, runID, conv, risk, body string) (string, error) {
 	// `looper pr-report --run-id <id> --label`, which applies nothing, since -label acts only
 	// with -post and -post would add a second comment. Step 0c posts this file as-is and
 	// labels with gh.
+	//
+	// A second line does the same for the risk label: owed, or, with no risk answer, every
+	// risk label removed.
 	note := fmt.Sprintf("\n<!-- review-loop: label review:%s still owed for run %s; Step 0c "+
 		"applies it with `gh pr edit <n> --add-label review:%s` -->\n", conv, runID, conv)
+	// The risk line carries the whole move, because Step 0c's recipe is written for review:*
+	// and a bare --add-label fails on a repo that has never had the label.
 	if l, ok := Risks[risk]; ok {
-		note += fmt.Sprintf("<!-- review-loop: label %s also owed; `gh pr edit <n> --add-label %s` -->\n",
-			l.Name, l.Name)
+		note += fmt.Sprintf("<!-- review-loop: label %s also owed for run %s; Step 0c applies it with "+
+			"`gh label create %s --color %s`, `gh pr edit <n> --add-label %s`, then `--remove-label` "+
+			"each other risk:* label -->\n", l.Name, runID, l.Name, l.Colour, l.Name)
+	} else {
+		note += fmt.Sprintf("<!-- review-loop: no risk label for run %s, the plan's inputs cannot say; "+
+			"Step 0c removes any risk:* label with `gh pr edit <n> --remove-label <each>` -->\n", runID)
 	}
 	if err := os.WriteFile(path, []byte(body+note), 0o644); err != nil {
 		return "", err

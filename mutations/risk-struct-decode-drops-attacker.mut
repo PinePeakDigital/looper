@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestRisk$'
+expect: --- FAIL:
+why:    each input is read on its own; failing the whole read on one bad neighbour such as logic:"yes" drops a readable attacker_reachable:true to no label.
+--- old
+		if raw, ok := m[k]; !ok || string(raw) == "null" || json.Unmarshal(raw, &b) != nil {
+--- new
+		if raw, ok := m[k]; !ok || string(raw) == "null" || json.Unmarshal(raw, &b) != nil || json.Unmarshal(p.Inputs, &struct{ Logic *bool `json:"logic"` }{}) != nil {
