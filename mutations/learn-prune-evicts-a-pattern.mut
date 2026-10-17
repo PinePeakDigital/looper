@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/prune_'
+expect: --- FAIL:
+why:    a PATTERN entry is promoted because it recurred; prune evicting it by age loses exactly the knowledge the file exists to keep.
+--- old
+		if !e.durable {
+--- new
+		if true {

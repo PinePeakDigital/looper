@@ -1,0 +1,13 @@
+usage: learn.py [-h] [--section {dismissed,accepted}] [--cap CAP] [--selftest]
+                [{add,bump,prune}] [file] [text]
+
+positional arguments:
+  {add,bump,prune}
+  file
+  text
+
+options:
+  -h, --help            show this help message and exit
+  --section {dismissed,accepted}
+  --cap CAP
+  --selftest

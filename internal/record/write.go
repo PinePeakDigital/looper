@@ -1305,3 +1305,10 @@ func cmdPending(out, errOut io.Writer) error {
 	}
 	return nil
 }
+
+// RejectBanned is runlog.reject_banned for one free-text reason, for writers outside the run
+// record that take the same ban: learn's Dismissed entries.
+func RejectBanned(where, text string) error { return rejectBanned([]reason{{where, text}}) }
+
+// PyRepr is repr() of a str.
+func PyRepr(s string) string { return pyRepr(s) }

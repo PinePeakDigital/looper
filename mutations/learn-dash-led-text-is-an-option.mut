@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/(dash_led|dash_digit|negative_number)'
+expect: --- FAIL:
+why:    an entry that leads with a flag name ("--no-verify was used") is ordinary learnings text. argparse takes a dash-led argument holding a space, or a negative number, as positional; refusing it as an unknown option makes the entry unwritable with no escape short of rewording.
+--- old
+	return !strings.Contains(a, " ") && !negNum.MatchString(a)
+--- new
+	return true

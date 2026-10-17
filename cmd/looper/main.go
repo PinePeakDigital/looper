@@ -12,6 +12,7 @@ import (
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/gather"
+	"github.com/pinepeakdigital/looper/internal/learn"
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
 	"github.com/pinepeakdigital/looper/internal/plan"
@@ -35,6 +36,7 @@ const usage = `usage: looper version
        looper threat-model
        looper deferred
        looper context
+       looper learn {add,bump,prune} <file> [text] [--section dismissed|accepted] [--cap N]
        looper plan --model m --logic yes|no --behavioral-goal yes|no
                    --runtime-change yes|no --attacker-reachable yes|no
                    [--spec-artifact yes|no] [--context f] [--dry-run]
@@ -110,6 +112,8 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return plan.Command(args[1:], in, out, errOut)
 	case "context":
 		return gather.Command(args[1:], out, errOut)
+	case "learn":
+		return learn.Command(args[1:], out, errOut)
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2

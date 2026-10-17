@@ -534,6 +534,57 @@ The divergences, each with its own test:
   stands, as for any other exit, and the base falls back past it when that is nothing. A gh that
   exits while a grandchild (a credential helper) still holds its pipes is cut off a second later.
 
+## `looper learn`
+
+The review-loop's Step 11, a port of the skill's `learn.py` in `internal/learn`. It makes the
+mechanical edits to the learnings file; which entry matches, and which section a new one belongs
+in, stay the caller's judgment.
+
+```text
+looper learn add   <file> "<entry text, no date>" --section dismissed|accepted
+looper learn bump  <file> "<substring of the matched entry>"
+looper learn prune <file> [--cap 50]
+```
+
+`add` stamps today's date and inserts the entry at the top of its section, creating the file or
+the section when missing. A Dismissed entry that cites precedent is refused with the run record's
+own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
+the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
+among the arguments, abbreviated as argparse allowed, with `--` ending them. As in argparse
+3.13+, an argument starting with a dash is text when it starts like a negative number (`-5%`) or
+holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
+anything starting `-h` are options.
+
+`TestLearnMatchesThePython` runs 47 scenarios through `looper learn` and requires what learn.py did
+to the same file, byte for byte in its exit status, output and resulting file, frozen under
+`internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
+temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
+final error line: argparse's usage text names learn.py and its `--selftest`, which this command
+does not have.
+
+The divergences:
+
+- **`PATTERN —` is durable.** learn.py protected only `PATTERN:`, while the entries it was meant to
+  protect are written `PATTERN — …`, so prune evicted them first (`TestPruneKeepsAnEmDashPattern`).
+- **A file that is not UTF-8 is refused and left alone.** learn.py died on the decode and wrote
+  nothing; this says why (`TestANonUTF8FileIsLeftAlone`). Any other unreadable file is also an
+  error naming the cause, where learn.py printed a traceback (`TestAnUnreadableFileIsAnError`).
+- **Entry text that is not UTF-8 is refused.** learn.py truncated the file and then died encoding
+  it (`TestANonUTF8EntryIsRefused`).
+- **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
+  script's digits was an entry there and is ordinary text here (`TestAnEntryDateIsASCIIDigits`).
+- **`--cap` is a plain decimal integer.** Python's `int()` also took surrounding whitespace,
+  underscores, other scripts' digits and values past 64 bits.
+- **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
+  points, so a header spelled with it could fall on the other side of the "dismiss" test.
+- **No `--selftest`.** The Go tests replace it; asking for it is a usage error.
+- **Mixed bad arguments may report a different error.** argparse parses everything first and then
+  reports, so with several faults (an unknown option and a bad choice, an invalid command and extra
+  arguments) it can name a different one, or list every unknown argument where this names the
+  first. A trailing `--` after the last positional is accepted here and refused there, and
+  `--help=1` or `-h=1` is help here and an error there. Each case is a usage error in both, except
+  that trailing `--`.
+
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates

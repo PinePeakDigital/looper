@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestLearnMatchesThePython/prune_dismissed_first'
+expect: --- FAIL:
+why:    a dismissed one-off is cheaper to lose than an accepted pattern, which argues FOR flagging something; evicting accepted entries first trades the file's signal for its noise.
+--- old
+			return cand[a].dismissed
+--- new
+			return cand[b].dismissed
