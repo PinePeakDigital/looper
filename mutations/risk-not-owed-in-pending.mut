@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestThePendingNoteNamesTheRiskLabel$'
+expect: --- FAIL:
+why:    on a fresh branch the report is deferred, and Step 0c applies only the labels the note names.
+--- old
+	if l, ok := Risks[risk]; ok {
+--- new
+	if l, ok := Risks[risk]; ok && false {

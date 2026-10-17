@@ -52,6 +52,41 @@ var Labels = map[string]Label{
 	"unknown":   {"review:unknown", "b60205", "review-loop recorded no cycles — completeness unknown"},
 }
 
+// Risks is keyed by Risk's answer: the change's blast radius, from the plan's inputs. It is
+// orthogonal to Labels, which says how complete the review was, not what a miss would cost.
+var Risks = map[string]Label{
+	"high":   {"risk:high", "d93f0b", "a changed path is attacker-reachable"},
+	"medium": {"risk:medium", "fbca04", "program logic or runtime behaviour changes"},
+	"low":    {"risk:low", "0e8a16", "no logic or runtime change (docs, comments, config values)"},
+}
+
+// Risk is "high" when any changed path is attacker-reachable, "medium" when logic or runtime
+// behaviour changes, "low" when the plan said none of the three, and "" when it cannot tell.
+// An absent or unreadable attacker_reachable answers "", never a lower level: it is the one
+// input that could have made the answer high.
+func Risk(p *record.Plan) string {
+	if p == nil || len(p.Inputs) == 0 {
+		return ""
+	}
+	var in struct {
+		Logic    *bool `json:"logic"`
+		Runtime  *bool `json:"runtime_behavior_change"`
+		Attacker *bool `json:"attacker_reachable"`
+	}
+	if json.Unmarshal(p.Inputs, &in) != nil || in.Attacker == nil {
+		return ""
+	}
+	switch {
+	case *in.Attacker:
+		return "high"
+	case in.Logic != nil && *in.Logic, in.Runtime != nil && *in.Runtime:
+		return "medium"
+	case in.Logic != nil && in.Runtime != nil:
+		return "low"
+	}
+	return ""
+}
+
 // cell flattens one free-text value for a markdown table cell or bullet.
 //
 // Every reason in this report was written by an LLM into a record this package does not own,

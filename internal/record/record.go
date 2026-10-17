@@ -119,6 +119,10 @@ type Plan struct {
 	ChangedLines      *int   `json:"changed_lines"`
 	SemanticLines     *int   `json:"semantic_lines"`
 	SizingExcluded    string `json:"sizing_excluded"`
+	// Inputs is the four booleans the plan was given, raw: read only by report.Risk, which
+	// answers no label for anything it cannot read, so a malformed value here must not make
+	// the whole run undecodable.
+	Inputs json.RawMessage `json:"inputs"`
 }
 
 // Cycle is one pass of the loop. Applied is a pointer because ITS absence is load-bearing:

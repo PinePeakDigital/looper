@@ -420,7 +420,7 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	_, err = report.Post(report.PostParams{
 		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
-		Body: body, Label: *label, Diag: errOut,
+		Risk: report.Risk(r.Plan), Body: body, Label: *label, Diag: errOut,
 	})
 	return err
 }

@@ -349,8 +349,11 @@ type PostParams struct {
 	// Convergence is the DERIVED word, used for the label and written into the pending file's
 	// "label still owed" note so Step 0c applies the same one.
 	Convergence string
-	Body        string
-	Label       bool
+	// Risk is report.Risk's answer, "" for none: labelled beside the convergence, and named
+	// in the pending note the same way.
+	Risk  string
+	Body  string
+	Label bool
 	// Diag takes the operator-facing notes. Nothing here writes to stdout.
 	Diag io.Writer
 }
@@ -371,7 +374,7 @@ func Post(p PostParams) (pending string, err error) {
 
 	probe := FindPR(p.Repo, p.Branch)
 	if probe.State != PRFound {
-		path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Body)
+		path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Risk, p.Body)
 		if werr != nil {
 			return "", fmt.Errorf("%s, and the report could not be preserved: %w", probe.Note(), werr)
 		}
@@ -385,7 +388,7 @@ func Post(p PostParams) (pending string, err error) {
 		// failure this repo has already hit while `git push` worked — used to discard the
 		// body and leave push-check refusing the push on advice that could not succeed.
 		diag("comment failed on PR #%s: %s", probe.Number, firstLine(c.Err))
-		path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Body)
+		path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Risk, p.Body)
 		if werr != nil {
 			return "", fmt.Errorf("the comment failed on PR #%s and the report could not be "+
 				"preserved: %w", probe.Number, werr)
@@ -398,7 +401,7 @@ func Post(p PostParams) (pending string, err error) {
 		// at-a-glance signal for exactly the runs whose report is hardest to find — the ones
 		// whose comment failed.
 		if p.Label {
-			applyLabel(p, probe.Number, diag)
+			applyLabels(p, probe.Number, diag)
 		}
 		return path, nil
 	}
@@ -407,7 +410,7 @@ func Post(p PostParams) (pending string, err error) {
 	// Also locally, so the push gate rests on an artifact that does not depend on a SECOND
 	// successful remote read. Without this, a post that succeeded while the read-back failed
 	// refused the push forever and posted a duplicate on every retry.
-	path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Body)
+	path, werr := WritePending(p.Repo, p.RunID, p.Convergence, p.Risk, p.Body)
 	if werr != nil {
 		// The report is POSTED; the local copy is belt-and-braces. Say so and carry on.
 		diag("posted, but the local copy could not be written: %v", werr)
@@ -416,27 +419,38 @@ func Post(p PostParams) (pending string, err error) {
 	}
 
 	if p.Label {
-		applyLabel(p, probe.Number, diag)
+		applyLabels(p, probe.Number, diag)
 	}
 	return pending, nil
 }
 
-// applyLabel moves the run's at-a-glance signal, removing the other three so two cannot stand
-// at once. Every call is best-effort: a label is a convenience, and failing the publish over
-// one would mean losing a posted report to a missing `labels` scope.
-func applyLabel(p PostParams, num string, diag func(string, ...any)) {
+// applyLabels moves the review label and, when the run has one, the risk label.
+func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 	conv := p.Convergence
 	if conv == "" {
 		conv = "unknown"
 	}
-	want, ok := Labels[conv]
-	if !ok {
+	if want, ok := Labels[conv]; ok {
+		applyLabel(p, num, want, Labels, diag)
+	} else {
 		// record.Convergence answers only the four words, so this is unreachable from the
 		// record — but Convergence is a plain string on the way in, and a caller that
 		// mistypes it would otherwise take a nil-map read.
 		diag("no label for convergence %q — none applied", conv)
-		return
 	}
+	// ponytail: no risk answer leaves a previous run's risk label standing; it was right for
+	// that run's inputs, and removing it would need the gh calls an unknown cannot justify.
+	if want, ok := Risks[p.Risk]; ok {
+		applyLabel(p, num, want, Risks, diag)
+	} else if p.Risk != "" {
+		diag("no label for risk %q — none applied", p.Risk)
+	}
+}
+
+// applyLabel moves one at-a-glance signal, removing the rest of its family so two cannot
+// stand at once. Every call is best-effort: a label is a convenience, and failing the publish
+// over one would mean losing a posted report to a missing `labels` scope.
+func applyLabel(p PostParams, num string, want Label, family map[string]Label, diag func(string, ...any)) {
 	// Every one of these is checked, which four of the five were not. `// Every call is
 	// best-effort` described the add below and nothing else: a removal that failed left the
 	// PREVIOUS run's label standing beside the new one, the add still succeeded, and the diag
@@ -449,7 +463,7 @@ func applyLabel(p PostParams, num string, diag func(string, ...any)) {
 		// failure, because the add below is what actually has to work.
 		diag("label %s not created (it may already exist): %s", want.Name, firstLine(r.Err))
 	}
-	for _, l := range Labels {
+	for _, l := range family {
 		if l.Name == want.Name {
 			continue
 		}
@@ -475,7 +489,7 @@ func applyLabel(p PostParams, num string, diag func(string, ...any)) {
 // "nowhere to post it right now". push-check looks for this file when no PR comment carries
 // the run's marker, so writing it is also what keeps a transient GitHub error from blocking
 // the push permanently.
-func WritePending(repo, runID, conv, body string) (string, error) {
+func WritePending(repo, runID, conv, risk, body string) (string, error) {
 	r := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if !r.Runnable {
 		return "", fmt.Errorf("git could not be run (%s) — nowhere to defer the report to", r.Err)
@@ -507,6 +521,10 @@ func WritePending(repo, runID, conv, body string) (string, error) {
 	// labels with gh.
 	note := fmt.Sprintf("\n<!-- review-loop: label review:%s still owed for run %s; Step 0c "+
 		"applies it with `gh pr edit <n> --add-label review:%s` -->\n", conv, runID, conv)
+	if l, ok := Risks[risk]; ok {
+		note += fmt.Sprintf("<!-- review-loop: label %s also owed; `gh pr edit <n> --add-label %s` -->\n",
+			l.Name, l.Name)
+	}
 	if err := os.WriteFile(path, []byte(body+note), 0o644); err != nil {
 		return "", err
 	}

@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestPostMovesTheRiskLabel$'
+expect: --- FAIL:
+why:    the risk label is applied beside the review label; dropping the call loses it with every other test green.
+--- old
+		applyLabel(p, num, want, Risks, diag)
+--- new
+		_ = want

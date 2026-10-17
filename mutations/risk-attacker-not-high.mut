@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestRisk$'
+expect: --- FAIL:
+why:    an attacker-reachable change is the one the risk label exists to flag; answering medium for it reads as the ordinary case.
+--- old
+	case *in.Attacker:
+--- new
+	case false && *in.Attacker:
