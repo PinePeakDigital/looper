@@ -428,7 +428,9 @@ func Check(p CheckParams) (Result, error) {
 	if !noRecord && r.Finish == nil {
 		unfinished = "run " + p.RunID + " was never finished — close it with `looper record " +
 			"finish --run-id " + p.RunID + "`, re-post its report with `looper pr-report " +
-			"--run-id " + p.RunID + " --post`, then ask again"
+			"--run-id " + p.RunID + " --post`, then ask again; if the session that planned it " +
+			"is gone, run `looper record abandon --run-id " + p.RunID + " --missing <gates>` " +
+			"and start a fresh run instead"
 		if d := p.Diag; d != nil {
 			// record.Load drops a torn line without an error, so a finish row that was
 			// written and then torn reads exactly like one never written.

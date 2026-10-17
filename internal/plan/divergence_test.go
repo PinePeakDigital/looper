@@ -281,6 +281,11 @@ var reEntry = []struct {
 	{"no reviewed sha is full",
 		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": false, "last_reviewed_sha": null, "review_delta_lines": 0}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
+	// looper context never says true without a sha, but a context that does must not floor
+	// a delta measured against nothing.
+	{"a delta verdict with no reviewed sha is full",
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true, "last_reviewed_sha": null, "review_delta_lines": 12}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
 	{"a null delta verdict is full",
 		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": null` + reentryFields + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},

@@ -1164,6 +1164,25 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 			t.Errorf("a failed removal of a carried risk label was silent: %q", d)
 		}
 	})
+
+	// GitHub label names are case-insensitive, so a PR carrying Risk:Low carries risk:low:
+	// skipping it would leave the stale level standing beside the new one, silently.
+	t.Run("a carried label in another case", func(t *testing.T) {
+		log := shimGh(t, fmt.Sprintf(gh, `echo '{"labels":[{"name":"Risk:Low"},{"name":"Review:Converged"}]}'`))
+		if _, err := Post(PostParams{Repo: dir, RunID: "post05", Branch: "feat/x", Convergence: "halted",
+			Risk: "medium", Body: postBody, Label: true, Diag: &strings.Builder{}}); err != nil {
+			t.Fatalf("Post: %v", err)
+		}
+		c := calls(t, log)
+		for _, l := range []string{"risk:low", "review:converged"} {
+			if !strings.Contains(c, "pr edit 9 --remove-label "+l) {
+				t.Errorf("the PR carries %s in another case, yet its removal was not asked for:\n%s", l, c)
+			}
+		}
+		if strings.Contains(c, "--remove-label risk:high") {
+			t.Errorf("risk:high is not on the PR, yet its removal was asked for:\n%s", c)
+		}
+	})
 }
 
 // noGit is noGh's mirror: a PATH with gh but no git, so WritePending's two failure modes can

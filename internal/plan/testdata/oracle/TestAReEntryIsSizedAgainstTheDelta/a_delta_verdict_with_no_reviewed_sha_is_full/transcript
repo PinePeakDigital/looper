@@ -1,0 +1,6 @@
+exit=2
+--- stdout ---
+--- stderr ---
+looper plan: flag provided but not defined: -delta-logic
+--- ao ---
+--- plan row ---

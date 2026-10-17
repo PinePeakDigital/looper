@@ -62,9 +62,10 @@ report, 1 for a ledger that exists and cannot be read.
 context is Step 0: the base branch (fetched), the learnings, the test and lint commands and
 the diff's size, as JSON, from the working directory. plan reads it.
 
-plan is Step 0b: which gates run and the tier floor, as JSON, from context.sh's JSON (the
---context file, or stdin) and four yes/no answers. Unless --dry-run it records the plan and
-prints the run_id on the last line. The Step 0 alarm goes to stderr.`
+plan is Step 0b: which gates run and the tier floor, as JSON, from looper context's JSON
+(the --context file, or stdin), four yes/no answers and the optional --delta-logic, which
+floors a fast-path re-entry on the delta since the last review. Unless --dry-run it records
+the plan and prints the run_id on the last line. The Step 0 alarm goes to stderr.`
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))

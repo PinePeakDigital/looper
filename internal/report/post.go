@@ -428,9 +428,11 @@ func prLabels(p PostParams, num string, diag func(string, ...any)) map[string]bo
 		diag("the PR's labels did not answer as a labels list, so every removal is tried")
 		return nil
 	}
+	// Keyed in lower case, because GitHub's label names are case-insensitive: a PR carrying
+	// Risk:Low carries risk:low, and skipping it would leave a stale level standing.
 	on := map[string]bool{}
 	for _, l := range *v.Labels {
-		on[l.Name] = true
+		on[strings.ToLower(l.Name)] = true
 	}
 	return on
 }
@@ -472,7 +474,7 @@ func removeFamily(p PostParams, num string, keep Label, family map[string]Label,
 		if l.Name == keep.Name {
 			continue
 		}
-		if onPR != nil && !onPR[l.Name] {
+		if onPR != nil && !onPR[strings.ToLower(l.Name)] {
 			continue
 		}
 		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {
