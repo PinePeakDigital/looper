@@ -1102,11 +1102,14 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 	}
 
 	// Unreadable labels: the read failing, or answering without the key, falls back to trying
-	// every removal and warning on each failure.
+	// every removal and warning on each failure — and says the read is why.
 	for name, view := range map[string]string{
 		"the read fails":         `echo "HTTP 502" >&2; exit 1`,
 		"the key is missing":     `echo '{}'`,
 		"the answer is not JSON": `echo 'oops'`,
+		// A well-formed answer that omits a label the PR really carries, from a descendant
+		// holding the pipe: undrained, so it must not be believed.
+		"the answer is undrained": `(echo '{"labels":[]}'; sleep 5) &`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			shimGh(t, fmt.Sprintf(gh, view))
@@ -1120,8 +1123,47 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 					t.Errorf("with the labels unreadable, the failed removal of %s was silent: %q", l, diag.String())
 				}
 			}
+			if !strings.Contains(diag.String(), "the PR's labels") {
+				t.Errorf("the labels read failed without saying so: %q", diag.String())
+			}
+			if name == "the read fails" && !strings.Contains(diag.String(), "every removal is tried: HTTP 502") {
+				t.Errorf("the failed labels read did not say why: %q", diag.String())
+			}
 		})
 	}
+
+	// No labels at all is an answer, not an unreadable one: nothing is removed or warned about.
+	t.Run("a PR with no labels", func(t *testing.T) {
+		log := shimGh(t, fmt.Sprintf(gh, `echo '{"labels":[]}'`))
+		var diag strings.Builder
+		if _, err := Post(PostParams{Repo: dir, RunID: "post03", Branch: "feat/x",
+			Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+			t.Fatalf("Post: %v", err)
+		}
+		if c := calls(t, log); strings.Contains(c, "--remove-label") {
+			t.Errorf("a PR with no labels had a removal asked for:\n%s", c)
+		}
+		if d := diag.String(); strings.Contains(d, "not removed") || strings.Contains(d, "the PR's labels") {
+			t.Errorf("a PR with no labels was warned about: %q", d)
+		}
+	})
+
+	// The risk family follows the PR as well: a carried risk label is removed when the plan
+	// gives no level, and a failure there still warns.
+	t.Run("a carried risk label with no risk answer", func(t *testing.T) {
+		log := shimGh(t, fmt.Sprintf(gh, `echo '{"labels":[{"name":"risk:high"}]}'`))
+		var diag strings.Builder
+		if _, err := Post(PostParams{Repo: dir, RunID: "post04", Branch: "feat/x",
+			Convergence: "halted", Body: postBody, Label: true, Diag: &diag}); err != nil {
+			t.Fatalf("Post: %v", err)
+		}
+		if c := calls(t, log); !strings.Contains(c, "pr edit 9 --remove-label risk:high") {
+			t.Errorf("the risk label the PR carries was not removed:\n%s", c)
+		}
+		if d := diag.String(); !strings.Contains(d, "label risk:high not removed, so a stale level may still stand") {
+			t.Errorf("a failed removal of a carried risk label was silent: %q", d)
+		}
+	})
 }
 
 // noGit is noGh's mirror: a PATH with gh but no git, so WritePending's two failure modes can

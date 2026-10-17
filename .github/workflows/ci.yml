@@ -269,7 +269,8 @@ jobs:
           done
           for d in TestAnAbbreviatedFlagIsRefused TestAFailedRecordSaysSo TestAnUnmeasuredDiffPlansWide \
                    TestATimedOutProbeStopsAtItsTimeout TestHelpGoesToStdout TestTheDeltaAnswerLeavesTheRiskAlone \
-                   TestAProbeWithALingeringGrandchildIsAnswered; do
+                   TestAProbeWithALingeringGrandchildIsAnswered TestAGarbledDeltaAnswerIsAUsageError \
+                   TestEveryDocumentedDeltaAnswerIsRead; do
             grep -q -- "--- PASS: $d" plan.log || { echo "divergence $d did not pass"; cat plan.log; exit 1; }
           done
 
@@ -404,7 +405,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 403 ] || { echo "only $n mutations, expected at least 403 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 406 ] || { echo "only $n mutations, expected at least 406 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

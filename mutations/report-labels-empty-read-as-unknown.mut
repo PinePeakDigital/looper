@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestOnlyALabelOnThePRIsRemovedOrWarnedAbout'
+expect: --- FAIL: TestOnlyALabelOnThePRIsRemovedOrWarnedAbout/a_PR_with_no_labels
+why:    a PR with no labels reads as unknown, so every removal is tried and a label-free PR is warned "two may now stand at once"
+--- old
+	if json.Unmarshal([]byte(r.Out), &v) != nil || v.Labels == nil {
+--- new
+	if json.Unmarshal([]byte(r.Out), &v) != nil || v.Labels == nil || len(*v.Labels) == 0 {
