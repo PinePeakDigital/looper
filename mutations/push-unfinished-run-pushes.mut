@@ -5,4 +5,4 @@ why:    Step 14 closes the record before it asks the gate, so a run with no fini
 --- old
 		Unfinished:     unfinished,
 --- new
-		Unfinished:     "",
+		Unfinished:     unfinished[:0],
