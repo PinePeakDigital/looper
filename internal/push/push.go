@@ -14,11 +14,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/record"
 	"github.com/pinepeakdigital/looper/internal/run"
 )
@@ -30,15 +29,6 @@ import (
 // failure reached the decision, and nothing replaced it: a run that recorded test-failure
 // with a failed gate was permitted, with the reason "converged, evidence gate ok".
 var BrokenOutcomes = []string{"test-failure", "blocked", "abandoned"}
-
-// reportMarker is the comment pr-report.py writes at the top of every report body. Matching
-// it is how this checks the report actually reached a reader.
-const reportMarker = "<!-- review-loop:run=%s -->"
-
-// pendingFmt is relative to the git common dir. The push gate forces the order
-// loop -> push -> create PR on a fresh branch, so the report usually has no PR to land on
-// yet and pr-report.py writes it here instead.
-const pendingFmt = "info/review-loop-pending-report.%s.md"
 
 // State is everything Decide weighs. A struct rather than the Python's eight positional
 // parameters, three of which are bools in a row: `decide(conv, gate, skip, branch, default,
@@ -202,22 +192,20 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // Named for the question it answers rather than for "could a probe be asked", which is what
 // the earlier name `couldAsk` claimed while the refused-run-id path asks nothing.
 func reportProbe(runID string, r *record.Run, repo string) (landed, attributable bool) {
-	// The guard travels with the path interpolation, not with one caller. It was in Check
-	// only, which made it a property of whoever remembered to call Check first — and the
-	// tests in this package already call ReportLanded directly, bypassing it. Measured:
-	// filepath.Join(gitdir, fmt.Sprintf(pendingFmt, "../../../../../../tmp/evil")) resolves
-	// to /Users/<user>/tmp/evil.md, outside the repo. Same lesson as misplacedRunField in
-	// internal/record: guard the mechanism, not the spelling of its one current caller.
+	// The guard travels with the interpolation: evidence.Marker and evidence.PendingPath
+	// refuse an id that is not plain, so no caller can forget it. It once sat in Check only,
+	// and a run id of six `../` segments then resolved the pending path outside the repo.
 	//
 	// Fails closed rather than erroring, because every other way this function cannot find
 	// the report already does.
-	if !ValidRunID(runID) {
+	marker, ok := evidence.Marker(runID)
+	if !ok {
 		// Attributable: the question was well-formed enough to answer and the answer is no.
 		// Nothing is asked here, which is why `couldAsk` needed this comment as an exception
 		// and `attributable` does not.
 		return false, true
 	}
-	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
+	needles := append([]string{marker}, Fingerprint(r)...)
 	if rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body"); rc == 0 {
 		attributable = true
 		if containsAll(out, needles) {
@@ -229,7 +217,8 @@ func reportProbe(runID string, r *record.Run, repo string) (landed, attributable
 		return false, attributable
 	}
 	// No attributable assignment here: git answered, so both paths below return true outright.
-	body, err := os.ReadFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)))
+	pending, _ := evidence.PendingPath(gitdir, runID) // the id passed evidence.Marker above
+	body, err := os.ReadFile(pending)
 	if err != nil {
 		return false, true
 	}
@@ -307,17 +296,6 @@ type Result struct {
 	Disclose    *string `json:"disclose"`
 }
 
-// runIDRe bounds what may be interpolated into pendingFmt. The id is a path segment there,
-// so `../../` in one would send the gate looking for its evidence outside the git dir. The
-// Python has the same hole and the ids it writes are hex, so nothing has ever exercised it;
-// refusing the shape costs a line and keeps the evidence path inside the repo.
-var runIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-
-// ValidRunID reports whether a run id may be interpolated into a path. Exported so
-// ReportLanded and Check share ONE definition of the bound rather than each carrying a copy
-// that can drift — the shape of defect this repo has already paid for twice.
-func ValidRunID(id string) bool { return runIDRe.MatchString(id) }
-
 // CheckParams is what Check needs. A struct for the same reason State is one, and the comment
 // on State applies verbatim: the previous signature was seven positionals with Branch and
 // DefaultBranch adjacent and both plain strings, so transposing them silently inverted the
@@ -350,7 +328,7 @@ func Check(p CheckParams) (Result, error) {
 	// Checked here as well as in ReportLanded, and deliberately not only there: this is the
 	// boundary where a bad id can still be reported as an ERROR naming it, where
 	// ReportLanded can only fail closed and say nothing.
-	if !ValidRunID(p.RunID) {
+	if !evidence.ValidRunID(p.RunID) {
 		return Result{}, fmt.Errorf("run id %q is not a plain identifier", p.RunID)
 	}
 	runs, err := record.Load(p.Store, 0)

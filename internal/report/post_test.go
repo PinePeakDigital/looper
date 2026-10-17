@@ -362,59 +362,6 @@ func TestWritePending(t *testing.T) {
 	})
 }
 
-// The two halves of the gate validate the run id separately — internal/push must not import
-// this package, or the writer and the reader of the pending path become one package that can
-// agree with itself by accident. This is the assertion that keeps the duplicate honest.
-func TestTheRunIDGuardMatchesThePushGates(t *testing.T) {
-	// Enumerated by CHARACTER CLASS, not by a handful of shapes. The table used to hold a few
-	// hostile-looking strings and no `>` at all, which made the assertion unfalsifiable for the
-	// one character that matters most here: adding `>` to this package's allowed set left all
-	// three packages green while the push gate's regex still rejected it, so the two halves of
-	// the gate disagreed and the `-->` comment forgery shipped with CI green. Every byte that
-	// could close an HTML comment, forge markdown, or traverse a path now has a case.
-	ids := []string{
-		"", "abc123", "A-b_9", "../../etc/passwd", "a/b", "a.b", "a b", "a\x00b", "ab;rm -rf /",
-		strings.Repeat("a", 64), strings.Repeat("a", 65), "é", "-",
-		"a>b", "a<b", "a-->b", "a--\x3eb", "a!b", "a#b", "a|b", "a`b", "a\nb", "a\r\nb", "a\tb",
-		"a*b", "a[b", "a]b", "a(b", "a{b", "a\"b", "a'b", "a\\b", "a~b", "a$b", "a%b", "a&b",
-		"a+b", "a=b", "a:b", "a;b", "a,b", "a?b", "a@b", "a^b",
-	}
-	// The LENGTH UNIT is the real structural asymmetry between the two halves, and until these
-	// three cases it was unasserted. This package tests `len(s) > 64`, which counts BYTES;
-	// push's `{1,64}` is an RE2 repeat of a rune class, which counts RUNES. Both allowed sets
-	// are pure ASCII today, so every string either side ACCEPTS has len(bytes) == len(runes)
-	// and the two are provably equivalent — but widen either set to one non-ASCII character
-	// and they diverge at exactly 64, with nothing here to notice. A measured sweep of every
-	// 1-, 2- and 3-byte string (16,843,008 inputs) found 0 disagreements, so these are not
-	// pinning a live bug; they are pinning the bound that a widening would cross first.
-	ids = append(ids,
-		strings.Repeat("é", 32),     // 64 bytes, 32 runes
-		strings.Repeat("é", 64),     // 128 bytes, 64 runes — the unit decides this one
-		strings.Repeat("a", 63)+"é", // 65 bytes, 64 runes
-	)
-	// Every single BYTE, and `string([]byte{...})` not `string(rune(b))`. `string(rune(0x80))`
-	// is the two-byte UTF-8 encoding of U+0080, so the rune form enumerates U+0000-U+00FF and
-	// the raw bytes 0x80-0xFF never appear alone — exactly the widening the comment claimed to
-	// seal, for 128 of its 256 iterations. (An earlier version of this comment called an
-	// invalid UTF-8 byte "the one input where the two could most plausibly disagree". That is
-	// the one thing it got wrong: both sides reject every non-ASCII byte by construction, so
-	// it is a non-divergence. The length unit above is the asymmetry that can actually bite.)
-	for b := 0; b < 256; b++ {
-		ids = append(ids, "a"+string([]byte{byte(b)})+"b")
-	}
-	// The rune spellings too — a UTF-8 terminal sends multi-byte sequences, not lone bytes.
-	// Duplicates the first loop for 0-127, which costs nothing and keeps each loop readable.
-	for r := 0; r < 256; r++ {
-		ids = append(ids, "a"+string(rune(r))+"b")
-	}
-	for _, id := range ids {
-		if got, want := ValidRunID(id), push.ValidRunID(id); got != want {
-			t.Errorf("%q: this package says %v, the push gate says %v — the writer and the "+
-				"reader of the pending path now disagree about what a run id is", id, got, want)
-		}
-	}
-}
-
 // An unrecognised convergence word cannot come from the record — record.Convergence answers
 // only the four — but it arrives here as a plain string, and the nil-map read it used to take
 // would have cost a posted report its label with no note saying why.
@@ -435,14 +382,12 @@ func TestAnUnknownConvergenceAppliesNoLabel(t *testing.T) {
 }
 
 // The two halves of the gate, pinned to each other end to end: Render writes the artifact,
-// WritePending puts it where the gate looks, and push.ReportLanded is the reader. If the
-// marker, the `## review-loop` heading or the `N cycle(s) · M agent(s)` line moves on either
-// side, every push is refused on advice that cannot succeed — post the report, which this
-// run already did.
-//
-// Asserted by RUNNING the reader rather than by comparing format strings: the two constants
-// could agree while the line they produce is assembled differently, which is the whole class
-// of near-miss a string comparison misses.
+// WritePending puts it where the gate looks, and push.ReportLanded is the reader. The marker
+// and the path come from internal/evidence; the `## review-loop` heading and the
+// `N cycle(s) · M agent(s)` line are still assembled separately on each side, and if they
+// drift every push is refused on advice that cannot succeed — post the report, which this run
+// already did. Asserted by RUNNING the reader, since a string comparison misses a line that
+// matches its format but is assembled differently.
 func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
 	const id = "fp01"
 	dir := gitRepo(t)
@@ -993,5 +938,13 @@ func mustGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// Render's own refusal, behind the command's: a `-->` in the id would close the marker early
+// and let the rest of the id render as visible markdown in a public comment.
+func TestRenderRefusesARunIDThatCouldForgeTheMarker(t *testing.T) {
+	if b, err := Render(&record.Run{}, "a-->b", "", ""); err == nil {
+		t.Errorf("rendered:\n%s", b)
 	}
 }

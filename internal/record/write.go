@@ -25,6 +25,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/run"
 )
 
@@ -1292,11 +1293,8 @@ func cmdPending(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	files, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*.md"))
-	sort.Strings(files)
-	for _, f := range files {
-		base := filepath.Base(f)
-		rid := strings.TrimSuffix(strings.TrimPrefix(base, "review-loop-pending-report."), ".md")
+	for _, p := range evidence.PendingReports(common) {
+		f, rid := p.Path, p.ID
 		run := s.get(rid)
 		switch {
 		case run == nil:
