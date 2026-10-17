@@ -2,6 +2,7 @@ package plan
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,7 +252,7 @@ func TestHelpGoesToStdout(t *testing.T) {
 // every frozen scenario and, like plan.py, ignored context keys it did not name. Without
 // --delta-logic the plan must be that golden byte for byte. With it, the golden is looper's
 // own refusal of an unknown flag, in Go's words; plan.py's argparse refused it with exit 2 too.
-const reentry = `, "last_reviewed_sha": "abc1234", "review_delta_lines": 12`
+const reentryFields = `, "last_reviewed_sha": "abc1234", "review_delta_lines": 12`
 
 const reentryReason = `"tier_reason": "fast-path re-entry: 12 raw lines since the last reviewed sha abc1234 (fast path is <30) and no program logic in them; the branch has 40 lines of review surface"`
 
@@ -263,16 +264,16 @@ var reEntry = []struct {
 	want  []string
 }{
 	{"a logic-free delta on a branch with logic is fast",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--delta-logic", "no")}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--delta-logic", "no")}},
 		"fast", []string{reentryReason, `"logic": true`, `"delta_logic": false`}},
 	{"a logic-free delta on a logic-free branch is fast",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"fast", []string{reentryReason}},
 	{"a recorded re-entry floors the row at fast and records the answer",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--delta-logic", "no"), record: true}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--delta-logic", "no"), record: true}},
 		"fast", []string{"tier_floor=\"fast\"\n", `"delta_logic":false`, `"logic":true`}},
 	{"a delta with logic in it is full",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "yes")}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--logic", "no", "--delta-logic", "yes")}},
 		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`, `"delta_logic": true`}},
 	{"a delta not fast-path sized is full",
 		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": false, "last_reviewed_sha": "abc1234", "review_delta_lines": 30}`), args: with("--logic", "no", "--delta-logic", "no")}},
@@ -281,17 +282,17 @@ var reEntry = []struct {
 		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": false, "last_reviewed_sha": null, "review_delta_lines": 0}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
 	{"a null delta verdict is full",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": null` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": null` + reentryFields + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"full", []string{`"tier_reason": "40 lines of review surface (fast path is <30)"`}},
 	// Fast-path sized branch-wide as well: plan.py's size reason stands.
 	{"a small branch keeps the size reason",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_size": true, "changed_lines": 12, "semantic_lines": 12, "fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_size": true, "changed_lines": 12, "semantic_lines": 12, "fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--logic", "no", "--delta-logic", "no")}},
 		"fast", []string{`"tier_reason": "12 lines of review surface and no program logic touched"`}},
 	// Unasked, nothing is lowered: an orchestrator that predates --delta-logic plans as before.
 	{"without a delta-logic answer a small delta is full",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`), args: with("--logic", "no")}}, "", nil},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`), args: with("--logic", "no")}}, "", nil},
 	{"without a delta-logic answer a branch with logic is full",
-		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`)}}, "", nil},
+		divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`)}}, "", nil},
 }
 
 func TestAReEntryIsSizedAgainstTheDelta(t *testing.T) {
@@ -320,11 +321,26 @@ func TestAReEntryIsSizedAgainstTheDelta(t *testing.T) {
 	}
 }
 
+// --delta-logic lowers the floor on "no", so an answer that is neither yes nor no is a usage
+// error rather than plan.py's reading of it as "no": a typo must not floor a re-entry at fast.
+func TestAGarbledDeltaAnswerIsAUsageError(t *testing.T) {
+	for _, v := range []string{"yse", "maybe", ""} {
+		t.Run(fmt.Sprintf("%q", v), func(t *testing.T) {
+			d := divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`),
+				args: with("--delta-logic", v)}}
+			code, out, errOut, _ := d.run(t)
+			if code != 2 || out != "" || !strings.Contains(errOut, "-delta-logic") {
+				t.Errorf("exit %d, stdout %q, stderr %q; want exit 2, no plan, stderr naming -delta-logic", code, out, errOut)
+			}
+		})
+	}
+}
+
 // The delta answer is recorded for the run record's sake only: the risk label is the branch's
 // and reads --logic, so a logic-free follow-up on a branch with logic stays risk:medium.
 // Answering --logic about the delta is what flipped skills#11 to risk:low.
 func TestTheDeltaAnswerLeavesTheRiskAlone(t *testing.T) {
-	d := divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentry + `}`),
+	d := divergence{scenario: scenario{ctx: ctx(`{"fast_path_eligible_by_delta": true` + reentryFields + `}`),
 		args: with("--runtime-change", "no", "--delta-logic", "no"), record: true}}
 	code, _, errOut, w := d.run(t)
 	if code != 0 {

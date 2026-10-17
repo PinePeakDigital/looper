@@ -382,7 +382,7 @@ func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 	}
 	// Read once for both families: they are disjoint, so the review label's add cannot change
 	// what the risk family's removals need to know.
-	onPR := prLabels(p, num)
+	onPR := prLabels(p, num, diag)
 	if want, ok := Labels[conv]; ok {
 		moveLabel(p, num, want, Labels, onPR, diag)
 	} else {
@@ -408,10 +408,14 @@ func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 // gh resolves a removal against the REPO's labels and then sends the mutation, so whether a
 // removal of an absent label fails depends on the repo and on gh, and any such failure was
 // warned about as "two may now stand at once" with nothing standing.
-func prLabels(p PostParams, num string) map[string]bool {
+//
+// A nil answer is said on diag, so the warnings the fallback may then raise for labels the PR
+// never carried come with the reason they were not filtered.
+func prLabels(p PostParams, num string, diag func(string, ...any)) map[string]bool {
 	r := sh(p.Repo, "gh", "pr", "view", num, "--json", "labels")
 	// Drained too: Out is read, and a descendant's bytes in it would be believed.
 	if !r.Runnable || r.Code != 0 || !r.Drained {
+		diag("the PR's labels could not be read, so every removal is tried: %s", firstLine(r.Err))
 		return nil
 	}
 	var v struct {
@@ -421,6 +425,7 @@ func prLabels(p PostParams, num string) map[string]bool {
 		} `json:"labels"`
 	}
 	if json.Unmarshal([]byte(r.Out), &v) != nil || v.Labels == nil {
+		diag("the PR's labels did not answer as a labels list, so every removal is tried")
 		return nil
 	}
 	on := map[string]bool{}

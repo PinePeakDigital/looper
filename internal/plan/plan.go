@@ -533,9 +533,14 @@ func length(v any) int {
 }
 
 // yesno is plan.py's argparse type: yes, y, true or 1, any case, is yes; anything else is no.
+//
+// strict refuses anything that is neither a yes nor a no/n/false/0, as a usage error. It is
+// for --delta-logic, whose "no" LOWERS the floor: read plan.py's way, a typo such as `yse`
+// would be a "no" and floor a re-entry at fast. The flags plan.py had keep its reading.
 type yesno struct {
-	v   *bool
-	set bool
+	v      *bool
+	set    bool
+	strict bool
 }
 
 func (y *yesno) String() string { return "" }
@@ -543,7 +548,12 @@ func (y *yesno) Set(s string) error {
 	switch strings.ToLower(s) {
 	case "yes", "y", "true", "1":
 		*y.v = true
+	case "no", "n", "false", "0":
+		*y.v = false
 	default:
+		if y.strict {
+			return fmt.Errorf("want yes or no, not %q", s)
+		}
 		*y.v = false
 	}
 	y.set = true
@@ -581,6 +591,7 @@ func Command(args []string, in io.Reader, out, errOut io.Writer) int {
 			required[f.name] = y
 		}
 		if f.name == "delta-logic" {
+			y.strict = true
 			deltaLogic = y
 		}
 	}

@@ -1,0 +1,12 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestOnlyALabelOnThePRIsRemovedOrWarnedAbout'
+expect: --- FAIL: TestOnlyALabelOnThePRIsRemovedOrWarnedAbout/the_answer_is_undrained
+why:    a labels answer from a descendant holding gh's pipe is believed, so a label the PR really carries can be skipped and left standing beside the new one
+--- old
+	r := sh(p.Repo, "gh", "pr", "view", num, "--json", "labels")
+	// Drained too: Out is read, and a descendant's bytes in it would be believed.
+	if !r.Runnable || r.Code != 0 || !r.Drained {
+--- new
+	r := sh(p.Repo, "gh", "pr", "view", num, "--json", "labels")
+	// Drained too: Out is read, and a descendant's bytes in it would be believed.
+	if !r.Runnable || r.Code != 0 {
