@@ -824,6 +824,8 @@ var runLevelFields = map[string]string{
 	"sizing_excluded":    "plan",
 	"tier_executed":      "finish",
 	"escalations":        "finish",
+	// Read by report.Risk, which picks the PR's risk label from it.
+	"inputs": "plan",
 }
 
 // synthesized is the owner for a key load() BUILDS rather than reads off a row, so no row

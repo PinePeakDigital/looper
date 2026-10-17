@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts$'
+expect: --- FAIL:
+why:    report.Risk reads the plan's inputs, so inputs on a row whose phase does not own it must make the run unreadable; accepted, a plan's all-false inputs answer risk:low beside a later row saying attacker_reachable.
+--- old
+	"inputs": "plan",
+--- new
+	"inputs-not-owned": "plan",
