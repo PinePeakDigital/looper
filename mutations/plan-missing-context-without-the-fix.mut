@@ -1,6 +1,6 @@
 target: internal/plan/plan.go
 verify: go test ./internal/plan/ -count=1 -run 'TestUsageAndInputErrorsExitAsThePythonDid'
-expect: --- FAIL:
+expect: --- FAIL: TestUsageAndInputErrorsExitAsThePythonDid/context_file_missing
 why:    a missing context file is reported without saying to run looper context first, so the orchestrator is told what broke but not how to fix it
 --- old
 			fmt.Fprintf(errOut, "looper plan: cannot read the context file (%v). Run looper context first "+

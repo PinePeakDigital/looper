@@ -612,7 +612,8 @@ It prints the plan as JSON (`json.dumps(indent=2)`, byte for byte) and the Step 
 any, on stderr, routed to `ao report --checkpoint` under `AO_SESSION_ID`. Unless `--dry-run`, it
 then records the plan row and prints the run_id on the last line. The context is read from
 `--context`, or stdin. The answers take `yes`, `y`, `true` or `1` in any case as yes, and
-anything else as no, as plan.py's did. It asks `gh` whether the branch has a PR and whether the
+anything else as no, as plan.py's did, except `--delta-logic`, which refuses anything else
+(see the divergences below). It asks `gh` whether the branch has a PR and whether the
 repo has any, `git` for the remote and the branch's largest changed file, and reads the threat
 model, the alarm and the record write in process: plan.py ran those as `~/.local/bin/looper`,
 and the branches it needed for a missing looper cannot happen here.

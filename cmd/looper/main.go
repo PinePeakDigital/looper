@@ -39,7 +39,7 @@ const usage = `usage: looper version
        looper learn {add,bump,prune} <file> [text] [--section dismissed|accepted] [--cap N]
        looper plan --model m --logic yes|no --behavioral-goal yes|no
                    --runtime-change yes|no --attacker-reachable yes|no
-                   [--spec-artifact yes|no] [--context f] [--dry-run]
+                   [--spec-artifact yes|no] [--delta-logic yes|no] [--context f] [--dry-run]
 
 push-check writes the decision as JSON to stdout and nothing else. stderr carries a
 note when the report check could not be run at all, or when no row for the run was

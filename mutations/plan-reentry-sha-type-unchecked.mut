@@ -1,0 +1,10 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAWrongReEntryFieldIsAnError'
+expect: --- FAIL: TestAWrongReEntryFieldIsAnError/the_reviewed_sha_is_a_number
+why:    a last_reviewed_sha that is not a string is planned as if it were absent, as plan.py did, instead of being refused like every other mistyped context field
+--- old
+	if c.lastReviewed, err = str("last_reviewed_sha"); err != nil {
+		return c, err
+	}
+--- new
+	c.lastReviewed, _ = str("last_reviewed_sha")

@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestEveryDocumentedDeltaAnswerIsRead'
+expect: --- FAIL: TestEveryDocumentedDeltaAnswerIsRead/false
+why:    the strict --delta-logic parse accepts only "no", so the n, false and 0 spellings the README promises become usage errors
+--- old
+	case "no", "n", "false", "0":
+--- new
+	case "no":

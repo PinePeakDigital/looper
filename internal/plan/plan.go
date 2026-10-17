@@ -332,7 +332,8 @@ func build(c contextJSON, a answers) obj {
 	gates := obj{}
 	set := func(k string, g obj) { gates = append(gates, py.Field{Key: k, Val: g}) }
 
-	// --- tier floor: every threshold keys on the semantic count, the review surface.
+	// --- tier floor: every threshold keys on the semantic count, the review surface, except
+	// the fast-path re-entry, which keys on the raw delta since last_reviewed_sha.
 	var tier, tierReason string
 	switch {
 	case c.fastBySize && !a.logic:

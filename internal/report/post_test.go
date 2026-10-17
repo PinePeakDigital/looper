@@ -1123,11 +1123,16 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 					t.Errorf("with the labels unreadable, the failed removal of %s was silent: %q", l, diag.String())
 				}
 			}
-			if !strings.Contains(diag.String(), "the PR's labels") {
-				t.Errorf("the labels read failed without saying so: %q", diag.String())
-			}
-			if name == "the read fails" && !strings.Contains(diag.String(), "every removal is tried: HTTP 502") {
-				t.Errorf("the failed labels read did not say why: %q", diag.String())
+			// Each cause names its own diag: a read that failed or was not drained "could not be
+			// read"; an answer gh gave but that is not a labels list "did not answer as" one.
+			why := map[string]string{
+				"the read fails":          "the PR's labels could not be read, so every removal is tried: HTTP 502",
+				"the key is missing":      "the PR's labels did not answer as a labels list",
+				"the answer is not JSON":  "the PR's labels did not answer as a labels list",
+				"the answer is undrained": "the PR's labels could not be read, so every removal is tried",
+			}[name]
+			if !strings.Contains(diag.String(), why) {
+				t.Errorf("the labels read failed without saying why (want %q): %q", why, diag.String())
 			}
 		})
 	}

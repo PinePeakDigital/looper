@@ -312,9 +312,10 @@ func TestAReEntryIsSizedAgainstTheDelta(t *testing.T) {
 				}
 				return
 			}
-			// The record of what is being diverged from: plan.py had no such flag.
+			// The record of what is being diverged from: plan.py had no such flag. The golden is
+			// looper's own refusal from before the change, not plan.py's argparse text.
 			if !strings.HasPrefix(py, "exit=2\n") || !strings.Contains(py, "delta-logic") {
-				t.Fatalf("the frozen oracle no longer records plan.py refusing --delta-logic:\n%s", py)
+				t.Fatalf("the frozen golden no longer records the old looper refusing --delta-logic:\n%s", py)
 			}
 			want := append([]string{"exit=0\n", `"tier_floor": "` + c.floor + `"`}, c.want...)
 			for _, s := range want {
