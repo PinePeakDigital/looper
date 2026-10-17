@@ -1,8 +1,0 @@
-target: internal/gather/gather.go
-verify: go test ./internal/gather/ -count=1 -run 'TestAStalledProbeIsGivenUp'
-expect: --- FAIL:
-why:    a gh whose credential helper outlives it holds looper context until the helper exits
---- old
-	cmd.WaitDelay = time.Second
---- new
-	_ = time.Second

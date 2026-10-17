@@ -9,7 +9,6 @@ package record
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -18,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -26,6 +24,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // DefaultAgentCap is runlog.DEFAULT_AGENT_CAP: a ceiling, not a target. review-stats derives
@@ -220,13 +220,11 @@ func newRunID() string {
 
 // git is runlog.git(): stdout, stripped, or "" on any failure.
 func git(args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
-	if err != nil {
+	r := run.Run("", 10*time.Second, "git", args...)
+	if r.Error != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(r.Out))
 }
 
 // repoID is a repo's identity across worktrees: its common dir's path.

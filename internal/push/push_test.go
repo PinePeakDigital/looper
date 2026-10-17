@@ -582,6 +582,25 @@ func TestShFailsClosedWhenItCannotRun(t *testing.T) {
 		}
 	})
 
+	// A gh that exits cleanly while its credential helper holds the pipes: the "42" may be
+	// the helper's bytes, so this cannot tell, and the call returns at run's drain bound
+	// instead of when the helper exits. Before the shared runner it waited the whole 8s and
+	// answered (0, "42").
+	t.Run("a descendant that holds the pipes", func(t *testing.T) {
+		shim := filepath.Join(dir, "lingers")
+		if err := os.WriteFile(shim, []byte("#!/bin/sh\nsleep 8 &\necho 42\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		rc, out := sh(dir, shim)
+		if took := time.Since(start); took > 4*time.Second {
+			t.Errorf("sh took %s with a lingering descendant", took)
+		}
+		if rc != 1 || out != "" {
+			t.Errorf("sh = (%d, %q), want (1, \"\") — the output may be the descendant's", rc, out)
+		}
+	})
+
 	// And the GREEN side on the same channel: a command that runs and succeeds must not be
 	// swept up by any of the above. Without this, `return 1` unconditionally would pass.
 	t.Run("a command that works still reports zero", func(t *testing.T) {

@@ -17,16 +17,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/py"
 	"github.com/pinepeakdigital/looper/internal/record"
+	runner "github.com/pinepeakdigital/looper/internal/run"
 	"github.com/pinepeakdigital/looper/internal/stats"
 )
 
@@ -45,32 +44,20 @@ var gitTimeout, ghTimeout = 15 * time.Second, 20 * time.Second
 
 // call runs a command with a timeout and returns its exit status and raw output. A command
 // that cannot start, or outlives its timeout, is exit 1 with why as stderr, as subprocess
-// raised them. A child killed by a signal is minus the signal, as Python's returncode is.
+// raised them: a missing binary first, since subprocess raises that before any timeout. A
+// child killed by a signal is minus the signal, as Python's returncode is.
 func call(timeout time.Duration, name string, args ...string) (int, []byte, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	// Without this a killed child's grandchild — a credential helper under gh — keeps the
-	// pipes open and Run waits for it past the timeout, as internal/push and report know.
-	cmd.WaitDelay = time.Second
-	var o, e bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &o, &e
-	err := cmd.Run()
-	if ctx.Err() != nil {
+	r := runner.Run("", timeout, name, args...)
+	switch {
+	case !r.Started && !errors.Is(r.Error, context.DeadlineExceeded):
+		return 1, nil, r.Error.Error()
+	case r.Expired:
 		return 1, nil, fmt.Sprintf("Command '%s' timed out after %d seconds", pyList(name, args), int(timeout.Seconds()))
 	}
-	// ErrWaitDelay without a timeout is a child that exited — success or not — while a
-	// grandchild still held its pipes: its status and what it printed stand. plan.py waited
-	// for that grandchild up to the timeout; this waits WaitDelay.
-	var ee *exec.ExitError
-	if err != nil && !errors.As(err, &ee) && !errors.Is(err, exec.ErrWaitDelay) {
-		return 1, nil, err.Error()
-	}
-	code := cmd.ProcessState.ExitCode()
-	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		code = -int(ws.Signal())
-	}
-	return code, o.Bytes(), e.String()
+	// A child that exited while a grandchild still held its pipes (Drained false) has still
+	// answered: its status and what it printed stand. plan.py waited for that grandchild up
+	// to the timeout; run waits its drain bound.
+	return r.Code, r.Out, string(r.Err)
 }
 
 // run is plan.py's run(): call, with stdout and stderr decoded as text mode and stripped.

@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestShFailsClosedWhenItCannotRun/a_descendant'
+expect: want (1, "")
+why:    a gh that exited cleanly while its credential helper held the pipes answers with whatever the helper printed, and the gate reads a PR state that gh never reported
+--- old
+	case !r.Drained:
+		return 1, ""
+--- new
+	case false:
+		return 1, ""
