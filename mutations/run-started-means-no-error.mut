@@ -1,0 +1,8 @@
+target: internal/run/run.go
+verify: go test ./internal/run/ -count=1 -run 'TestHowACommandEnded'
+expect: --- FAIL:
+why:    a command that ran and failed reads as never started, so report advises installing a gh that is installed and push cannot tell a refusal from a missing binary
+--- old
+	r := Result{Started: cmd.Process != nil, Expired: ctx.Err() != nil,
+--- new
+	r := Result{Started: err == nil, Expired: ctx.Err() != nil,

@@ -5,8 +5,8 @@ why:    a refused run id and an unrunnable probe are different facts. The id was
 --- old
 		return false, true
 	}
-	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
+	needles := append([]string{marker}, Fingerprint(r)...)
 --- new
 		return false, false
 	}
-	needles := append([]string{fmt.Sprintf(reportMarker, runID)}, Fingerprint(r)...)
+	needles := append([]string{marker}, Fingerprint(r)...)

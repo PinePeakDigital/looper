@@ -147,11 +147,11 @@ jobs:
           # count starts measuring the wrong thing.
           c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
           [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
-          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence; do
+          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence TestTheUnfinishedRunDivergence; do
             grep -q -- "--- PASS: $d" push.log || {
               echo "enumerated divergence $d did not pass"; cat push.log; exit 1; }
           done
-          echo "$c push parity subtests compared against the frozen oracle, plus 2 enumerated divergences"
+          echo "$c push parity subtests compared against the frozen oracle, plus 3 enumerated divergences"
 
       # internal/report is the same: the whole report body against what pr-report.py
       # rendered before it was retired, frozen under internal/report/testdata/oracle.
@@ -181,11 +181,10 @@ jobs:
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
             echo "$c $t subtests compared against the frozen oracle"
           done
-          # The divergences with no subtests of their own — FOUR, not the two an earlier
-          # version of this comment claimed while looping over four names. Each is the only
+          # The divergences with no subtests of their own, one name each. Each is the only
           # thing asserting which side owns which answer, so none can be left to an aggregate.
           for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
-                   TestThePushGateFindsWhatThisPackageWrites TestTheRunIDGuardMatchesThePushGates; do
+                   TestThePushGateFindsWhatThisPackageWrites; do
             grep -q -- "--- PASS: $d" report.log || {
               echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
           done
@@ -404,7 +403,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 372 ] || { echo "only $n mutations, expected at least 372 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 382 ] || { echo "only $n mutations, expected at least 382 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

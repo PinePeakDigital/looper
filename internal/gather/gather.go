@@ -6,7 +6,6 @@ package gather
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pinepeakdigital/looper/internal/py"
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 type obj = py.Obj
@@ -48,15 +48,10 @@ func out(name string, args ...string) (string, bool) {
 var netTimeout = 30 * time.Second
 
 // probe is the stdout of a call that reaches the network, whatever its exit, as `$(...)` was:
-// cut off at netTimeout, and at a second after the child exits when a grandchild (a credential
-// helper) still holds its pipes.
+// cut off at netTimeout, and at run's drain bound when a grandchild (a credential helper)
+// still holds its pipes.
 func probe(name string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), netTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.WaitDelay = time.Second
-	o, _ := cmd.Output()
-	return strings.TrimRight(string(o), "\n")
+	return strings.TrimRight(string(run.Run("", netTimeout, name, args...).Out), "\n")
 }
 
 // sum is `awk '{a+=$1; d+=$2} END {print a+d+0}'` over numstat: binary files' "-" count 0.

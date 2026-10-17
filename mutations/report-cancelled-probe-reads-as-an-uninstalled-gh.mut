@@ -5,4 +5,4 @@ why:    with NO deadline arm at all, a budget that expires in the LookPath-plus-
 --- old
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 --- new
-	case false:
+	case false && errors.Is(err, context.DeadlineExceeded), false && errors.Is(err, context.Canceled):

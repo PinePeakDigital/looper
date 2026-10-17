@@ -9,7 +9,6 @@ package record
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -18,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -26,6 +24,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/pinepeakdigital/looper/internal/evidence"
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // DefaultAgentCap is runlog.DEFAULT_AGENT_CAP: a ceiling, not a target. review-stats derives
@@ -82,24 +83,11 @@ func TailLines() int {
 // or `check` reports no open run and `finish` skips its plan-based refusals.
 func loadRaw(path string, limit int) (runStore, error) {
 	s := runStore{runs: map[string]map[string]any{}}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+	lines, _, err := storeLines(path, limit)
 	if err != nil {
 		return s, fail("runlog: cannot read the run store: %v", err)
 	}
-	// Python's text mode splits on \n, \r\n AND a bare \r, so a bare \r ends a record there too.
-	text := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n")
-	lines := strings.SplitAfter(text, "\n")
-	if n := len(lines); n > 0 && lines[n-1] == "" {
-		lines = lines[:n-1]
-	}
-	if limit > 0 && len(lines) > limit {
-		lines = lines[len(lines)-limit:]
-	}
 	for _, line := range lines {
-		line = pyStrip(line) // str.strip(): a trailing \x1c would otherwise fail atEOF and drop the row
 		if line == "" {
 			continue
 		}
@@ -233,13 +221,11 @@ func newRunID() string {
 
 // git is runlog.git(): stdout, stripped, or "" on any failure.
 func git(args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
-	if err != nil {
+	r := run.Run("", 10*time.Second, "git", args...)
+	if r.Error != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(r.Out))
 }
 
 // repoID is a repo's identity across worktrees: its common dir's path.
@@ -1307,11 +1293,8 @@ func cmdPending(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	files, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*.md"))
-	sort.Strings(files)
-	for _, f := range files {
-		base := filepath.Base(f)
-		rid := strings.TrimSuffix(strings.TrimPrefix(base, "review-loop-pending-report."), ".md")
+	for _, p := range evidence.PendingReports(common) {
+		f, rid := p.Path, p.ID
 		run := s.get(rid)
 		switch {
 		case run == nil:
