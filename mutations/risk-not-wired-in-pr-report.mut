@@ -1,0 +1,8 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPrReportPostDefersAndReportsWhereTo$'
+expect: --- FAIL:
+why:    pr-report derives the risk from the record it already read; without the wiring every unit test still passes and no PR is ever risk-labelled.
+--- old
+		Risk: report.Risk(r.Plan), Body: body,
+--- new
+		Body: body,

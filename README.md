@@ -276,6 +276,15 @@ landed. Every local copy carries a note saying the label is still owed, the succ
 copy included; that is what the Python wrote and Step 0c reads, and narrowing it to the
 deferred case would be a divergence rather than a fix.
 
+`-label` also applies a risk label from the plan's recorded inputs, the change's blast radius
+beside the review's completeness: `risk:high` when a changed path is attacker-reachable,
+`risk:medium` when logic or runtime behaviour changes, `risk:low` when the plan recorded all
+three as false. The other two are removed. When the inputs cannot say (absent or unreadable,
+no readable `attacker_reachable`, or `attacker_reachable` false with `logic` or
+`runtime_behavior_change` unreadable and neither true), every risk label is removed rather than one left standing from an
+earlier run, and the local copy's note says so; when they can, the note carries the commands
+Step 0c needs to apply it. Not in the retired Python.
+
 Parity with `pr-report.py`, now retired, is gated against what it rendered for each
 fixture before it went, frozen under `internal/report/testdata/oracle` — byte for byte,
 and a missing frozen file fails the test rather than skipping it. The fixtures cover the

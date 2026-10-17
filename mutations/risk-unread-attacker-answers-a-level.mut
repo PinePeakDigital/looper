@@ -1,0 +1,12 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestRisk$'
+expect: --- FAIL:
+why:    attacker_reachable is the input that could have made the answer high, so an absent or unreadable one must answer no label; reading it as false answers medium or low.
+--- old
+	case attacker == nil:
+		return ""
+	case *attacker:
+--- new
+	case attacker == nil && false:
+		return ""
+	case attacker != nil && *attacker:

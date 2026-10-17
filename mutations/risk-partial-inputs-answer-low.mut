@@ -1,0 +1,8 @@
+target: internal/report/report.go
+verify: go test ./internal/report/ -count=1 -run 'TestRisk$'
+expect: --- FAIL:
+why:    low claims the plan said no logic and no runtime change; a plan missing either did not say so.
+--- old
+	case logic != nil && runtime != nil:
+--- new
+	case runtime != nil:

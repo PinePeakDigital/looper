@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestPostMovesTheRiskLabel$'
+expect: --- FAIL:
+why:    each family removes only its own siblings; removing from the wrong family leaves two risk labels standing.
+--- old
+	for _, l := range family {
+--- new
+	for _, l := range Labels {

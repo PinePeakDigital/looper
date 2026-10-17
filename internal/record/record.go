@@ -119,6 +119,10 @@ type Plan struct {
 	ChangedLines      *int   `json:"changed_lines"`
 	SemanticLines     *int   `json:"semantic_lines"`
 	SizingExcluded    string `json:"sizing_excluded"`
+	// Inputs is the booleans the plan was given, raw: read only by report.Risk, which answers
+	// no label for anything it cannot read, so a malformed value here must not make the whole
+	// run undecodable.
+	Inputs json.RawMessage `json:"inputs"`
 }
 
 // Cycle is one pass of the loop. Applied is a pointer because ITS absence is load-bearing:
@@ -447,7 +451,7 @@ func LoadStore(path string, limit int) (*Store, error) {
 			r.Cycles = append(r.Cycles, c)
 		case "plan":
 			if err := foldedKeys([]byte(line), "agent_cap", "gates", "orchestrator_model",
-				"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded"); err != nil {
+				"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded", "inputs"); err != nil {
 				r.setErr(lineNo, phase, err)
 				continue
 			}
@@ -755,6 +759,8 @@ var runLevelFields = map[string]string{
 	"sizing_excluded":    "plan",
 	"tier_executed":      "finish",
 	"escalations":        "finish",
+	// Read by report.Risk, which picks the PR's risk label from it.
+	"inputs": "plan",
 }
 
 // synthesized is the owner for a key load() BUILDS rather than reads off a row, so no row

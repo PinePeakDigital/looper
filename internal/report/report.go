@@ -27,8 +27,9 @@ import (
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
-// Label is the at-a-glance signal, so a reader need not open a comment to learn whether the
-// review finished. The vocabulary is runlog's derived one, exactly.
+// Label is one at-a-glance signal on the PR, so a reader need not open a comment. Two
+// families use it: Labels (review:*), whose vocabulary is runlog's derived one exactly, and
+// Risks (risk:*).
 type Label struct {
 	Name, Colour, Description string
 }
@@ -41,6 +42,51 @@ var Labels = map[string]Label{
 	"capped":    {"review:capped", "fbca04", "review-loop hit its agent budget with findings outstanding"},
 	"halted":    {"review:halted", "d93f0b", "review-loop stopped with findings outstanding"},
 	"unknown":   {"review:unknown", "b60205", "review-loop recorded no cycles — completeness unknown"},
+}
+
+// Risks is keyed by Risk's answer: the change's blast radius, from the plan's inputs. It is
+// orthogonal to Labels, which says how complete the review was, not what a miss would cost.
+var Risks = map[string]Label{
+	"high":   {"risk:high", "d93f0b", "a changed path is attacker-reachable"},
+	"medium": {"risk:medium", "fbca04", "program logic or runtime behaviour changes"},
+	"low":    {"risk:low", "0e8a16", "no logic or runtime change (docs, comments, config values)"},
+}
+
+// Risk is "high" when any changed path is attacker-reachable, "medium" when logic or runtime
+// behaviour changes, "low" when the plan said none of the three, and "" when it cannot tell.
+// An absent or unreadable attacker_reachable answers "", never a lower level: it is the one
+// input that could have made the answer high.
+//
+// Each key is read exactly and on its own. A struct decode would fold `ATTACKER_REACHABLE`
+// onto the field (the forgery record.foldedKeys refuses elsewhere), and one bad neighbour
+// such as `"logic":"yes"` would fail the whole decode and drop a readable attacker_reachable.
+func Risk(p *record.Plan) string {
+	if p == nil {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(p.Inputs, &m) != nil {
+		return ""
+	}
+	in := func(k string) *bool {
+		var b bool
+		if raw, ok := m[k]; !ok || string(raw) == "null" || json.Unmarshal(raw, &b) != nil {
+			return nil
+		}
+		return &b
+	}
+	attacker, logic, runtime := in("attacker_reachable"), in("logic"), in("runtime_behavior_change")
+	switch {
+	case attacker == nil:
+		return ""
+	case *attacker:
+		return "high"
+	case logic != nil && *logic, runtime != nil && *runtime:
+		return "medium"
+	case logic != nil && runtime != nil:
+		return "low"
+	}
+	return ""
 }
 
 // cell flattens one free-text value for a markdown table cell or bullet.

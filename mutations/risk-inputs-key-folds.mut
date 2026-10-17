@@ -1,0 +1,8 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestLoadsStructuralRulesThatNothingElseAsserts$'
+expect: --- FAIL:
+why:    a key differing from inputs only in case folds onto Plan.Inputs under encoding/json while the plan writer never writes it; refused like every other folded key.
+--- old
+"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded", "inputs"); err != nil {
+--- new
+"tier_floor", "changed_lines", "semantic_lines", "sizing_excluded"); err != nil {

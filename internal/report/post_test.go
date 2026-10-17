@@ -1,6 +1,7 @@
 package report
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -294,10 +295,152 @@ func TestALabelFailureDoesNotFailThePost(t *testing.T) {
 	}
 }
 
+// Risk is blast radius from the plan's inputs. attacker_reachable unread answers no label,
+// never a lower one: it is the input that could have made it high.
+func TestRisk(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":true}`:  "high",
+		`{"logic":true,"runtime_behavior_change":false,"attacker_reachable":false}`:  "medium",
+		`{"logic":false,"runtime_behavior_change":true,"attacker_reachable":false}`:  "medium",
+		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":false}`: "low",
+		`{"logic":true,"runtime_behavior_change":true}`:                              "",
+		`{"logic":false,"attacker_reachable":false}`:                                 "",
+		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":"no"}`:  "",
+		`{"runtime_behavior_change":false,"attacker_reachable":false}`:               "",
+		`{"logic":false,"runtime_behavior_change":false,"attacker_reachable":null}`:  "",
+		// One bad neighbour must not drop a readable attacker_reachable.
+		`{"logic":"yes","attacker_reachable":true}`: "high",
+		// Exact keys: a case-folded spelling is not the key.
+		`{"logic":false,"runtime_behavior_change":false,"ATTACKER_REACHABLE":true,"attacker_reachable":false}`: "low",
+		`{"logic":false,"runtime_behavior_change":false,"Attacker_Reachable":false}`:                           "",
+		`null`: "",
+		`[]`:   "",
+		`"x"`:  "",
+		``:     "",
+	} {
+		if got := Risk(&record.Plan{Inputs: json.RawMessage(in)}); got != want {
+			t.Errorf("Risk(%s) = %q, want %q", in, got, want)
+		}
+	}
+	if got := Risk(nil); got != "" {
+		t.Errorf("Risk(nil) = %q", got)
+	}
+}
+
+// The risk label moves the way the review label does: its own family removed, the review
+// family untouched by it.
+func TestPostMovesTheRiskLabel(t *testing.T) {
+	dir := gitRepo(t)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	var diag strings.Builder
+	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "capped", Risk: "medium", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	c := calls(t, log)
+	for _, want := range []string{"label create risk:medium --color fbca04",
+		"pr edit 9 --add-label risk:medium", "pr edit 9 --remove-label risk:high",
+		"pr edit 9 --remove-label risk:low", "pr edit 9 --add-label review:capped"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing %q:\n%s", want, c)
+		}
+	}
+	if strings.Contains(c, "--remove-label risk:medium") {
+		t.Errorf("the risk label it just applied was also removed:\n%s", c)
+	}
+}
+
+// With no risk answer every risk label is removed and none added: a risk:low left by an
+// earlier run would claim a safety this run's plan cannot vouch for. Said on stderr too.
+func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
+	dir := gitRepo(t)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	var diag strings.Builder
+	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	c := calls(t, log)
+	for _, l := range []string{"risk:high", "risk:medium", "risk:low"} {
+		if !strings.Contains(c, "pr edit 9 --remove-label "+l) {
+			t.Errorf("%s was not removed with no risk answer:\n%s", l, c)
+		}
+		if strings.Contains(c, "--add-label "+l) || strings.Contains(c, "label create "+l) {
+			t.Errorf("%s was applied with no risk answer:\n%s", l, c)
+		}
+	}
+	if !strings.Contains(diag.String(), "no risk label") {
+		t.Errorf("stderr does not say no risk label was applied: %q", diag.String())
+	}
+	// A failed removal there leaves one stale label, not two, and says so.
+	shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; *"--remove-label risk:low"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	diag.Reset()
+	if _, err := Post(PostParams{Repo: dir, RunID: "post02", Branch: "feat/x",
+		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	if !strings.Contains(diag.String(), "label risk:low not removed, so a stale level may still stand: HTTP 502") {
+		t.Errorf("a failed stale-label removal was not reported as one: %q", diag.String())
+	}
+}
+
+// The comment-failed path labels too, risk included, and keeps the risk line in the note.
+func TestACommentFailureStillMovesTheRiskLabel(t *testing.T) {
+	dir := gitRepo(t)
+	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; "pr comment"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	path, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
+		Convergence: "capped", Risk: "high", Body: postBody, Label: true})
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	c := calls(t, log)
+	for _, want := range []string{"pr edit 9 --add-label risk:high", "pr edit 9 --add-label review:capped"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("%q missing when the comment failed:\n%s", want, c)
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "label risk:high also owed") {
+		t.Errorf("the kept report does not owe the risk label:\n%s", b)
+	}
+}
+
+// A deferred report names the risk label still owed, so Step 0c applies it too.
+func TestThePendingNoteNamesTheRiskLabel(t *testing.T) {
+	dir := gitRepo(t)
+	path, err := WritePending(dir, "abc123", "halted", "high", postBody)
+	if err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"gh label create risk:high --color d93f0b", "--add-label risk:high"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the pending note does not carry %q:\n%s", want, b)
+		}
+	}
+	// And with no risk answer the note says to remove, never to add.
+	path, err = WritePending(dir, "abc124", "halted", "", postBody)
+	if err != nil {
+		t.Fatalf("WritePending: %v", err)
+	}
+	if b, err = os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "no risk label for run abc124") || strings.Contains(string(b), "--add-label risk:") {
+		t.Errorf("the no-risk note is wrong:\n%s", b)
+	}
+}
+
 func TestWritePending(t *testing.T) {
 	t.Run("the path is per-run, under the git common dir", func(t *testing.T) {
 		dir := gitRepo(t)
-		path, err := WritePending(dir, "abc123", "halted", postBody)
+		path, err := WritePending(dir, "abc123", "halted", "", postBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -318,7 +461,7 @@ func TestWritePending(t *testing.T) {
 		dir := gitRepo(t)
 		// The id reaches a path here, and it arrives from -run-id. Refused rather than
 		// cleaned: a cleaned id would write a file the gate then cannot find.
-		if _, err := WritePending(dir, "../../../../tmp/evil", "halted", postBody); err == nil {
+		if _, err := WritePending(dir, "../../../../tmp/evil", "halted", "", postBody); err == nil {
 			t.Error("a traversing run id was accepted")
 		}
 		// And nothing was written ANYWHERE under the repo. The earlier version of this
@@ -342,13 +485,13 @@ func TestWritePending(t *testing.T) {
 	t.Run("no git dir is an error, not a silent drop", func(t *testing.T) {
 		// A report with nowhere to go is the one outcome worth failing on — the caller must
 		// not be told it was kept.
-		if _, err := WritePending(t.TempDir(), "abc123", "halted", postBody); err == nil {
+		if _, err := WritePending(t.TempDir(), "abc123", "halted", "", postBody); err == nil {
 			t.Error("a non-repo was accepted")
 		}
 	})
 	t.Run("the label-owed note defaults to unknown", func(t *testing.T) {
 		dir := gitRepo(t)
-		path, err := WritePending(dir, "abc123", "", postBody)
+		path, err := WritePending(dir, "abc123", "", "", postBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -414,7 +557,7 @@ func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WritePending(dir, id, conv, body); err != nil {
+	if _, err := WritePending(dir, id, conv, "", body); err != nil {
 		t.Fatal(err)
 	}
 	// No gh on PATH, so the probe falls through to the pending file this just wrote — which
@@ -427,7 +570,7 @@ func TestThePushGateFindsWhatThisPackageWrites(t *testing.T) {
 	// And it is not satisfied by SOME report. Checked by putting THIS body at another run's
 	// pending path, so the gate has a file to read and must reject it on the marker — not on
 	// the file being absent, which is what a bare second call would have measured.
-	if _, err := WritePending(dir, "fp02", conv, body); err != nil {
+	if _, err := WritePending(dir, "fp02", conv, "", body); err != nil {
 		t.Fatal(err)
 	}
 	if push.ReportLanded("fp02", r, dir) {
@@ -493,7 +636,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// Two differently-worded errors, and only the second was covered. A regression that
 		// collapsed them — dropping the Runnable check — would have gone unnoticed.
 		noGit(t)
-		if _, err := WritePending(t.TempDir(), "abc123", "halted", postBody); err == nil ||
+		if _, err := WritePending(t.TempDir(), "abc123", "halted", "", postBody); err == nil ||
 			!strings.Contains(err.Error(), "git could not be run") {
 			t.Errorf("want a git-unrunnable error, got %v", err)
 		}

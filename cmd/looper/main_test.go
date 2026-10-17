@@ -449,7 +449,7 @@ func prReportStore(t *testing.T, id string) string {
 	}
 	q := string(enc)
 	rows := []string{
-		`{"run_id":` + q + `,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","gates":{"evidence":{"planned":"run"}}}`,
+		`{"run_id":` + q + `,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8,"orchestrator_model":"opus","inputs":{"logic":true,"runtime_behavior_change":false,"attacker_reachable":false},"gates":{"evidence":{"planned":"run"}}}`,
 		`{"run_id":` + q + `,"phase":"cycle","n":1,"applied":3,"agents":9}`,
 		`{"run_id":` + q + `,"phase":"finish","outcome":"cycle-limit","executed":{"evidence":{"status":"done"}}}`,
 	}
@@ -743,6 +743,10 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 	// disclosure in the body cannot disagree, because both come off the same read.
 	if !strings.Contains(string(b), "label review:capped still owed") {
 		t.Errorf("the label-owed note does not carry the derived convergence:\n%s", b)
+	}
+	// And the risk off the plan's inputs, from the same record.
+	if !strings.Contains(string(b), "--add-label risk:medium") {
+		t.Errorf("the pending note does not owe the plan's risk label:\n%s", b)
 	}
 }
 

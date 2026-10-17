@@ -331,7 +331,7 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	runID := fs.String("run-id", "", "the run to render from the record (required)")
 	findingsFile := fs.String("findings-file", "", "the orchestrator's narrative: a path, or \"-\" for stdin; stdin is read only then")
 	post := fs.Bool("post", false, "comment on this branch's PR, or keep the report for Step 0c")
-	label := fs.Bool("label", false, "also apply the review:<convergence> label")
+	label := fs.Bool("label", false, "also apply the review:<convergence> label, and the risk:<level> label from the plan's inputs (removing any risk label when they cannot say)")
 	repo := fs.String("repo", ".", "the repo to run git and gh in")
 	branch := fs.String("branch", "", "the branch to find the PR for (default: git's current branch)")
 	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
@@ -424,7 +424,7 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 	_, err = report.Post(report.PostParams{
 		Repo: *repo, RunID: *runID, Branch: *branch, Convergence: conv,
-		Body: body, Label: *label, Diag: errOut,
+		Risk: report.Risk(r.Plan), Body: body, Label: *label, Diag: errOut,
 	})
 	return err
 }
