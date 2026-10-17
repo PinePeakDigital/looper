@@ -368,6 +368,7 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 	rows := []string{
 		`{"run_id":"pc3","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"pc3","phase":"cycle","n":1,"applied":3,"agents":9}`,
+		`{"run_id":"pc3","phase":"finish","outcome":"clean"}`,
 	}
 	if err := os.WriteFile(store, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)

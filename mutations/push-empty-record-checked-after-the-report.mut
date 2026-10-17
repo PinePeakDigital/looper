@@ -7,6 +7,6 @@ why:    ordering, which is behaviour here because Decide returns on the FIRST fa
 		return false, "no readable record for this run — convergence, the outcome and the " +
 			"report fingerprint would all come off an empty record; check -store and -run-id"
 	}
-	for _, bad := range BrokenOutcomes {
+	if s.Unfinished {
 --- new
-	for _, bad := range BrokenOutcomes {
+	if s.Unfinished {

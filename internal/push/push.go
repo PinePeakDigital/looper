@@ -74,6 +74,11 @@ type State struct {
 	// the store the cheapest way to make this gate say yes, which is the one thing it exists
 	// to prevent.
 	NoRecord bool
+	// Unfinished is true when the run has a record but no finish row. Step 14 closes the
+	// record before it posts the report or asks this, so an unfinished run here skipped a
+	// step — and the report it posted rendered no outcome and no tier. Blocks; a DELIBERATE
+	// DIVERGENCE from push-check.py, which never looked. See TestTheUnfinishedRunDivergence.
+	Unfinished bool
 }
 
 // Decide answers push/no-push with the reason. First failing check wins, mirroring SKILL.md
@@ -85,6 +90,10 @@ func Decide(s State) (bool, string) {
 	if s.NoRecord {
 		return false, "no readable record for this run — convergence, the outcome and the " +
 			"report fingerprint would all come off an empty record; check -store and -run-id"
+	}
+	if s.Unfinished {
+		return false, "this run was never finished — close it with `looper record finish` " +
+			"before asking again"
 	}
 	for _, bad := range BrokenOutcomes {
 		if s.Outcome == bad {
@@ -445,6 +454,7 @@ func Check(p CheckParams) (Result, error) {
 		Outcome:        outcome,
 		Unreported:     unreported,
 		NoRecord:       noRecord,
+		Unfinished:     !noRecord && r.Finish == nil,
 	})
 	res := Result{Push: push, Reason: reason, Convergence: conv}
 	if disclose != "" {
