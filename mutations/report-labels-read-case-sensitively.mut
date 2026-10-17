@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestOnlyALabelOnThePRIsRemovedOrWarnedAbout'
+expect: --- FAIL: TestOnlyALabelOnThePRIsRemovedOrWarnedAbout/a_carried_label_in_another_case
+why:    GitHub label names are case-insensitive, so a PR carrying Risk:Low carries risk:low; read case-sensitively, it reads as absent, its removal is skipped, and the stale level stands beside the new one with nothing said
+--- old
+		on[strings.ToLower(l.Name)] = true
+--- new
+		on[l.Name] = true

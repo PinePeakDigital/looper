@@ -643,7 +643,7 @@ The divergences, each with its own test:
   delta answer is recorded in the plan row's inputs as `delta_logic`, only when given, so the
   record shows why a floor was lowered (`TestTheDeltaAnswerLeavesTheRiskAlone`). Without
   `--delta-logic` nothing is lowered and the plan is byte for byte what it was; with a false,
-  `null` or missing verdict, or `--delta-logic yes`, the floor is what plan.py's would be, and a
+  `null` or missing verdict, a `null` or missing `last_reviewed_sha`, or `--delta-logic yes`, the floor is what plan.py's would be, and a
   branch small enough on its own keeps plan.py's size reason. Because its "no" lowers the floor,
   `--delta-logic` takes only yes or no (`y`/`true`/`1`, `n`/`false`/`0`, any case); anything else
   is a usage error, exit 2, where plan.py's reading of its own flags would make a typo a "no"
