@@ -303,9 +303,11 @@ func TestPushCheckRefusesAnUnfinishedRun(t *testing.T) {
 		t.Errorf("an unfinished run was not refused as one: %q", out)
 	}
 	// A dead session's way out is abandon plus a fresh run, not a finish: a cycle-limit
-	// finish would push a tip its cycles only partly reviewed. Finish stays first.
+	// finish would push a tip its cycles only partly reviewed. Finish stays first. The
+	// placeholder is quoted and named as one: pasted bare, a shell reads <gates> as a redirect.
 	if !strings.Contains(got.Reason, "if the session that planned it is gone, run "+
-		"`looper record abandon --run-id pc4 --missing <gates>` and start a fresh run") ||
+		"`looper record abandon --run-id pc4 --missing '<gates>'`, with '<gates>' replaced by "+
+		"the planned gates not run and why, and start a fresh run") ||
 		strings.Index(got.Reason, "record finish") > strings.Index(got.Reason, "record abandon") {
 		t.Errorf("the refusal lacks the dead-session clause after finish: %q", got.Reason)
 	}

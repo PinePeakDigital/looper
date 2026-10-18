@@ -342,13 +342,14 @@ func build(c contextJSON, a answers) obj {
 		if excluded != "" {
 			tierReason += fmt.Sprintf(" (%d raw; excluded %s)", c.changed, excluded)
 		}
-	case c.fastByDelta && c.lastReviewed != nil && a.deltaLogicGiven && !a.deltaLogic:
+	case c.fastByDelta && orEmpty(c.lastReviewed) != "" && a.deltaLogicGiven && !a.deltaLogic:
 		// The fast-path re-entry: a follow-up after a clean exit is sized against what changed
 		// since the last reviewed sha, not the whole branch. plan.py never read the field, so
 		// a small follow-up on a big branch floored at full and `record finish` refused fast.
 		// `looper context` says true only when there is a reviewed sha to size against; the sha
 		// is checked here too, so a context that says otherwise cannot floor a delta measured
-		// against nothing. The logic question is the delta's own: the branch may well hold
+		// against nothing. An empty sha names no baseline either, and context's own test is
+		// `bool(last_reviewed)`, so it counts as absent. The logic question is the delta's own: the branch may well hold
 		// logic already reviewed.
 		tier = "fast"
 		tierReason = fmt.Sprintf("fast-path re-entry: %d raw lines since the last reviewed sha %s "+
