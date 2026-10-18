@@ -1171,7 +1171,7 @@ func cmdAbandon(s *sub, out io.Writer) error {
 	}
 	// The push refusal's dead-session advice prints `--missing '<gates>'`. Pasted unchanged
 	// it would record the placeholder as the missing gates, where the old unquoted form at
-	// least failed in the shell. Only the placeholder itself is refused, quoted or not.
+	// least failed in the shell. Only the placeholder itself is refused, bare or single-quoted.
 	if m := pyStrip(missing); m == "<gates>" || m == "'<gates>'" {
 		return fail("runlog: --missing is still the placeholder '<gates>' — replace it with the " +
 			"planned gates that were not run and why")
