@@ -663,6 +663,38 @@ func TestANonStringReasonIsRefused(t *testing.T) {
 	}
 }
 
+// A divergence added after the port: runlog.py recorded any non-blank --missing, but the push
+// refusal now prints `--missing '<gates>'`, and pasted unchanged that would record the
+// placeholder as the gates not run. The port refuses the placeholder itself, and only it.
+func TestThePlaceholderGatesAreRefused(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", "ph"}, &out, &errb); c != 0 {
+		t.Fatalf("plan: %d %s", c, errb.String())
+	}
+	for _, missing := range []string{"<gates>", " <gates>\n", "'<gates>'"} {
+		out.Reset()
+		errb.Reset()
+		c := Command([]string{"abandon", "--run-id", "ph", "--missing", missing}, &out, &errb)
+		if c != 1 || !strings.Contains(errb.String(), "placeholder") ||
+			!strings.Contains(errb.String(), "planned gates that were not run and why") {
+			t.Errorf("--missing %q: exit %d, stderr %q", missing, c, errb.String())
+		}
+	}
+	if b, _ := os.ReadFile(store); strings.Count(string(b), "\n") != 1 {
+		t.Errorf("a refused abandon wrote a row:\n%s", b)
+	}
+	// Narrow: a real answer that merely mentions the placeholder is still recorded.
+	errb.Reset()
+	if c := Command([]string{"abandon", "--run-id", "ph", "--missing", "agent_7: session died before <gates> ran"}, &out, &errb); c != 0 {
+		t.Errorf("a real --missing was refused: exit %d, stderr %q", c, errb.String())
+	}
+}
+
 // The third recorded divergence. A field finish accepts but the typed reader cannot decode —
 // an escalations object, a numeric gate reason — leaves a run the push gate reads as unknown.
 // runlog.py derived a verdict from the dict regardless; the port reports unknown and says why,

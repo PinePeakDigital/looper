@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestThePlaceholderGatesAreRefused$'
+expect: an abandon with --missing '<gates>' is recorded
+why:    the push refusal prints `--missing '<gates>'`; pasted unchanged, the placeholder would be recorded as the gates not run, so abandon refuses that exact text
+--- old
+	if m := pyStrip(missing); m == "<gates>" || m == "'<gates>'" {
+--- new
+	if m := pyStrip(missing); false && (m == "<gates>" || m == "'<gates>'") {
