@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/a_recorded_re-entry_floors_the_row_at_fast_and_records_the_answer
+why:    the delta answer is not recorded, so a run record with a fast floor on a big branch cannot show why the floor was lowered
+--- old
+		inputs = append(inputs, py.Field{Key: "delta_logic", Val: a.deltaLogic})
+--- new
+		inputs = append(inputs)

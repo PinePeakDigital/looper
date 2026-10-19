@@ -199,8 +199,12 @@ practice that is `looper record finish --run-id <id>` (`record abandon` closes i
 `abandoned` then blocks as broken; `record skipped` and `record carried` mint runs of their
 own). The block sits ahead of every check but the empty record, so an operator who never
 reached Step 14 is told to close the run rather than to post a report or change branch. A
-session that died mid-loop gets out the same way: a `cycle-limit` finish is not broken, so
-the run pushes with whatever disclosure its cycles derive.
+session that died mid-loop does not get out that way: a `cycle-limit` finish would push, and
+stamp as reviewed, a tip its cycles only partly covered. Abandon the dead run with `looper
+record abandon --run-id <id> --missing '<gates>'`, with `'<gates>'` replaced by the planned
+gates not run and why (the refusal quotes the placeholder so a bare paste is not read as a
+shell redirect), and start a fresh run. `abandoned` blocks only the dead run's
+id; the fresh run has its own, so this is not a dead end.
 
 stderr still carries a note naming the run and the store that was read, because the
 refusal cannot say *why* nothing was readable. A run whose rows were all torn is
@@ -597,19 +601,21 @@ The divergences:
 ## `looper plan`
 
 The review-loop's Step 0b, a port of the skill's `plan.py` in `internal/plan`: which gates
-run and the tier floor, from context.sh's JSON and four answers only the orchestrator can give.
+run and the tier floor, from `looper context`'s JSON and four answers only the orchestrator can give.
 
 ```text
 looper plan --model <orchestrator model> --logic yes|no --behavioral-goal yes|no \
             --runtime-change yes|no --attacker-reachable yes|no \
-            [--spec-artifact yes|no] [--context <context.json>] [--dry-run]
+            [--spec-artifact yes|no] [--delta-logic yes|no] \
+            [--context <context.json>] [--dry-run]
 ```
 
 It prints the plan as JSON (`json.dumps(indent=2)`, byte for byte) and the Step 0 alarm, if
 any, on stderr, routed to `ao report --checkpoint` under `AO_SESSION_ID`. Unless `--dry-run`, it
 then records the plan row and prints the run_id on the last line. The context is read from
 `--context`, or stdin. The answers take `yes`, `y`, `true` or `1` in any case as yes, and
-anything else as no, as plan.py's did. It asks `gh` whether the branch has a PR and whether the
+anything else as no, as plan.py's did, except `--delta-logic`, which refuses anything else
+(see the divergences below). It asks `gh` whether the branch has a PR and whether the
 repo has any, `git` for the remote and the branch's largest changed file, and reads the threat
 model, the alarm and the record write in process: plan.py ran those as `~/.local/bin/looper`,
 and the branches it needed for a missing looper cannot happen here.
@@ -623,16 +629,38 @@ timestamps are the only normalisations.
 
 The divergences, each with its own test:
 
-- **Error sentences are looper's own** and say `looper plan`. The exit statuses are plan.py's:
-  1 for a context that cannot be read or parsed, 2 for a usage error. Nothing reaches stdout
-  either way (`TestUsageAndInputErrorsExitAsThePythonDid`). `-h` prints Go's usage text to
-  stdout and exits 0, where argparse printed its own (`TestHelpGoesToStdout`).
+- **Error sentences are looper's own** and say `looper plan`. Where plan.py said to run
+  context.sh, which no longer exists, they and `--context`'s help name `looper context`. The
+  exit statuses are plan.py's: 1 for a context that cannot be read or parsed, 2 for a usage
+  error. Nothing reaches stdout either way (`TestUsageAndInputErrorsExitAsThePythonDid`). `-h`
+  prints Go's usage text to stdout and exits 0, where argparse printed its own
+  (`TestHelpGoesToStdout`).
+- **A follow-up after a clean exit is floored on the delta** since the last reviewed sha, as
+  the skill's fast-path re-entry says. A new optional answer, `--delta-logic`, says whether the
+  delta since `last_reviewed_sha` changes program logic. With `fast_path_eligible_by_delta` true
+  and `--delta-logic no`, the floor is `fast` even when the branch as a whole is too big for it
+  or holds logic, and `tier_reason` says it is a re-entry and gives the delta's raw size and sha
+  beside the branch's review surface. plan.py predates the field and never read it, so a small
+  follow-up on a big branch floored at `full` and `looper record finish` then refused the fast
+  tier. `--logic` stays the whole branch's answer, and the risk label still reads only it: the
+  delta answer is recorded in the plan row's inputs as `delta_logic`, only when given, so the
+  record shows why a floor was lowered (`TestTheDeltaAnswerLeavesTheRiskAlone`). Without
+  `--delta-logic` nothing is lowered and the plan is byte for byte what it was; with a false,
+  `null` or missing verdict, a `null`, empty or missing `last_reviewed_sha`, or `--delta-logic yes`, the floor is what plan.py's would be, and a
+  branch small enough on its own keeps plan.py's size reason. Because its "no" lowers the floor,
+  `--delta-logic` takes only yes or no (`y`/`true`/`1`, `n`/`false`/`0`, any case); anything else
+  is a usage error, exit 2, where plan.py's reading of its own flags would make a typo a "no"
+  (`TestAGarbledDeltaAnswerIsAUsageError`, `TestEveryDocumentedDeltaAnswerIsRead`). The re-entry fields are
+  type-checked as the others are; plan.py ignored any value in them
+  (`TestAReEntryIsSizedAgainstTheDelta`, `TestAWrongReEntryFieldIsAnError`, whose goldens were
+  captured from looper before the change, when it matched plan.py on every frozen scenario; a
+  golden for a case that passes `--delta-logic` records that looper refusing the unknown flag).
 - **A context that is not an object, or a field of the wrong type,** exits 1 naming it. A count
   must be a whole number, a flag true or false, a name a string; `null` and a missing field
   read as plan.py's defaults, except a `null` `learnings_entries`, which plan.py printed as
   "None learnings entries" or crashed on, and which is an error here. plan.py read the JSON through `dict.get` and truthiness, so a list
   crashed it and a string where a count belongs passed through into the plan and the record.
-  context.sh writes neither (`TestAWrongContextIsAnError`).
+  `looper context` writes neither (`TestAWrongContextIsAnError`).
 - **An abbreviated flag is a usage error.** argparse took any unambiguous prefix, such as
   `--log`; Go's flag package takes none (`TestAnAbbreviatedFlagIsRefused`).
 - **A failed record write** passes the record's error and exit status on and then says nothing

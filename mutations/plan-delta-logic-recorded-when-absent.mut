@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython|TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/without_a_delta-logic_answer_a_small_delta_is_full
+why:    an unasked delta answer is recorded as false, which reads as an orchestrator having judged the delta logic-free, and every plan without the flag stops being what it was
+--- old
+	if a.deltaLogicGiven {
+--- new
+	if true {

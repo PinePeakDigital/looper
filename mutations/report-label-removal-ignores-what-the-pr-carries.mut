@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestOnlyALabelOnThePRIsRemovedOrWarnedAbout'
+expect: --- FAIL:
+why:    "label review:unknown not removed, so two may now stand at once" is the warning that means a PR carries two convergences, and it is only true for a label the PR actually carries. gh resolves a removal against the REPO's labels and then sends the mutation, so a removal can fail for a label that was never on the PR, and the "not found" filter only covers the repo lacking it. Ignore the labels prLabels read and every such failure warns again with nothing standing, burying the one warning that means something.
+--- old
+		if onPR != nil && !onPR[strings.ToLower(l.Name)] {
+--- new
+		if false && onPR != nil && !onPR[strings.ToLower(l.Name)] {

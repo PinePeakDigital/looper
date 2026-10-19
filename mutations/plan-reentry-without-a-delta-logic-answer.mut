@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/without_a_delta-logic_answer_a_small_delta_is_full
+why:    an unasked --delta-logic reads as no, so an orchestrator that predates the flag has its floor lowered on a delta nobody judged; unasked must fail closed
+--- old
+	case c.fastByDelta && orEmpty(c.lastReviewed) != "" && a.deltaLogicGiven && !a.deltaLogic:
+--- new
+	case c.fastByDelta && orEmpty(c.lastReviewed) != "" && !a.deltaLogic:

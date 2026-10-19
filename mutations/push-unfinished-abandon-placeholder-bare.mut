@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckRefusesAnUnfinishedRun$'
+expect: the refusal lacks the dead-session clause
+why:    the abandon advice printed a bare `--missing <gates>`, which a shell pastes as a redirect from a file named gates, and nothing said what replaces it; --missing takes the planned gates not run and why
+--- old
+			"is gone, run `looper record abandon --run-id " + p.RunID + " --missing '<gates>'`, " +
+			"with '<gates>' replaced by the planned gates not run and why, and start a fresh " +
+			"run instead"
+--- new
+			"is gone, run `looper record abandon --run-id " + p.RunID + " --missing <gates>` " +
+			"and start a fresh run instead"

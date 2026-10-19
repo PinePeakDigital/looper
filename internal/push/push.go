@@ -70,10 +70,11 @@ type State struct {
 	// skipped a step — and the report it posted rendered no outcome and no tier. Blocks; a
 	// DELIBERATE DIVERGENCE from push-check.py, which never looked.
 	//
-	// A session that died mid-loop lands here too. Its way out is the same command: a
-	// `cycle-limit` finish is not a broken outcome, so the run pushes with whatever
-	// disclosure its cycles derive, and the commits are not stranded. Abandoning is not a
-	// way out — `abandoned` is a broken outcome.
+	// A session that died mid-loop lands here too, but its way out is NOT a finish: a
+	// `cycle-limit` finish would push, and stamp as reviewed, a tip its cycles only partly
+	// covered. It is `looper record abandon` on the dead run, then a fresh run. `abandoned`
+	// is a broken outcome, so the dead run's id stays blocked, but the fresh run has an id of
+	// its own and the commits are not stranded.
 	Unfinished string
 }
 
@@ -427,7 +428,10 @@ func Check(p CheckParams) (Result, error) {
 	if !noRecord && r.Finish == nil {
 		unfinished = "run " + p.RunID + " was never finished — close it with `looper record " +
 			"finish --run-id " + p.RunID + "`, re-post its report with `looper pr-report " +
-			"--run-id " + p.RunID + " --post`, then ask again"
+			"--run-id " + p.RunID + " --post`, then ask again; if the session that planned it " +
+			"is gone, run `looper record abandon --run-id " + p.RunID + " --missing '<gates>'`, " +
+			"with '<gates>' replaced by the planned gates not run and why, and start a fresh " +
+			"run instead"
 		if d := p.Diag; d != nil {
 			// record.Load drops a torn line without an error, so a finish row that was
 			// written and then torn reads exactly like one never written.

@@ -380,8 +380,11 @@ func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 	if conv == "" {
 		conv = "unknown"
 	}
+	// Read once for both families: they are disjoint, so the review label's add cannot change
+	// what the risk family's removals need to know.
+	onPR := prLabels(p, num, diag)
 	if want, ok := Labels[conv]; ok {
-		moveLabel(p, num, want, Labels, diag)
+		moveLabel(p, num, want, Labels, onPR, diag)
 	} else {
 		// record.Convergence answers only the four words, so this is unreachable from the
 		// record — but Convergence is a plain string on the way in, and a caller that
@@ -389,19 +392,55 @@ func applyLabels(p PostParams, num string, diag func(string, ...any)) {
 		diag("no label for convergence %q — none applied", conv)
 	}
 	if want, ok := Risks[p.Risk]; ok {
-		moveLabel(p, num, want, Risks, diag)
+		moveLabel(p, num, want, Risks, onPR, diag)
 		return
 	}
 	// No answer removes every risk label rather than leaving one standing: a risk:low from an
 	// earlier run would claim a safety this run's plan can no longer vouch for.
 	diag("no risk label: the plan's inputs do not give a risk level (risk %q)", p.Risk)
-	removeFamily(p, num, Label{}, Risks, "so a stale level may still stand", diag)
+	removeFamily(p, num, Label{}, Risks, onPR, "so a stale level may still stand", diag)
+}
+
+// prLabels answers the names of the labels PR num carries now, or nil when they cannot be
+// read. nil is "unknown", not "none": a PR with no labels answers an empty, non-nil map.
+//
+// It lets removeFamily skip a label the PR does not carry instead of asking gh to remove it.
+// gh resolves a removal against the REPO's labels and then sends the mutation, so whether a
+// removal of an absent label fails depends on the repo and on gh, and any such failure was
+// warned about as "two may now stand at once" with nothing standing.
+//
+// A nil answer is said on diag, so the warnings the fallback may then raise for labels the PR
+// never carried come with the reason they were not filtered.
+func prLabels(p PostParams, num string, diag func(string, ...any)) map[string]bool {
+	r := sh(p.Repo, "gh", "pr", "view", num, "--json", "labels")
+	// Drained too: Out is read, and a descendant's bytes in it would be believed.
+	if !r.Runnable || r.Code != 0 || !r.Drained {
+		diag("the PR's labels could not be read, so every removal is tried: %s", firstLine(r.Err))
+		return nil
+	}
+	var v struct {
+		// A pointer, so an answer without the key reads as unknown rather than as no labels.
+		Labels *[]struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if json.Unmarshal([]byte(r.Out), &v) != nil || v.Labels == nil {
+		diag("the PR's labels did not answer as a labels list, so every removal is tried")
+		return nil
+	}
+	// Keyed in lower case, because GitHub's label names are case-insensitive: a PR carrying
+	// Risk:Low carries risk:low, and skipping it would leave a stale level standing.
+	on := map[string]bool{}
+	for _, l := range *v.Labels {
+		on[strings.ToLower(l.Name)] = true
+	}
+	return on
 }
 
 // moveLabel moves one at-a-glance signal, removing the rest of its family so two cannot
 // stand at once. Every call is best-effort: a label is a convenience, and failing the publish
 // over one would mean losing a posted report to a missing `labels` scope.
-func moveLabel(p PostParams, num string, want Label, family map[string]Label, diag func(string, ...any)) {
+func moveLabel(p PostParams, num string, want Label, family map[string]Label, onPR map[string]bool, diag func(string, ...any)) {
 	// Create, remove the rest of the family, then add. Every call is checked; removeFamily
 	// says why that matters for the removals.
 	if r := sh(p.Repo, "gh", "label", "create", want.Name, "--color", want.Colour,
@@ -410,7 +449,7 @@ func moveLabel(p PostParams, num string, want Label, family map[string]Label, di
 		// failure, because the add below is what actually has to work.
 		diag("label %s not created (it may already exist): %s", want.Name, firstLine(r.Err))
 	}
-	removeFamily(p, num, want, family, "so two may now stand at once", diag)
+	removeFamily(p, num, want, family, onPR, "so two may now stand at once", diag)
 	if r := sh(p.Repo, "gh", "pr", "edit", num, "--add-label", want.Name); !r.Runnable || r.Code != 0 {
 		diag("label %s failed: %s", want.Name, firstLine(r.Err))
 		return
@@ -419,16 +458,23 @@ func moveLabel(p PostParams, num string, want Label, family map[string]Label, di
 }
 
 // removeFamily removes every label of family but keep from the PR; harm says what a failed
-// removal leaves behind.
+// removal leaves behind. onPR is what prLabels read: a label it does not list is skipped,
+// since nothing can be left standing that was never there. nil means the read failed, and
+// then every removal is tried and every unexplained failure warned about, as before the read
+// existed — a label is best-effort, and missing a real double label is worse than a
+// spurious warning.
 //
 // Each removal is checked. It once was not: a removal that failed left the PREVIOUS run's
 // label standing beside the new one, the add still succeeded, and the diag still said the
 // label had moved — a PR advertising two convergences at once with nothing anywhere saying
 // so. Discarding the stream that says why a gh call failed is the exact defect this whole
 // slice exists to stop doing.
-func removeFamily(p PostParams, num string, keep Label, family map[string]Label, harm string, diag func(string, ...any)) {
+func removeFamily(p PostParams, num string, keep Label, family map[string]Label, onPR map[string]bool, harm string, diag func(string, ...any)) {
 	for _, l := range family {
 		if l.Name == keep.Name {
+			continue
+		}
+		if onPR != nil && !onPR[strings.ToLower(l.Name)] {
 			continue
 		}
 		if r := sh(p.Repo, "gh", "pr", "edit", num, "--remove-label", l.Name); !r.Runnable || r.Code != 0 {

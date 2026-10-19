@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/a_delta_verdict_with_no_reviewed_sha_is_full
+why:    a context saying the delta is fast-path sized with no reviewed sha floors the run at fast against a delta measured from nothing, and the reason quotes an empty sha; looper context never emits that pair, so only this guard stops a hand-written or future one
+--- old
+	case c.fastByDelta && orEmpty(c.lastReviewed) != "" && a.deltaLogicGiven && !a.deltaLogic:
+--- new
+	case c.fastByDelta && a.deltaLogicGiven && !a.deltaLogic:

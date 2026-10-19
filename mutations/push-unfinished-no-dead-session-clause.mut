@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckRefusesAnUnfinishedRun$'
+expect: the refusal lacks the dead-session clause
+why:    a session that died mid-loop reads only "close it with looper record finish", and a cycle-limit finish pushes and stamps as reviewed a tip its cycles only partly covered; its way out is abandon plus a fresh run, as skills#11 settled
+--- old
+			"--run-id " + p.RunID + " --post`, then ask again; if the session that planned it " +
+			"is gone, run `looper record abandon --run-id " + p.RunID + " --missing '<gates>'`, " +
+			"with '<gates>' replaced by the planned gates not run and why, and start a fresh " +
+			"run instead"
+--- new
+			"--run-id " + p.RunID + " --post`, then ask again"

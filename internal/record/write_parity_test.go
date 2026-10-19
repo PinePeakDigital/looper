@@ -542,7 +542,7 @@ func TestWriteMatchesThePython(t *testing.T) {
 	}
 }
 
-// The one recorded divergence. runlog.py joins the broken-agent ids with ', '.join(), so an
+// The first recorded divergence. runlog.py joins the broken-agent ids with ', '.join(), so an
 // agent whose id is a number raises TypeError there and the run is never finished at all — a
 // crash on the path that exists to make an unfinished run visible. The port stringifies the id
 // and records the run as partial. Measured against the oracle: Traceback, exit 1, no row.
@@ -694,6 +694,47 @@ func TestAnUnreadableFinishSaysWhy(t *testing.T) {
 	errb.Reset()
 	if c := Command([]string{"convergence", "--run-id", "ur"}, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot be read") {
 		t.Errorf("convergence on an unreadable run: exit %d, stderr %q", c, errb.String())
+	}
+}
+
+// The fourth recorded divergence, added after the port. runlog.py recorded any non-blank
+// --missing, but the push refusal now prints `--missing '<gates>'`, and pasted unchanged that
+// would record the placeholder as the gates not run. The port refuses the placeholder itself,
+// bare or single-quoted and whitespace-trimmed, and nothing else.
+func TestThePlaceholderGatesAreRefused(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", "ph"}, &out, &errb); c != 0 {
+		t.Fatalf("plan: %d %s", c, errb.String())
+	}
+	for _, missing := range []string{"<gates>", " <gates>\n", "'<gates>'"} {
+		out.Reset()
+		errb.Reset()
+		c := Command([]string{"abandon", "--run-id", "ph", "--missing", missing}, &out, &errb)
+		if c != 1 || !strings.Contains(errb.String(), "placeholder") ||
+			!strings.Contains(errb.String(), "planned gates that were not run and why") {
+			t.Errorf("--missing %q was not refused as the placeholder: exit %d, stderr %q", missing, c, errb.String())
+		}
+	}
+	if b, _ := os.ReadFile(store); strings.Count(string(b), "\n") != 1 {
+		t.Errorf("a refused abandon wrote a row:\n%s", b)
+	}
+	// Narrow: a real answer that merely mentions the placeholder is still recorded, as given.
+	const given = "agent_7: session died before <gates> ran"
+	errb.Reset()
+	if c := Command([]string{"abandon", "--run-id", "ph", "--missing", given}, &out, &errb); c != 0 {
+		t.Errorf("a real --missing was refused: exit %d, stderr %q", c, errb.String())
+	}
+	b, _ := os.ReadFile(store)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var last map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil ||
+		last["outcome"] != "abandoned" || last["abandoned_missing"] != given {
+		t.Errorf("a real --missing was not recorded as given (%v):\n%s", err, b)
 	}
 }
 

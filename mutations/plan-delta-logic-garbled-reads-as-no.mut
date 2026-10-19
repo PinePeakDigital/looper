@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAGarbledDeltaAnswerIsAUsageError'
+expect: --- FAIL: TestAGarbledDeltaAnswerIsAUsageError
+why:    --delta-logic reads a typo such as `yse` as "no", as plan.py read its own flags, and a "no" floors a re-entry at fast
+--- old
+			y.strict = true
+--- new
+			y.strict = false

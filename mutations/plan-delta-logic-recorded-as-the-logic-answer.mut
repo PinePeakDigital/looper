@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestTheDeltaAnswerLeavesTheRiskAlone'
+expect: --- FAIL: TestTheDeltaAnswerLeavesTheRiskAlone
+why:    the delta answer is recorded under the branch's logic key, so the risk label reads the delta's answer: a logic-free follow-up on a branch with logic reports risk:low, as skills#11 did
+--- old
+		inputs = append(inputs, py.Field{Key: "delta_logic", Val: a.deltaLogic})
+--- new
+		inputs = append(inputs, py.Field{Key: "logic", Val: a.deltaLogic})

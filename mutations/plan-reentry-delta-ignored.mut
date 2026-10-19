@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/a_logic-free_delta_on_a_branch_with_logic_is_fast
+why:    the delta verdict is never read, so a small follow-up after a clean exit is floored on the whole branch's size: full, and `record finish` refuses the fast tier SKILL.md's re-entry prescribes
+--- old
+	c.fastByDelta, err = flag("fast_path_eligible_by_delta")
+--- new
+	_, err = flag("fast_path_eligible_by_delta")

@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAReEntryIsSizedAgainstTheDelta'
+expect: --- FAIL: TestAReEntryIsSizedAgainstTheDelta/a_logic-free_delta_on_a_logic-free_branch_is_fast
+why:    the re-entry reason quotes the branch's size as the delta's, so a fast floor on a 400-line branch reads as if 400 lines were under the 30-line fast path
+--- old
+			c.delta, orEmpty(c.lastReviewed), c.semantic)
+--- new
+			c.semantic, orEmpty(c.lastReviewed), c.semantic)

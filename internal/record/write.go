@@ -1169,6 +1169,13 @@ func cmdAbandon(s *sub, out io.Writer) error {
 		return fail("runlog: --missing needs the gates that did not run — an abandonment with " +
 			"nothing named is the silent skip this record exists to prevent")
 	}
+	// The push refusal's dead-session advice prints `--missing '<gates>'`. Pasted unchanged
+	// it would record the placeholder as the missing gates, where the old unquoted form at
+	// least failed in the shell. Only the placeholder itself is refused, bare or single-quoted.
+	if m := pyStrip(missing); m == "<gates>" || m == "'<gates>'" {
+		return fail("runlog: --missing is still the placeholder '<gates>' — replace it with the " +
+			"planned gates that were not run and why")
+	}
 	if err := appendPlain(map[string]any{
 		"run_id": id, "phase": "finish", "finished_at": now(), "outcome": "abandoned",
 		"abandoned_missing": missing, "head_at_finish": git("rev-parse", "HEAD"),
