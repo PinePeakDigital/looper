@@ -318,6 +318,7 @@ looper record skipped --reason <r>
 looper record carried --from <sha> --to <sha> --how reviewed|skipped
 looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open, or the store is unreadable (stdout empty)
 looper record pending                                                     # this branch's pending reports
+looper record pending --all                                               # every pending report, as <path>\t<branch>
 ```
 
 It appends to the same store (`$REVIEW_LOOP_RUNS`, default `~/.claude/review-loop/runs.jsonl`)
@@ -329,7 +330,11 @@ the `convergence` subcommand, comes from the typed read half above, so it has on
 `TestWriteMatchesThePython` runs 37 scenarios through `looper record` against a seeded store and
 requires the exit status, stdout, stderr and decoded records that `runlog.py` produced for the
 same scenario, frozen under `internal/record/testdata/oracle` before its command line was deleted. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); the temp repo's path, git dir and commit; everything else is compared as written. The test pins the local zone to the -05:00 the goldens were captured in, so a port writing UTC timestamps fails on any machine. Each scenario is a sequence of
-calls, because most of what the write half guards is a relationship between calls.
+calls, because most of what the write half guards is a relationship between calls. One golden
+is hand-edited rather than captured: `asks at finish make it halted` finished as `clean` with 7
+asks, which `finish` now refuses, so the scenario finishes as `cycle-limit` instead and its
+golden drops the `clean` warning and records that outcome — the rest is `runlog.py`'s output
+unchanged.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
 its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
@@ -338,10 +343,36 @@ truthy non-object `--gates` or `--executed` is refused with a message where `run
 on `.items()`. A store holding invalid UTF-8 inside a JSON string is read, the bad bytes as U+FFFD, where
 `runlog.py` dies decoding it on every subcommand that reads the store (`cycle`, `convergence`,
 `finish`, `abandon`, `check`, `show`, `pending`) — one stray byte would brick the gate; a bad
-byte outside a string makes its row unparseable, and that row is skipped as a torn line is. And where a finish carries a field the typed reader cannot decode (a numeric gate
-reason, an escalations object), `finish` and `convergence` report `unknown` with the decode
-error, where `runlog.py` derived a verdict from the dict: the push gate reads the typed record,
-so that verdict is one it would never reproduce.
+byte outside a string makes its row unparseable, and that row is skipped as a torn line is.
+
+`finish` refuses four things `runlog.py` recorded, and writes nothing when it does:
+
+- **`--escalations` that is not a list of `{"gate": "<gate>", "reason": "<why>"}` objects** —
+  an object, a string, a non-object element, or an element whose `gate` or `reason` is
+  missing, blank or not a string. The refusal quotes the expected shape. A non-empty object
+  used to be recorded, and no typed reader could decode it.
+- **A row the readers could not decode.** Just before appending, `finish` decodes its own row
+  through the same code `Load` runs, and refuses with the decode error if that fails — a
+  numeric reason on a `done` gate is one such field no earlier check reads. Such a row used to
+  be written and then reported as `unknown` convergence; it left the run unknown to the push
+  gate and the report for good, since a later row cannot clear a run's decode error.
+- **`--outcome clean` with `--asks` above zero.** The convergence derivation reads unresolved
+  asks as halted, so the row would contradict itself; it used to be written with a warning.
+- **A second finish for the same run.** A finish is final, as it already was for `cycle` and
+  `abandon`: the outcome first recorded may be on a PR and may have cleared a push. A wrong
+  finish is fixed by starting a new run.
+
+Where an *earlier* row of the run cannot be decoded (a hand-written or older plan row),
+`finish` and `convergence` still report `unknown` with the decode error, where `runlog.py`
+derived a verdict from the dict: the push gate reads the typed record, so that verdict is one
+it would never reproduce.
+
+`pending` lists only the files whose run was planned on the checked-out branch, since Step 0c
+posts what it lists to this branch's PR. `pending --all` lists every pending file under the
+common git dir, one per line as `<path>\t<branch>` with the branch its run recorded, from any
+checkout including `main` or a detached HEAD, so a report deferred on a branch that was later
+left can be flushed against that branch's own PR. A file with no run record, or whose run
+recorded no branch (or a detached `HEAD`), is named on stderr and left in place.
 
 The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-flag` works as
 well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which

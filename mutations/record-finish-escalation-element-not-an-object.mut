@@ -1,0 +1,10 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestEscalationsMustBeAListOfGateAndReason$'
+expect: escalations as a list of strings
+why:    a list whose elements are not objects — `["security"]`, or a null — is the list-shaped version of the same unreadable or empty escalation. A null decodes, and the report then prints the escalations heading over nothing; a string does not decode at all. Without this guard a string element falls through to the gate check and is refused as naming no gate, which hides that the whole element was the wrong shape.
+--- old
+		m, ok := e.(map[string]any)
+		if !ok {
+--- new
+		m, ok := e.(map[string]any)
+		if false {

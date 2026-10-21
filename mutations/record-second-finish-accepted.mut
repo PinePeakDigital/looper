@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestASecondFinishIsRefused$'
+expect: a second finish was not refused
+why:    a finish is final — record-cycle-after-finish-accepted.mut and abandon's guard hold the same line — yet a second finish for the same run was silently appended. Its outcome would rewrite one that may already be on a PR and have cleared a push, and it never repaired a bad first row either, since the typed reader keeps a run's decode error whatever follows it.
+--- old
+	if truthy(plan["finished_at"]) || truthy(plan["outcome"]) {
+--- new
+	if false {
