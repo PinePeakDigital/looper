@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,36 @@ func TestALatin1MakefileIsRead(t *testing.T) {
 	code, out, _ := divergence{scenario: scenario{files: map[string]string{"Makefile": "# caf\xe9\ntest:\n\tgo test\n"}}}.run(t)
 	if code != 0 || !strings.Contains(out, `"test_cmd": "make test",`) {
 		t.Errorf("exit %d:\n%s", code, out)
+	}
+}
+
+// A Go module has a test and a lint command. context.sh detected neither, so looper's own
+// context answered null for both and the loop warned and ran no linter. go.mod is a manifest:
+// it ranks below Cargo.toml and above the Makefile fallback for the test command, and after
+// every other linter for the lint command, as each detector there wins in its listed order.
+var goModules = []struct {
+	name       string
+	files      map[string]string
+	test, lint string
+	fix        bool
+}{
+	{"go.mod alone", map[string]string{"go.mod": "module x\n"}, `"go test ./..."`, `"go fmt ./... && go vet ./..."`, true},
+	{"go.mod over a Makefile", map[string]string{"go.mod": "module x\n", "Makefile": "test:\n\tgo test -race ./...\n"}, `"go test ./..."`, `"go fmt ./... && go vet ./..."`, true},
+	{"Cargo.toml over go.mod", map[string]string{"go.mod": "module x\n", "Cargo.toml": "[package]\n"}, `"cargo test"`, `"go fmt ./... && go vet ./..."`, true},
+	{"npm scripts over go.mod", map[string]string{"go.mod": "module x\n", "package.json": `{"scripts": {"test": "t", "lint": "l"}}`}, `"npm test"`, `"npm run lint"`, false},
+	{"ruff over go.mod", map[string]string{"go.mod": "module x\n", "ruff.toml": ""}, `"go test ./..."`, `"ruff check --fix"`, true},
+}
+
+func TestAGoModuleIsDetected(t *testing.T) {
+	for _, c := range goModules {
+		t.Run(c.name, func(t *testing.T) {
+			code, out, _ := divergence{scenario: scenario{files: c.files}}.run(t)
+			for _, want := range []string{`"test_cmd": ` + c.test + ",", `"lint_cmd": ` + c.lint + ",", `"lint_fix": ` + strconv.FormatBool(c.fix) + ","} {
+				if code != 0 || !strings.Contains(out, want) {
+					t.Errorf("exit %d, want %s in:\n%s", code, want, out)
+				}
+			}
+		})
 	}
 }
 

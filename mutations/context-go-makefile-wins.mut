@@ -1,0 +1,10 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAGoModuleIsDetected'
+expect: --- FAIL: TestAGoModuleIsDetected/go.mod_over_a_Makefile
+why:    the Makefile fallback outranks go.mod, so a Go module with a test target answers `make test` where a Cargo crate with one answers `cargo test`: two manifests ranked two ways.
+--- old
+	case exists("go.mod"):
+		// Not in context.sh
+--- new
+	case exists("go.mod") && !exists("Makefile"):
+		// Not in context.sh

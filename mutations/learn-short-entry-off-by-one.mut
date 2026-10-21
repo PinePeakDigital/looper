@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestAShortEntryIsRefused'
+expect: --- FAIL: TestAShortEntryIsRefused/exactly_the_minimum
+why:    the minimum stops being the minimum: an entry of exactly minEntry characters is refused, and the message's "under 10" is false for it.
+--- old
+		if n := utf8.RuneCountInString(py.Strip(text)); n < minEntry {
+--- new
+		if n := utf8.RuneCountInString(py.Strip(text)); n <= minEntry {

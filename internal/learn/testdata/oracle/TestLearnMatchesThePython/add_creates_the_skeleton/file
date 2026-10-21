@@ -2,7 +2,7 @@
 
 ## Dismissed
 <!-- Patterns the user has chosen to skip. Skill won't auto-flag matches. -->
-- <today>: first
+- <today>: the first dismissal
 
 ## Accepted patterns
 <!-- Patterns the user has explicitly confirmed matter here. Skill weights matches higher. -->

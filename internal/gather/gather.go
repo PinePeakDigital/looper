@@ -296,6 +296,10 @@ func commands() (test, lint value, fix bool) {
 		test = "pytest"
 	case exists("Cargo.toml"):
 		test = "cargo test"
+	case exists("go.mod"):
+		// Not in context.sh, which answered null for a Go module. A manifest, so it ranks with
+		// Cargo.toml above the Makefile fallback.
+		test = "go test ./..."
 	default:
 		if b, err := os.ReadFile("Makefile"); err == nil && regexp.MustCompile(`(?m)^test:`).MatchString(py.Decode(b)) {
 			test = "make test"
@@ -326,6 +330,10 @@ func commands() (test, lint value, fix bool) {
 		lint, fix = "eslint --fix", true
 	case exists(".rubocop.yml"):
 		lint, fix = "rubocop -A", true
+	case exists("go.mod"):
+		// go fmt rewrites, as the other fixers do, and skips testdata where gofmt -w . would
+		// not; go vet reports. Either failing fails the command.
+		lint, fix = "go fmt ./... && go vet ./...", true
 	}
 	return test, lint, fix
 }

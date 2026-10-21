@@ -548,6 +548,11 @@ The divergences, each with its own test:
   no scripts (`TestPackageScriptsAreAnObject`).
 - **A Makefile that is not UTF-8 is still searched** for its `test:` target. context.sh's strict
   decode crashed on it, losing the whole context (`TestALatin1MakefileIsRead`).
+- **A Go module has test and lint commands.** context.sh detected neither for a `go.mod`, so
+  both were null on looper itself. The test command is `go test ./...`, ranked as a manifest:
+  after `package.json`'s `test` script, pytest and `Cargo.toml`, ahead of a Makefile `test:`
+  target. The lint command is `go fmt ./... && go vet ./...` with `lint_fix` true, since `go fmt`
+  rewrites files; it ranks last, after every other linter (`TestAGoModuleIsDetected`).
 - **Text that is not UTF-8 reaches the JSON with U+FFFD** for each bad byte, in the learnings and in
   the diff stat. context.sh turned each such byte into a lone-surrogate escape (`\udcXX`), which
   many JSON parsers refuse (`TestLatin1LearningsAreReplaced`). Learnings lines are matched as
@@ -584,8 +589,11 @@ looper learn prune <file> [--cap 50]
 ```
 
 `add` stamps today's date and inserts the entry at the top of its section, creating the file or
-the section when missing. A Dismissed entry that cites precedent is refused with the run record's
-own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
+the section when missing. One ISO date opening the text, with the colon or spaces after it, is
+dropped first, so a dated text is not dated twice. Text under 10 characters once trimmed is
+refused (exit 1, nothing written): the shortest entry in looper's own learnings file runs past a hundred, and what falls
+under 10 is a probe such as `x` or an empty argument. A Dismissed entry that cites precedent is
+refused with the run record's own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
 the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
 among the arguments, abbreviated as argparse allowed, with `--` ending them. As in argparse
 3.13+, an argument starting with a dash is text when it starts like a negative number (`-5%`) or
@@ -597,7 +605,11 @@ to the same file, byte for byte in its exit status, output and resulting file, f
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
 final error line: argparse's usage text names learn.py and its `--selftest`, which this command
-does not have.
+does not have. Ten scenarios that added a probe-length text (`x`, `-1`, `first`) were given
+longer text when short text became a refusal, and their goldens recaptured from learn.py's
+compiled `learn.cpython-314.pyc`, learn.py itself being gone from the skills checkout. That
+bytecode reproduced all 47 existing goldens first, except that argparse's usage text named it
+`learn.pyc`; only the ten scenarios' `file` goldens changed.
 
 The divergences:
 
@@ -610,6 +622,13 @@ The divergences:
   it (`TestANonUTF8EntryIsRefused`).
 - **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
   script's digits was an entry there and is ordinary text here (`TestAnEntryDateIsASCIIDigits`).
+- **A leading date is not written twice.** learn.py stamped its date ahead of whatever text it
+  was given, so `2026-10-20: …` became `- <today>: 2026-10-20: …`. One leading ISO date and the
+  colon or spaces after it are dropped; a later date, or a second one, is text
+  (`TestALeadingDateIsNotWrittenTwice`).
+- **Text under 10 characters is refused.** learn.py wrote anything, the empty string included,
+  and a probe `x` reached a real learnings file that way (`TestAShortEntryIsRefused`). The
+  check follows the usage checks, so `add` without `--section` is still a usage error.
 - **`--cap` is a plain decimal integer.** Python's `int()` also took surrounding whitespace,
   underscores, other scripts' digits and values past 64 bits.
 - **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
