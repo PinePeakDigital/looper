@@ -1216,10 +1216,13 @@ func TestCheckReadsOmittedBranchesFromGit(t *testing.T) {
 
 	t.Run("a given flag outranks git", func(t *testing.T) {
 		// On main, told the branch is feat/x: the flags are the caller's statement and git is
-		// only the fallback, so this pushes as it did before the fallback existed.
+		// only the fallback, so this pushes as it did before the fallback existed. The default
+		// is given as main, so a branch read from git instead ("main") refuses — with any
+		// other default both readings push, and the case cannot tell them apart (measured: a
+		// "trunk" default let push-git-outranks-a-given-branch survive).
 		dir, gitdir := committedRepo(t, true)
 		landReport(t, gitdir, "run1", fp)
-		if res := check(t, dir, "feat/x", "trunk"); !res.Push {
+		if res := check(t, dir, "feat/x", "main"); !res.Push {
 			t.Errorf("explicit -branch/-default-branch were overridden by git: %+v", res)
 		}
 	})
