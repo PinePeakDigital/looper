@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestPlanMatchesThePython/gh_unauthenticated'
+expect: looper plan no longer does what plan.py did
+why:    the other side of the same reason: when gh says it is not logged in, it is unauthenticated, and the reason says so in plan.py's words, which the parity golden pins. Reading only "failed" there would send the operator to retry unsandboxed when the fix is `gh auth login`.
+--- old
+		if strings.Contains(strings.ToLower(out+"\n"+err), "not logged in") {
+--- new
+		if false {

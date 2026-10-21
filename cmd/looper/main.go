@@ -41,7 +41,10 @@ const usage = `usage: looper version
                    --runtime-change yes|no --attacker-reachable yes|no
                    [--spec-artifact yes|no] [--delta-logic yes|no] [--context f] [--dry-run]
 
-push-check writes the decision as JSON to stdout and nothing else. stderr carries a
+push-check writes the decision as JSON to stdout and nothing else, and exits 0 when the
+push is permitted, 3 when it is refused (the JSON says why), and 1 or 2 when it could not
+decide (stdout empty). An omitted -branch or -default-branch is read from git in -repo:
+the current branch, and the branch origin/HEAD names. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
 readable in the store — two cases where the decision's own stated reason is the wrong
 instruction.
@@ -118,6 +121,9 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	default:
 		fmt.Fprintf(errOut, "unknown command %q\n%s\n", args[0], usage)
 		return 2
+	}
+	if errors.Is(err, errPushRefused) {
+		return exitPushRefused
 	}
 	if err != nil {
 		fmt.Fprintln(errOut, err)
@@ -253,9 +259,25 @@ func runDocs(args []string, out io.Writer) error {
 	return nil
 }
 
-// runPushCheck answers Step 14's auto-push question. It prints JSON and exits 0 whether or
-// not the push is permitted: the ANSWER is the output, and a non-zero exit would make a
-// refusal indistinguishable from the tool failing to produce one.
+// errPushRefused is push-check's refusal: the JSON answer is already on stdout, and run maps
+// this to exitPushRefused without printing anything, so stderr carries no error for it.
+var errPushRefused = errors.New("push refused")
+
+// exitPushRefused is push-check's exit status for a refusal. Distinct from 1 and 2, which
+// mean the tool failed to answer.
+const exitPushRefused = 3
+
+// runPushCheck answers Step 14's auto-push question. It prints the decision as JSON either
+// way, and exits 0 when the push is permitted, 3 when it is refused, 1 or 2 when it could not
+// decide (nothing on stdout then).
+//
+// Two reasons fix that contract, and each rules out the simpler one. The answer is the
+// OUTPUT: a refusal is a successful answer with a reason to act on, so it must not look like
+// the tool failing — that was why this exited 0 for both, and why a refusal still prints its
+// JSON and does not share 1 or 2 with a failure. But exit 0 for a refusal made
+// `looper push-check … && git push` push anyway: the friction log records it twice
+// (2026-10-16, 2026-10-20), both times on push:false. Nathan chose the distinct code on
+// 2026-10-21, over keeping 0 and over a plain non-zero exit.
 func runPushCheck(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("push-check", flag.ContinueOnError)
 	// STDERR, not out. This command documents stdout as JSON and nothing else, and
@@ -271,8 +293,8 @@ func runPushCheck(args []string, out, errOut io.Writer) error {
 	runID := fs.String("run-id", "", "the run to read convergence, outcome and the owed report from (required)")
 	gateState := fs.String("gate-state", "skipped", "passed, skipped or blocked")
 	unresolvedSkip := fs.Bool("unresolved-skip", false, "a 50-79 finding was skipped without a recorded dismissal")
-	branch := fs.String("branch", "", "the current branch")
-	defaultBranch := fs.String("default-branch", "", "the repo's default branch")
+	branch := fs.String("branch", "", "the current branch (default: git's current branch in -repo)")
+	defaultBranch := fs.String("default-branch", "", "the repo's default branch (default: the branch origin/HEAD names in -repo)")
 	repo := fs.String("repo", ".", "the repo to check git and gh facts in")
 	store := fs.String("store", "", "run record path (default: $REVIEW_LOOP_RUNS, else ~/.claude/review-loop/runs.jsonl)")
 	if err := fs.Parse(args); err != nil {
@@ -314,8 +336,14 @@ func runPushCheck(args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, err = out.Write(b)
-	return err
+	if _, err := out.Write(b); err != nil {
+		return err
+	}
+	// After the write: a refusal carries its answer.
+	if !res.Push {
+		return errPushRefused
+	}
+	return nil
 }
 
 // runPrReport renders the Step 14 disclosure and, with -post, publishes it.

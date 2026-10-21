@@ -230,6 +230,38 @@ func TestAProbeWithALingeringGrandchildIsAnswered(t *testing.T) {
 	}
 }
 
+// A failed `gh auth status` is reported as what was observed, and called unauthenticated only
+// when gh says it is logged out (TestPlanMatchesThePython's "gh unauthenticated"). plan.py said
+// "gh not authenticated here" for every failure of the call, and in a sandbox it fails on the
+// keyring or TLS while auth is fine (friction log, 2026-10-02), so a run recorded a false
+// reason for skipping Agent #10. The skip itself stands.
+//
+// The goldens are plan.py's answer to an auth status that exits 1, copied from the
+// "gh unauthenticated" golden rather than captured: plan.py discarded both streams of this
+// call, so its answer did not depend on what gh printed, and it is gone.
+func TestAFailedAuthProbeSaysWhatItSaw(t *testing.T) {
+	for _, c := range []struct{ name, auth, want string }{
+		// The sandbox's own output, gh 2.102.0: a host header line, then the X line.
+		{"the sandbox keyring failure",
+			`printf 'github.com\n  X Failed to log in to github.com account narthur (keyring)\n  - The token in keyring is invalid.\n' >&2; exit 1`,
+			`"gh auth status failed (Failed to log in to github.com account narthur (keyring)) without saying gh is logged out`},
+		{"a silent failure", `exit 1`, `"gh auth status failed (exit 1) without saying gh is logged out`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			py := golden.Read(t, "transcript")
+			if !strings.Contains(py, `"gh not authenticated here (retry unsandboxed before accepting this)"`) {
+				t.Fatalf("the frozen golden no longer records plan.py calling it unauthenticated:\n%s", py)
+			}
+			d := divergence{scenario: scenario{ctx: ctxDefault,
+				gh: `case "$1 $2" in "auth status") ` + c.auth + ` ;; *) exit 1 ;; esac`}}
+			_, out, _, _ := d.run(t)
+			if !strings.Contains(out, c.want) || strings.Contains(out, "not authenticated") {
+				t.Errorf("want %s, and no claim of being unauthenticated, in:\n%s", c.want, out)
+			}
+		})
+	}
+}
+
 // -h prints the usage to stdout and exits 0, as argparse did; its text is Go's flag package's,
 // and --context names the command that writes the file, not the retired context.sh.
 func TestHelpGoesToStdout(t *testing.T) {

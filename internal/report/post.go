@@ -156,7 +156,8 @@ const (
 	// PRFound: gh answered and named a PR.
 	PRFound PRState = iota
 	// NoPR: gh answered and said there are none — meaning it printed an EMPTY JSON ARRAY,
-	// `[]`. Not empty stdout: `gh pr list --json number` is what the probe runs, and empty
+	// `[]`. Not empty stdout: the probe now asks REST (`gh api` on evidence.PRsForBranch),
+	// which answers the same `[]`; the lines below date from `gh pr list --json number`, and empty
 	// output from it reaches json.Unmarshal("") and comes back GhFailed, because a descendant
 	// sharing the fd can produce empty output just as easily as gh can. This comment said the
 	// opposite for one commit — "it exits 0 with empty output for no PRs" — which was true of
@@ -218,7 +219,7 @@ func (p Probe) Note() string {
 
 // FindPR asks whether this branch has a PR, in a way whose failure modes are distinguishable.
 //
-// `--state all` rather than open-only: a report belongs on the PR whose branch this is even
+// Every state rather than open-only: a report belongs on the PR whose branch this is even
 // after it merges, which is what `gh pr view` does and what Step 0c's backfill needs when the
 // PR was merged between the loop finishing and the flush.
 func FindPR(repo, branch string) Probe {
@@ -261,7 +262,12 @@ func FindPR(repo, branch string) Probe {
 	// answer rather than the liveness of a pipe. A stray "42" makes `[{"number":9}]42` and
 	// `[]42`, neither of which decodes, so contamination is reported as unknown instead of
 	// being believed.
-	r := sh(repo, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number")
+	//
+	// REST (`gh api`), not `gh pr list`, which is GraphQL: see evidence.PRsForBranch, which also
+	// keeps `state=all`. The answer has the same shape — an array of PRs, `[]` for none, exit 0
+	// either way and non-zero only when gh itself failed — so every state below is decided as
+	// it was. Each element is the whole PR object; only `number` is read.
+	r := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
 	switch {
 	case !r.Runnable:
 		return Probe{State: GhUnrunnable, Detail: r.Err}

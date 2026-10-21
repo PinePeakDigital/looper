@@ -1,0 +1,8 @@
+target: internal/plan/plan.go
+verify: go test ./internal/plan/ -count=1 -run 'TestAFailedAuthProbeSaysWhatItSaw'
+expect: no claim of being unauthenticated
+why:    plan.py said "gh not authenticated here" for ANY failure of `gh auth status`. In a sandbox the call fails on the keyring or TLS (x509: OSStatus -26276) while auth is fine, and the run record then carried a false reason for skipping Agent #10 (friction log, 2026-10-02) — a gate reason is read later as evidence. Unauthenticated is said only when gh's own output says it is logged out; otherwise the reason names what gh printed.
+--- old
+		if strings.Contains(strings.ToLower(out+"\n"+err), "not logged in") {
+--- new
+		if true {

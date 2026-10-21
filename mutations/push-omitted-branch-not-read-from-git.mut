@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: was not read from git
+why:    -branch defaults to "" and nothing filled it, so an omitted flag refused every push with "current or default branch unknown" on an ordinary feature branch — recorded twice in the friction log (2026-10-16, 2026-10-20). The branch is a git fact, which push-check.py's own docstring filed it as; reading it from git in -repo is the fallback, and only what git cannot name stays unknown.
+--- old
+	if branch == "" {
+		branch = currentBranch(p.Repo)
+	}
+--- new

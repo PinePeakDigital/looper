@@ -1,0 +1,8 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/evidence/ -count=1 -run 'TestPRsForBranchEscapesTheBranch'
+expect: PRsForBranch("branch-x")
+why:    gh substitutes the legacy `:owner`, `:repo` and `:branch` spellings anywhere in an endpoint, so a literal colon before a branch named `branch-x` becomes `{owner}:` + the CURRENT branch + `-x`. The colon is sent encoded, which GitHub decodes and gh's placeholder pattern cannot match.
+--- old
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A" + url.QueryEscape(branch)
+--- new
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}:" + url.QueryEscape(branch)
