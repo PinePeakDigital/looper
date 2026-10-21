@@ -6,5 +6,5 @@
 
 ## Accepted patterns
 <!-- c -->
-- <today>: -x
+- <today>: -x after a double dash
 - 2026-02-01: keep the retry backoff

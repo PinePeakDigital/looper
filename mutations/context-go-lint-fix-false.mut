@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAGoModuleIsDetected'
+expect: --- FAIL: TestAGoModuleIsDetected/go.mod_alone
+why:    lint_fix false tells Step 4a that the Go lint command only reports, though go fmt rewrites files; the loop would not stage what it changed.
+--- old
+		lint, fix = "go fmt ./... && go vet ./...", true
+--- new
+		lint, fix = "go fmt ./... && go vet ./...", false

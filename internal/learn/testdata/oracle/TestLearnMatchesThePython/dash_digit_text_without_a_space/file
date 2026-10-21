@@ -6,5 +6,5 @@
 
 ## Accepted patterns
 <!-- c -->
-- <today>: -5%
+- <today>: -5%-slower-when-cold
 - 2026-02-01: keep the retry backoff
