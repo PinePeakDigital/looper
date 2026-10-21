@@ -101,8 +101,19 @@ func TestInvalidUTF8LedgerIsRead(t *testing.T) {
 				t.Fatalf("the frozen report on the substituted ledger is not a report:\n%s", want)
 			}
 			code, out, errOut := divergence{cmd: cmd, ledger: invalidUTF8[cmd]}.runGo(t)
-			if got := transcript(code, out, errOut); got != want {
-				t.Errorf("--- python on the U+FFFD ledger (frozen) ---\n%s\n--- looper on the invalid one ---\n%s", want, got)
+			got := transcript(code, out, errOut)
+			// The threat model's report on that ledger is no longer the Python's: it counts
+			// claims, not pinned lines (TestCitationsAreReadPerClaim). So the test is looper's own
+			// report on the ledger with U+FFFD written there, and the Python's where it still holds.
+			if cmd == "threat-model" {
+				code, out, errOut = divergence{cmd: cmd, ledger: strings.ToValidUTF8(invalidUTF8[cmd], "\ufffd")}.runGo(t)
+				want = transcript(code, out, errOut)
+			}
+			if !strings.Contains(want, `\ufffd`) {
+				t.Fatalf("the report on the substituted ledger names no U+FFFD:\n%s", want)
+			}
+			if got != want {
+				t.Errorf("--- report on the U+FFFD ledger ---\n%s\n--- looper on the invalid one ---\n%s", want, got)
 			}
 		})
 	}

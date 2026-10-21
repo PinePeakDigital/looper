@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin|TestThreatModelWatchesEveryPin|TestDeferredWatchesEveryPin'
+expect: --- FAIL:
+why:    pin-shaped text that does not parse is skipped, as in pins.py, so a typo in a pin reads exactly like a pin that is fine and nothing ever watches the claim
+--- old
+			if !overlaps(s, ms) {
+--- new
+			if false && !overlaps(s, ms) {

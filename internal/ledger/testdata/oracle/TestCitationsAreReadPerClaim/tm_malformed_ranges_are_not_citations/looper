@@ -1,0 +1,28 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-threat-model.md",
+  "exists": true,
+  "claims": 4,
+  "stale": [],
+  "broken_pins": [
+    {
+      "line": 1,
+      "malformed": "[src/types.ts:1- @ 5402b36]"
+    },
+    {
+      "line": 2,
+      "malformed": "[src/types.ts:-3 @ 5402b36]"
+    },
+    {
+      "line": 3,
+      "malformed": "[src/types.ts:1-2-3 @ 5402b36]"
+    },
+    {
+      "line": 4,
+      "malformed": "[src/types.ts:x @ 5402b36]"
+    }
+  ],
+  "uncited": 4
+}
+--- stderr ---

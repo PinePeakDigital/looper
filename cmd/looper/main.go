@@ -56,8 +56,8 @@ gates plan.py prints at Step 0 (silent when there are none). See README.md.
 
 threat-model and deferred report the two pinned ledgers under <git-common-dir>/info as
 JSON, from the working directory: which pinned files moved since their pin (stale), which
-pins name no commit here (broken_pins), and what owes a pin or a Guard line. Exit 0 for a
-report, 1 for a ledger that exists and cannot be read.
+pins name no commit here or do not parse (broken_pins), and what owes a pin or a Guard
+line. Exit 0 for a report, 1 for a ledger that exists and cannot be read.
 
 context is Step 0: the base branch (fetched), the learnings, the test and lint commands and
 the diff's size, as JSON, from the working directory. plan reads it.

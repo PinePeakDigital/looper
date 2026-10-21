@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin'
+expect: --- FAIL:
+why:    a pin-shaped span is malformed even where it is a real citation, so every good pin is also reported broken and the list stops meaning anything
+--- old
+			if !overlaps(s, ms) {
+--- new
+			if !overlaps(s, nil) {

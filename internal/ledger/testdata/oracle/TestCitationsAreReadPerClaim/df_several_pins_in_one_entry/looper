@@ -1,0 +1,50 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-deferred.md",
+  "exists": true,
+  "entries": 1,
+  "stale": [
+    {
+      "line": 1,
+      "path": "src/types.ts",
+      "lines": "1-2",
+      "sha": "5402b36",
+      "commits": [
+        "09c38e6 allow async draws"
+      ]
+    },
+    {
+      "line": 2,
+      "path": "src/types.ts",
+      "lines": "1",
+      "sha": "5402b36",
+      "commits": [
+        "09c38e6 allow async draws"
+      ]
+    },
+    {
+      "line": 2,
+      "path": "src/auth.ts",
+      "lines": "1",
+      "sha": "5402b36",
+      "commits": [
+        "12a3560 rework auth again",
+        "89f2905 rework auth \u2014 \u03c0"
+      ]
+    },
+    {
+      "line": 3,
+      "path": "docs/old.md",
+      "lines": null,
+      "sha": "5402b36",
+      "commits": [
+        "b16d830 drop the old doc"
+      ]
+    }
+  ],
+  "unpinned": [],
+  "broken_pins": [],
+  "unguarded": []
+}
+--- stderr ---

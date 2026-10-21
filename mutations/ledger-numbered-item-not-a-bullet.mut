@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    a numbered item is read as a continuation, so its pin pins the claim above it
+--- old
+	case i > 0 && i < len(s) && (s[i] == '.' || s[i] == ')'):
+--- new
+	case false:

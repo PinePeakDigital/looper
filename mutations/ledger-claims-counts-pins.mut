@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsAreReadPerClaim|TestThreatModelWatchesEveryPin'
+expect: --- FAIL:
+why:    claims is the count of pins, as pins.py's was of pinned lines: 63 on looper's own threat model, which has 46 claims
+--- old
+		{"claims", claims},
+--- new
+		{"claims", len(pins) + 0*claims},
