@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: were overridden by git
+why:    git is the FALLBACK for an omitted flag, not an override. A caller that names the branch — Step 14 passes --branch — states which branch is being pushed, and reading git instead answers for whatever happens to be checked out in -repo, which is a different question when the two differ.
+--- old
+	if branch == "" {
+		branch = currentBranch(p.Repo)
+--- new
+	if true {
+		branch = currentBranch(p.Repo)

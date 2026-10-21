@@ -1,0 +1,9 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck$'
+expect: a refusal exited
+why:    exit 1 is the tool failing to answer — a missing -run-id, an unreadable store — and stdout is empty then. A refusal that falls through to the generic error path exits 1 too, and prints "push refused" on stderr as if something broke, so a caller branching on the status cannot tell "do not push, here is why" from "no answer at all". The refusal has to exit exactly 3.
+--- old
+	if errors.Is(err, errPushRefused) {
+		return exitPushRefused
+	}
+--- new

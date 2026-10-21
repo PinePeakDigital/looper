@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/FindPR_resolves'
+expect: gh was not asked over REST
+why:    `gh pr list --json` is GraphQL. The friction log (2026-10-09) records a sandbox where gh's GraphQL calls failed with `x509: OSStatus -26276` while its REST calls — the ones `gh pr comment` would then make — worked, so pr-report deferred a report it could have posted. The probe asks REST (evidence.PRsForBranch), with the same `state=all` filter and the same answer shape, so every state FindPR distinguishes is decided as before.
+--- old
+	r := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
+--- new
+	r := sh(repo, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number")

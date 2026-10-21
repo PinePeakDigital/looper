@@ -30,6 +30,25 @@ func TestOnlyAPlainRunIDBuildsEvidence(t *testing.T) {
 	}
 }
 
+// The branch reaches a URL query, so it is escaped whole: an unescaped `&` would end the head
+// value, a `+` would arrive as a space, and a literal `:` before a name starting `branch` is
+// gh's legacy `:branch` placeholder, which gh replaces with the current branch.
+func TestPRsForBranchEscapesTheBranch(t *testing.T) {
+	for branch, want := range map[string]string{
+		"feat/x":    "repos/{owner}/{repo}/pulls?state=all&head={owner}%3Afeat%2Fx",
+		"a&b+c#d":   "repos/{owner}/{repo}/pulls?state=all&head={owner}%3Aa%26b%2Bc%23d",
+		"branch-x":  "repos/{owner}/{repo}/pulls?state=all&head={owner}%3Abranch-x",
+		"{owner}-y": "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A%7Bowner%7D-y",
+	} {
+		if got := PRsForBranch(branch); got != want {
+			t.Errorf("PRsForBranch(%q) = %q, want %q", branch, got, want)
+		}
+	}
+	if got := PRComments(28); got != "repos/{owner}/{repo}/issues/28/comments" {
+		t.Errorf("PRComments(28) = %q", got)
+	}
+}
+
 func TestPendingReportsListsEveryFileInPathOrder(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "info"), 0o755); err != nil {

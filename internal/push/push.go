@@ -165,7 +165,7 @@ func Fingerprint(r *record.Run) []string {
 // this run's pending file — including when the post fails. So "neither" means pr-report did
 // not run, which is the one thing this gate exists to catch.
 func ReportLanded(runID string, r *record.Run, repo string) bool {
-	landed, _ := reportProbe(runID, r, repo)
+	landed, _ := reportProbe(runID, r, repo, currentBranch(repo))
 	return landed
 }
 
@@ -192,7 +192,10 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 //
 // Named for the question it answers rather than for "could a probe be asked", which is what
 // the earlier name `couldAsk` claimed while the refused-run-id path asks nothing.
-func reportProbe(runID string, r *record.Run, repo string) (landed, attributable bool) {
+//
+// branch is the branch whose PR's comments are read; "" skips the PR half, as a gh that could
+// not run does. `gh pr view` used to find the PR from gh's own reading of the checkout.
+func reportProbe(runID string, r *record.Run, repo, branch string) (landed, attributable bool) {
 	// The guard travels with the interpolation: evidence.Marker and evidence.PendingPath
 	// refuse an id that is not plain, so no caller can forget it. It once sat in Check only,
 	// and a run id of six `../` segments then resolved the pending path outside the repo.
@@ -207,7 +210,7 @@ func reportProbe(runID string, r *record.Run, repo string) (landed, attributable
 		return false, true
 	}
 	needles := append([]string{marker}, Fingerprint(r)...)
-	if rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body"); rc == 0 {
+	if out, ok := prComments(repo, branch); ok {
 		attributable = true
 		if containsAll(out, needles) {
 			return true, true
@@ -224,6 +227,66 @@ func reportProbe(runID string, r *record.Run, repo string) (landed, attributable
 		return false, true
 	}
 	return containsAll(string(body), needles), true
+}
+
+// prComments is the bodies of the comments on branch's PR, and whether gh ANSWERED. Two REST
+// calls — find the PR, then read its comments — where `gh pr view --json comments` was one
+// GraphQL call: the friction log records a sandbox in which gh's GraphQL failed with a
+// keychain TLS error while REST worked, and the gate then refused on advice that could not
+// help. The PR is evidence.PRsForBranch's newest, the one report.FindPR posts to.
+//
+// "No PR for this branch" is an answer (ok, no comments): gh was asked and said so, so the
+// refusal that follows — post the report — has its cause. `gh pr view` exited 1 there, the
+// same code as every failure, so that state used to read as "could not ask".
+//
+// An answer that does not decode as a PR list is no answer, for the reason report.FindPR
+// gives: stdout is shared with any descendant that inherited it.
+func prComments(repo, branch string) (string, bool) {
+	if branch == "" {
+		return "", false
+	}
+	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
+	if rc != 0 {
+		return "", false
+	}
+	var prs []struct {
+		Number int `json:"number"`
+	}
+	if json.Unmarshal([]byte(out), &prs) != nil {
+		return "", false
+	}
+	if len(prs) == 0 {
+		return "", true
+	}
+	rc, out = sh(repo, "gh", "api", "--paginate", evidence.PRComments(prs[0].Number), "--jq", ".[].body")
+	return out, rc == 0
+}
+
+// currentBranch is git's current branch in repo, or "" when there is none (a detached HEAD)
+// or git cannot say. `git branch --show-current`, the spelling report.FindPR measured: it
+// answers the name or nothing, exit 0 either way, where `rev-parse --abbrev-ref HEAD` prints
+// the literal "HEAD" for a detached one.
+func currentBranch(repo string) string {
+	if rc, out := sh(repo, "git", "branch", "--show-current"); rc == 0 {
+		return out
+	}
+	return ""
+}
+
+// defaultBranch is the branch origin's HEAD points at, or "" when git cannot say: no origin,
+// or an origin/HEAD never set (a clone sets it; `git remote add` + fetch does not, and
+// `git remote set-head origin -a` does). Deliberately local: asking the remote would make
+// the gate's answer depend on the network, and "" already fails closed in Decide.
+func defaultBranch(repo string) string {
+	rc, out := sh(repo, "git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	if rc != 0 {
+		return ""
+	}
+	name, ok := strings.CutPrefix(out, "origin/")
+	if !ok {
+		return ""
+	}
+	return name
 }
 
 func containsAll(hay string, needles []string) bool {
@@ -309,8 +372,10 @@ type CheckParams struct {
 	// GateState is "passed", "skipped" or "blocked".
 	GateState      string
 	UnresolvedSkip bool
-	Branch         string
-	DefaultBranch  string
+	// Branch and DefaultBranch are read from git in Repo when "" — the current branch, and
+	// the branch origin/HEAD names. Whatever git cannot name stays "" and refuses.
+	Branch        string
+	DefaultBranch string
 	// Repo is where the git and gh facts are read from.
 	Repo string
 	// Diag receives a line for each DECISION whose stated reason is the wrong instruction for
@@ -409,15 +474,28 @@ func Check(p CheckParams) (Result, error) {
 	if r.Finish != nil {
 		outcome = r.Finish.Outcome
 	}
+	// An omitted -branch or -default-branch is read from git in the repo, as the upstream
+	// already is: they are git facts, and push-check.py's own docstring filed them as such.
+	// Both flags defaulting to "" with nothing behind them made every omission a refusal
+	// ("current or default branch unknown") on an ordinary feature branch, and the friction
+	// log records that refusal twice. When git cannot say either — a detached HEAD, no
+	// origin/HEAD — the name stays "" and Decide refuses exactly as before.
+	branch, defBranch := p.Branch, p.DefaultBranch
+	if branch == "" {
+		branch = currentBranch(p.Repo)
+	}
+	if defBranch == "" {
+		defBranch = defaultBranch(p.Repo)
+	}
 	var unreported string
-	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
+	if landed, attributable := reportProbe(p.RunID, r, p.Repo, branch); !landed {
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
 			"run looper pr-report --run-id " + p.RunID + " --post first"
 		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe
 			// ran. Said here rather than in the reason, which parity pins exactly.
-			fmt.Fprintf(p.Diag, "push-check: neither `gh pr view` nor `git rev-parse` could be "+
+			fmt.Fprintf(p.Diag, "push-check: neither gh (the PR's comments) nor `git rev-parse` could be "+
 				"run in %s, or answered for certain (missing binary, not executable, killed at the %s "+
 				"budget, or a descendant held its output past the drain bound), so "+
 				"whether the report landed could not be determined; the refusal below fails "+
@@ -443,8 +521,8 @@ func Check(p CheckParams) (Result, error) {
 		Convergence:    conv,
 		GateState:      p.GateState,
 		UnresolvedSkip: p.UnresolvedSkip,
-		Branch:         p.Branch,
-		DefaultBranch:  p.DefaultBranch,
+		Branch:         branch,
+		DefaultBranch:  defBranch,
 		UpstreamExists: upstreamExists(p.Repo),
 		Outcome:        outcome,
 		Unreported:     unreported,

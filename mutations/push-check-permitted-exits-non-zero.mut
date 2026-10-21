@@ -1,0 +1,10 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheckPermittedExitsZero'
+expect: a permitted push: exit
+why:    the other half of the exit-status contract: `looper push-check … && git push` has to push when the answer is push:true. Every other push-check test in this package is a refusal, so a gate that exited 3 on every answer — permitted ones included — passed all of them while stranding every push it was asked about.
+--- old
+	// After the write: a refusal carries its answer.
+	if !res.Push {
+--- new
+	// After the write: a refusal carries its answer.
+	if true {

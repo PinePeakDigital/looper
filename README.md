@@ -117,9 +117,7 @@ The catalog's first entries are the runner's own rules, so the tool measures its
 ## `looper push-check`
 
 Answers Step 14's one question — may this branch be auto-pushed — and prints the
-answer as JSON on stdout with exit 0, whether or not the push is permitted. A
-refusal is a successful answer; exiting non-zero would make it indistinguishable
-from the tool failing to produce one.
+answer as JSON on stdout, permitted or not.
 
 ```text
 looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
@@ -131,6 +129,27 @@ looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
 {"push":true,"reason":"capped (review not finished), evidence gate ok, feature branch with upstream",
  "convergence":"capped","disclose":"Review CAPPED at 9 of 8 agents: ..."}
 ```
+
+| exit | meaning | stdout |
+| --- | --- | --- |
+| 0 | push permitted | the JSON, `"push":true` |
+| 3 | push refused | the JSON, `"push":false` and the reason |
+| 1, 2 | no decision: a usage error, an unreadable store, a run id that is not plain | empty; stderr says why |
+
+So `looper push-check … && git push` pushes only on a permitted push. Until 2026-10-21 a
+refusal exited 0, so that it could not be mistaken for the tool failing to answer; the
+friction log records that exit 0 letting a chained `git push` run on `push:false` twice.
+Exit 3 keeps both: a refusal stops the chain, and it still prints its answer, which a
+failure never does. `-h` exits 0 with nothing on stdout.
+
+**An omitted `-branch` or `-default-branch` is read from git in `-repo`**: the current
+branch (`git branch --show-current`), and the branch `refs/remotes/origin/HEAD` names, with
+`origin/` stripped. Both are git facts, like the upstream the gate already read itself; with
+nothing behind the flags' `""` defaults, every omission refused with "current or default
+branch unknown" on an ordinary feature branch. What git cannot name stays unknown and
+refuses as before: a detached HEAD, or an origin/HEAD that was never set (a clone sets it; a
+`git remote add` and fetch does not — `git remote set-head origin -a` does). Nothing is
+guessed, so the default-branch guard is never skipped. A flag that is given wins over git.
 
 The decision is split in two, and the split is the whole design. **"We stopped
 looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
@@ -160,8 +179,15 @@ to forge (37 bytes of `printf` for a real run id) than the self-report it replac
 every terminal exit, converged included: the incident behind the design was a clean
 exit on a fresh branch whose summary never reached the PR.
 
+The PR's comments are read over gh's REST API — `gh api` on the branch's newest PR in any
+state, then that PR's `issues/<n>/comments` with `--paginate` — rather than `gh pr view
+--json comments`, which is GraphQL. The friction log records a sandbox where gh's GraphQL
+calls failed with `x509: OSStatus -26276` while its REST calls worked. The PR is looked up
+by `-branch` (or git's current branch), the same lookup `looper pr-report` posts by
+(`evidence.PRsForBranch`); a PR opened from a fork is not found that way.
+
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
-also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
+also carries a one-line note when neither gh (the PR's comments) nor `git rev-parse` could be
 run at all, because the gate then fails closed with a reason — "run `looper pr-report
 --run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
@@ -260,8 +286,11 @@ the same measurement.
 "no PR yet" — one assertion standing in for three causes, with the only stream that says
 which discarded into `_`. The advice it gave cannot fix the other two, and on the
 author's machine `gh` has already failed with a keychain TLS error while `git push`
-worked. This port asks `gh pr list --head <branch>`, which exits 0 with empty output for
-"there are none" and non-zero only when gh itself failed, and reports five states
+worked. This port lists the branch's PRs over gh's REST API — `gh api
+'repos/{owner}/{repo}/pulls?state=all&head={owner}%3A<branch>'`, where it once asked `gh pr
+list --head <branch> --state all`, which is GraphQL and failed in a sandbox where REST worked
+— and the list exits 0 with `[]` for "there are none" and non-zero only when gh itself
+failed. It reports five states
 distinctly: a PR was found, gh answered that there is none, gh could not be run at all,
 gh ran and failed, or there was no branch to ask about at all — a detached HEAD, an
 unborn branch, or a git that could not answer, in which case gh is never invoked and
@@ -680,6 +709,12 @@ The divergences, each with its own test:
   that exits while a grandchild still holds its output is answered by its exit status and what
   it printed, a second after it exits; plan.py waited for the grandchild up to the timeout
   (`TestAProbeWithALingeringGrandchildIsAnswered`).
+- **A failed `gh auth status` says what gh printed,** and says "not authenticated" only when gh
+  reports being logged out. plan.py said "gh not authenticated here" for any failure of the call;
+  in a sandbox it fails on the keyring or TLS (`x509: OSStatus -26276`) while auth is fine, and
+  the run record then carried a false reason for skipping Agent #10. The skip stands; the reason
+  is now `gh auth status failed (<gh's X line, or the exit status>) without saying gh is logged
+  out` (`TestAFailedAuthProbeSaysWhatItSaw`).
 
 ## `looper docs`
 

@@ -104,7 +104,11 @@ var scenarios = []scenario{
 	{name: "flags as equals and repeated", ctx: ctxDefault, args: []string{"--logic=no", "--logic=yes", "--behavioral-goal=y", "--runtime-change=n", "--attacker-reachable=1"}},
 	{name: "a PR exists", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") echo 17 ;; "pr list") echo '[{"number":1}]' ;; esac`},
 	{name: "a PR view that is not a number", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") echo abc ;; "pr list") echo '[{"number":1}]' ;; esac`},
-	{name: "gh unauthenticated", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 1 ;; *) exit 1 ;; esac`},
+	// gh's own logged-out sentence on stderr. The golden was captured with a stub that printed
+	// nothing; plan.py discarded both streams of this call (`rc, _, _`, as the port did), so
+	// its answer is the same for either stub. looper now reads the stream, and says "not
+	// authenticated" only when gh says so — TestAFailedAuthProbeSaysWhatItSaw has the rest.
+	{name: "gh unauthenticated", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") echo 'You are not logged into any GitHub hosts. To log in, run: gh auth login' >&2; exit 1 ;; *) exit 1 ;; esac`},
 	{name: "no PRs at all", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") exit 1 ;; "pr list") echo '[]' ;; esac`},
 	{name: "PR list fails with a message", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") exit 1 ;; "pr list") printf '  \nHTTP 502: bad gateway\nsecond line\n' >&2; exit 1 ;; esac`},
 	{name: "PR list fails silently", ctx: ctxDefault, gh: `case "$1 $2" in "auth status") exit 0 ;; "pr view") exit 1 ;; "pr list") exit 4 ;; esac`},

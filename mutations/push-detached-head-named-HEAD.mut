@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: a detached HEAD was given a branch name
+why:    on a detached HEAD there is no branch to push, and the refusal must stay "branch unknown". `git rev-parse --abbrev-ref HEAD` exits 0 there and prints the literal "HEAD", which is not the default branch's name, so the gate would permit a push of a branch that does not exist. `git branch --show-current` prints nothing for it — the spelling report.FindPR already measured for the same reason.
+--- old
+	if rc, out := sh(repo, "git", "branch", "--show-current"); rc == 0 {
+--- new
+	if rc, out := sh(repo, "git", "rev-parse", "--abbrev-ref", "HEAD"); rc == 0 {

@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedFromAPRComment'
+expect: a PR comment carrying the marker and the fingerprint must satisfy the gate
+why:    the REST comments list is paged (30 by default). Without --paginate a PR whose report is past the first page — a long-lived PR, a bot-heavy one — reads as not landed, and the gate refuses on "post the report first" for a report that is there. `gh pr view --json comments` returned every comment, so dropping the flag is a regression the switch to REST would introduce silently.
+--- old
+	rc, out = sh(repo, "gh", "api", "--paginate", evidence.PRComments(prs[0].Number), "--jq", ".[].body")
+--- new
+	rc, out = sh(repo, "gh", "api", evidence.PRComments(prs[0].Number), "--jq", ".[].body")

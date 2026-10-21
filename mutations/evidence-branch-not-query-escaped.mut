@@ -1,0 +1,8 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/evidence/ -count=1 -run 'TestPRsForBranchEscapesTheBranch'
+expect: PRsForBranch("a&b+c#d")
+why:    the branch reaches a URL query. Path escaping leaves `&` and `+` alone and git allows both in a branch name, so `a&b` ends the head value at `a` and `+` arrives as a space: the lookup asks about a different branch, answers "no PR", and the report is deferred or the push refused for a PR that exists.
+--- old
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A" + url.QueryEscape(branch)
+--- new
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A" + url.PathEscape(branch)

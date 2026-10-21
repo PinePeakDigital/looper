@@ -11,6 +11,7 @@ package evidence
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -44,6 +45,34 @@ func PendingPath(commonDir, id string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(commonDir, "info", "review-loop-pending-report."+id+".md"), true
+}
+
+// PRsForBranch is the `gh api` endpoint listing the PRs whose head is branch, newest first and
+// in every state: the PR a report is posted to (report.FindPR) and the PR whose comments the
+// push gate reads (push's report probe). One spelling, here, so the two cannot disagree on
+// which PR carries the evidence. `state=all` is the state filter the `gh pr list --state all`
+// it replaced used: a report belongs on its branch's PR after that PR merges too.
+//
+// REST rather than `gh pr list`/`gh pr view`, which go through gh's GraphQL endpoint. The
+// friction log records a sandbox where gh's GraphQL calls failed with a keychain TLS error
+// (`x509: OSStatus -26276`) while its REST calls worked, so the probes refused or deferred
+// while the comment they guarded would have landed.
+//
+// `{owner}` and `{repo}` are gh's own placeholders, filled from the repo gh runs in; gh fills
+// them anywhere in the endpoint, query included (checked with GH_DEBUG=api, gh 2.102.0). The
+// colon after `{owner}` is sent encoded (%3A) on purpose: gh also substitutes the legacy
+// `:owner`/`:repo`/`:branch` spellings, so a literal colon before a branch named `branch-x`
+// would be rewritten to the CURRENT branch. The branch is query-escaped, so a `#`, `&` or `+`
+// in its name is sent as part of the name. `head` is matched against the base repo's owner,
+// so a PR opened from a fork is not found by this route.
+func PRsForBranch(branch string) string {
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A" + url.QueryEscape(branch)
+}
+
+// PRComments is the `gh api` endpoint for PR n's conversation comments, which is where
+// `gh pr comment` posts. Callers pass --paginate: a long-lived PR outgrows one page.
+func PRComments(n int) string {
+	return fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments", n)
 }
 
 // Pending is a file at the pending-report location and the run id its name carries.

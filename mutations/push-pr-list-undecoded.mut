@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeAsksGitHubOverREST'
+expect: an unreadable list was read as an answer
+why:    exit 0 with stdout that is not a PR list establishes nothing — stdout is shared with any descendant that inherited the fd, which is why report.FindPR decodes the shape rather than trusting the pipe. With the decode error ignored, garbage decodes to no PRs and counts as gh answering "none".
+--- old
+	if json.Unmarshal([]byte(out), &prs) != nil {
+--- new
+	if json.Unmarshal([]byte(out), &prs) != nil && false {
