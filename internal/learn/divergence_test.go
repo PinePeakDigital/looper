@@ -45,7 +45,8 @@ func TestANonUTF8EntryIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Command([]string{"add", f, "bad\xff", "--section", "accepted"}, &out, &errOut); code != 1 {
+	// Long enough that the short-entry refusal cannot answer for this one.
+	if code := Command([]string{"add", f, "a bad byte \xff in the entry", "--section", "accepted"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "not UTF-8") {
 		t.Errorf("exit %d, stderr %q", code, errOut.String())
 	}
 	if got, _ := os.ReadFile(f); !bytes.Equal(got, body) {
