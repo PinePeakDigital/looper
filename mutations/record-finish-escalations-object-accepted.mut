@@ -1,0 +1,10 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestEscalationsMustBeAListOfGateAndReason$'
+expect: escalations as an object
+why:    `looper record finish` accepted `--escalations` as a non-empty JSON object (friction log, 2026-10-21) and wrote a finish row the typed reader decodes as []Escalation and cannot, so pr-report and push-check read the run as unknown for good — a finish is final, so a re-finish could not repair it. Disabled with `&& false` so `ok` stays read and the mutant compiles. With this guard gone the decode check after it still refuses the row, so the test pins this refusal's own message: the one that tells the operator the shape to send.
+--- old
+	l, ok := v.([]any)
+	if !ok {
+--- new
+	l, ok := v.([]any)
+	if !ok && false {

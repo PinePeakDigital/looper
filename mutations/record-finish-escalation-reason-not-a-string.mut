@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestEscalationsMustBeAListOfGateAndReason$'
+expect: escalations as a numeric reason
+why:    a numeric escalation reason must be refused as what it is. Without this branch it reads as the empty string and is refused as a MISSING reason, which sends the operator looking for a field that is there; TestANonStringReasonIsRefused pins the same wording for a list.
+--- old
+		if !ok && m["reason"] != nil {
+--- new
+		if !ok && m["reason"] != nil && false {

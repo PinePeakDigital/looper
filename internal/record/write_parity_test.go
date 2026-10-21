@@ -159,7 +159,7 @@ var writeScenarios = []wscenario{
 	{name: "asks at finish make it halted", steps: []wstep{
 		st("plan", "--tier", "fast", "--model", "m", "--run-id", "a1"),
 		st("cycle", "--run-id", "a1", "--n", "1", "--applied", "0", "--agents", "1"),
-		st("finish", "--run-id", "a1", "--outcome", "clean", "--tier", "fast", "--asks", "7"),
+		st("finish", "--run-id", "a1", "--outcome", "cycle-limit", "--tier", "fast", "--asks", "7"),
 		st("convergence", "--run-id", "a1"),
 	}},
 	{name: "capped", steps: []wstep{
@@ -663,15 +663,19 @@ func TestANonStringReasonIsRefused(t *testing.T) {
 	}
 }
 
-// The third recorded divergence. A field finish accepts but the typed reader cannot decode —
-// an escalations object, a numeric gate reason — leaves a run the push gate reads as unknown.
-// runlog.py derived a verdict from the dict regardless; the port reports unknown and says why,
-// because a verdict the gate cannot reproduce is not one to print at finish.
+// The third recorded divergence, and the guard that replaced it at the writer. runlog.py
+// derived a verdict from the dict whatever the typed reader could decode; the port first
+// recorded such a finish and reported unknown, and a recorded row of that kind turned out to be
+// unrepairable — the run's decode error outlives any later row, and a finish is final. So
+// `finish` now decodes its own row the way every reader will and refuses it, writing nothing.
+// Where the unreadable row is an EARLIER one (a plan written by hand, or by an older build),
+// finish and convergence still report unknown and say why.
 func TestAnUnreadableFinishSaysWhy(t *testing.T) {
 	repo, _ := scenarioRepo(t, wscenario{})
 	t.Chdir(repo)
 	setEnv(t, nil)
-	t.Setenv("REVIEW_LOOP_RUNS", filepath.Join(t.TempDir(), "runs.jsonl"))
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
 	var out, errb bytes.Buffer
 	for _, args := range [][]string{
 		{"plan", "--tier", "fast", "--model", "m", "--run-id", "ur", "--gates", `{"g":{"planned":"run","reason":"x"}}`},
@@ -681,19 +685,187 @@ func TestAnUnreadableFinishSaysWhy(t *testing.T) {
 			t.Fatalf("%v: %d %s", args, c, errb.String())
 		}
 	}
+	before, _ := os.ReadFile(store)
 	out.Reset()
 	errb.Reset()
-	if c := Command([]string{"finish", "--run-id", "ur", "--outcome", "clean", "--tier", "fast",
-		"--executed", `{"g":{"status":"done","reason":5}}`}, &out, &errb); c != 0 {
-		t.Fatalf("finish: %d %s", c, errb.String())
+	// A numeric reason on a `done` gate: no earlier check reads it (the precedent ban looks
+	// only at gates that did not finish), and GateResult.Reason is a string.
+	c := Command([]string{"finish", "--run-id", "ur", "--outcome", "clean", "--tier", "fast",
+		"--executed", `{"g":{"status":"done","reason":5}}`}, &out, &errb)
+	if c != 1 || !strings.Contains(errb.String(), "would not decode") || !strings.Contains(errb.String(), "GateResult") {
+		t.Errorf("a finish row no reader can decode was not refused with the decode error: exit %d\nout %q\nerr %q",
+			c, out.String(), errb.String())
+	}
+	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
+		t.Errorf("a refused finish wrote to the store:\n%s", after)
+	}
+
+	// An unreadable earlier row: the warning path, which a finish can no longer reach by itself.
+	if err := os.WriteFile(store, []byte(
+		`{"run_id":"up","phase":"plan","repo":"r","head":"h","gates":{"g":{"planned":"run","reason":7}}}`+"\n"+
+			`{"run_id":"up","phase":"cycle","n":1,"applied":0,"agents":1}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "up", "--outcome", "clean", "--tier", "fast",
+		"--executed", `{"g":{"status":"done"}}`}, &out, &errb); c != 0 {
+		t.Fatalf("finish over an unreadable plan row: %d %s", c, errb.String())
 	}
 	if !strings.Contains(out.String(), "convergence: unknown") || !strings.Contains(errb.String(), "cannot be read") {
-		t.Errorf("an unreadable finish row was not diagnosed:\nout %q\nerr %q", out.String(), errb.String())
+		t.Errorf("an unreadable run was not diagnosed at finish:\nout %q\nerr %q", out.String(), errb.String())
 	}
 	out.Reset()
 	errb.Reset()
-	if c := Command([]string{"convergence", "--run-id", "ur"}, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot be read") {
+	if c := Command([]string{"convergence", "--run-id", "up"}, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot be read") {
 		t.Errorf("convergence on an unreadable run: exit %d, stderr %q", c, errb.String())
+	}
+}
+
+// --escalations must be a list of {"gate": string, "reason": string}. runlog.py recorded any
+// truthy JSON, and an object or a string became a finish row no typed reader could decode,
+// which left the run unknown to pr-report and push-check for good (friction log, 2026-10-21).
+// Each case pins its OWN message: a guard removed here is otherwise still caught by the
+// decode check after it, and refused with an error that does not say what shape to send.
+func TestEscalationsMustBeAListOfGateAndReason(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", "es"}, &out, &errb); c != 0 {
+		t.Fatalf("plan: %d %s", c, errb.String())
+	}
+	for _, c := range []struct{ name, esc, want string }{
+		{"an object", `{"security":"ran wider"}`, "must be a JSON list of objects, " + escalationShape + " — got an object"},
+		{"a string", `"security"`, "must be a JSON list of objects, " + escalationShape + " — got a string"},
+		{"a list of strings", `["security"]`, "element 0 is a string"},
+		{"a null element", `[{"gate":"a","reason":"b"},null]`, "element 1 is null"},
+		{"no gate", `[{"reason":"ran wider"}]`, "escalation 0 names no gate"},
+		{"a numeric gate", `[{"gate":7,"reason":"ran wider"}]`, "escalation 0 names no gate"},
+		{"a blank gate", `[{"gate":"  ","reason":"ran wider"}]`, "escalation 0 names no gate"},
+		{"no reason", `[{"gate":"security"}]`, "escalation on 'security' gives no reason"},
+		{"a blank reason", `[{"gate":"security","reason":" "}]`, "escalation on 'security' gives no reason"},
+		{"a numeric reason", `[{"gate":"security","reason":3}]`, "escalation on 'security' — its reason is not a string"},
+	} {
+		errb.Reset()
+		code := Command([]string{"finish", "--run-id", "es", "--outcome", "clean", "--tier", "fast",
+			"--escalations", c.esc}, &out, &errb)
+		if code != 1 || !strings.Contains(errb.String(), c.want) {
+			t.Errorf("escalations as %s (%s): exit %d, stderr %q, want it to contain %q", c.name, c.esc, code, errb.String(), c.want)
+		}
+	}
+	if b, _ := os.ReadFile(store); strings.Count(string(b), "\n") != 1 {
+		t.Errorf("a refused finish wrote a row:\n%s", b)
+	}
+	// The shape it asks for is accepted, and so is nothing at all.
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "es", "--outcome", "clean", "--tier", "fast",
+		"--escalations", `[{"gate":"security","reason":"ran wider"}]`}, &out, &errb); c != 0 {
+		t.Errorf("a well-formed escalation was refused: exit %d, stderr %q", c, errb.String())
+	}
+}
+
+// `clean` with asks still with the user is refused. The record's own derivation reads those
+// asks as halted, so the row would contradict itself; before this it was written with a
+// warning (friction log, 2026-10-21: a finish claimed clean with 2 unresolved asks).
+func TestCleanWithUnresolvedAsksIsRefused(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	for _, id := range []string{"ca", "cb"} {
+		if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", id}, &out, &errb); c != 0 {
+			t.Fatalf("plan: %d %s", c, errb.String())
+		}
+	}
+	before, _ := os.ReadFile(store)
+	if c := Command([]string{"finish", "--run-id", "ca", "--outcome", "clean", "--tier", "fast", "--asks", "2"}, &out, &errb); c != 1 ||
+		!strings.Contains(errb.String(), "refusing to finish as 'clean' with 2 unresolved asks") {
+		t.Errorf("clean with 2 unresolved asks was not refused: exit %d, stderr %q", c, errb.String())
+	}
+	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
+		t.Errorf("a refused finish wrote to the store:\n%s", after)
+	}
+	// Narrow: the same asks under another outcome, and clean with none, are both recorded.
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "ca", "--outcome", "cycle-limit", "--tier", "fast", "--asks", "2"}, &out, &errb); c != 0 {
+		t.Errorf("cycle-limit with asks was refused: exit %d, stderr %q", c, errb.String())
+	}
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "cb", "--outcome", "clean", "--tier", "fast", "--asks", "0"}, &out, &errb); c != 0 {
+		t.Errorf("clean with no asks was refused: exit %d, stderr %q", c, errb.String())
+	}
+}
+
+// A finish is final, as it already was for cycle and abandon: a second finish for the same run
+// is refused and writes nothing. The outcome first recorded may already be on a PR and may have
+// cleared a push. record-cycle-after-finish-accepted.mut records why that matters for cycles.
+func TestASecondFinishIsRefused(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	for _, args := range [][]string{
+		{"plan", "--tier", "fast", "--model", "m", "--run-id", "df"},
+		{"finish", "--run-id", "df", "--outcome", "cycle-limit", "--tier", "fast"},
+	} {
+		if c := Command(args, &out, &errb); c != 0 {
+			t.Fatalf("%v: %d %s", args, c, errb.String())
+		}
+	}
+	before, _ := os.ReadFile(store)
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "df", "--outcome", "clean", "--tier", "fast"}, &out, &errb); c != 1 ||
+		!strings.Contains(errb.String(), "run 'df' is already finished as 'cycle-limit' — a finish is final") {
+		t.Errorf("a second finish was not refused: exit %d, stderr %q", c, errb.String())
+	}
+	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
+		t.Errorf("a refused finish wrote to the store:\n%s", after)
+	}
+}
+
+// `pending --all` lists every pending file with its run's branch, from any checkout — main
+// included — so Step 0c can flush a report deferred on a branch it has since left. The
+// default output is unchanged: TestWriteMatchesThePython's two pending scenarios pin it.
+func TestPendingAllListsEveryBranch(t *testing.T) {
+	sc := wscenario{files: []string{
+		"review-loop-pending-report.mine.md", "review-loop-pending-report.theirs.md",
+		"review-loop-pending-report.ghost.md", "review-loop-pending-report.loose.md",
+		"review-loop-pending-report.det.md",
+	}}
+	repo, common := scenarioRepo(t, sc) // on main
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	if err := os.WriteFile(store, []byte(strings.Join([]string{
+		`{"run_id":"mine","phase":"plan","branch":"feat"}`,
+		`{"run_id":"theirs","phase":"plan","branch":"main"}`,
+		`{"run_id":"loose","phase":"plan"}`,
+		`{"run_id":"det","phase":"plan","branch":"HEAD"}`,
+	}, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := filepath.Join(common, "info")
+	var out, errb bytes.Buffer
+	if c := Command([]string{"pending", "--all"}, &out, &errb); c != 0 {
+		t.Fatalf("pending --all: exit %d, stderr %q", c, errb.String())
+	}
+	want := filepath.Join(info, "review-loop-pending-report.mine.md") + "\tfeat\n" +
+		filepath.Join(info, "review-loop-pending-report.theirs.md") + "\tmain\n"
+	if out.String() != want {
+		t.Errorf("pending --all stdout:\n%q\nwant\n%q", out.String(), want)
+	}
+	for _, f := range []string{"ghost", "loose", "det"} {
+		if !strings.Contains(errb.String(), "review-loop-pending-report."+f+".md — left in place") {
+			t.Errorf("an unroutable file %s was not named on stderr: %q", f, errb.String())
+		}
 	}
 }
 

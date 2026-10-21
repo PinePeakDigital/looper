@@ -401,17 +401,28 @@ func pyStrOrEmpty(v any) string {
 // as runlog writes them. Valid UTF-8 is written as UTF-8 where runlog writes \u escapes, the same
 // value to every reader; invalid UTF-8 becomes U+FFFD where runlog keeps a lone surrogate.
 func appendRec(rec map[string]any, rs []reason) error {
+	return appendChecked(rec, rs, nil)
+}
+
+// appendChecked is appendRec with a last look at the exact bytes about to be written, after
+// the precedent ban and before anything touches the store. check may be nil.
+func appendChecked(rec map[string]any, rs []reason, check func(line string) error) error {
 	if err := rejectBanned(rs); err != nil {
-		return err
-	}
-	path := StorePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(rec); err != nil {
+		return err
+	}
+	if check != nil {
+		if err := check(strings.TrimSuffix(buf.String(), "\n")); err != nil {
+			return err
+		}
+	}
+	path := StorePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
@@ -583,6 +594,89 @@ func unaccounted(planned map[string]bool, executed *orderedObj, escalations []an
 		}
 	}
 	return out
+}
+
+// escalationShape is what --escalations must be, quoted in every refusal of it.
+const escalationShape = `[{"gate":"<gate>","reason":"<why it ran above the plan>"}]`
+
+// checkEscalations refuses --escalations that is not a list of objects naming a gate and a
+// reason, both strings. runlog.py recorded any truthy JSON here, and the typed reader decodes
+// the field as []Escalation, so a non-empty object or a string became a finish row no reader
+// could decode — which makes the run unknown to the push gate and the report for good. An
+// element with no gate or no reason decodes, but renders as an escalation of nothing, or one
+// with no account of why, in the section that exists so an escalation cannot be silent.
+func checkEscalations(v any) error {
+	l, ok := v.([]any)
+	if !ok {
+		return fail("runlog: --escalations must be a JSON list of objects, %s — got %s",
+			escalationShape, jsonValueKind(v))
+	}
+	for i, e := range l {
+		m, ok := e.(map[string]any)
+		if !ok {
+			return fail("runlog: --escalations must be a JSON list of objects, %s — element %d is %s",
+				escalationShape, i, jsonValueKind(e))
+		}
+		g, ok := m["gate"].(string)
+		if !ok || pyStrip(g) == "" {
+			return fail("runlog: escalation %d names no gate — `gate` must be the gate's name, as a "+
+				"string: %s", i, escalationShape)
+		}
+		r, ok := m["reason"].(string)
+		if !ok && m["reason"] != nil {
+			// The wording rejectBanned uses for the same defect in any other reason field.
+			return fail("runlog: refusing to record escalation on %s — its reason is not a string", pyRepr(g))
+		}
+		if pyStrip(r) == "" {
+			return fail("runlog: escalation on %s gives no reason — say why it ran above the plan: %s",
+				pyRepr(g), escalationShape)
+		}
+	}
+	return nil
+}
+
+// jsonValueKind names a decoded JSON value's type for a refusal.
+func jsonValueKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case map[string]any:
+		return "an object"
+	case []any:
+		return "a list"
+	case string:
+		return "a string"
+	case bool:
+		return "a bool"
+	}
+	return "a number"
+}
+
+// readableFinish is finish's last check: the row, as it is about to be written, decoded by
+// the same code every typed reader runs. Whatever the checks before it missed, a row that
+// fails here would leave the run unknown to the push gate and the report — and since a
+// finish is final, unrepairable. Refusing costs one re-run of the command.
+func readableFinish(id string) func(line string) error {
+	return func(line string) error {
+		st, err := decodeLines([]string{line}, 0)
+		if err != nil {
+			return err
+		}
+		why := errors.New("it is filed under no run")
+		for _, r := range st.Runs {
+			if r.ID == id {
+				if why = r.Err; why == nil && r.Finish == nil {
+					why = errors.New("it decoded to no finish")
+				}
+			}
+		}
+		if why == nil {
+			return nil
+		}
+		return fail("runlog: refusing to finish %s — the row as written would not decode for "+
+			"the readers that gate the push and render the report, so the run would read as "+
+			"unknown for good. Nothing was recorded. The decode error:\n  %v", pyRepr(id), why)
+	}
 }
 
 // deriveTier makes `partial` a fact about the run rather than a label the caller picks, and
@@ -865,8 +959,12 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		}
 		return 0, cmdShow(*s.strs["run-id"], out)
 	case "pending":
+		s.flagBool("all", "every pending report, each with its run's recorded branch, whatever is checked out")
 		if err := s.parse(args, nil); err != nil {
 			return 0, err
+		}
+		if *s.bools["all"] {
+			return 0, cmdPendingAll(out, errOut)
 		}
 		return 0, cmdPending(out, errOut)
 	}
@@ -1020,6 +1118,23 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 		return err
 	}
 	plan := store.get(id)
+	// A finish is final, as cycle and abandon already hold: the outcome and convergence it
+	// recorded may be on a PR and may have cleared a push, and a second row would rewrite them
+	// silently. It does not repair a bad first row either — the typed reader keeps a run's
+	// decode error whatever follows it — so the remedy for a wrong finish is a new run.
+	if truthy(plan["finished_at"]) || truthy(plan["outcome"]) {
+		return fail("runlog: run %s is already finished as %s — a finish is final, and a second "+
+			"finish row would rewrite an outcome that may already be on a PR and have cleared a "+
+			"push. Start a new run.", pyRepr(id), pyRepr(plan["outcome"]))
+	}
+	// `clean` with asks still with the user is a self-report the record contradicts: the
+	// derivation reads those asks as halted, so the row would say two things at once. The
+	// warning below used to be all this got, and the row was written regardless.
+	if asks := s.ints["asks"]; *s.strs["outcome"] == "clean" && asks != nil && *asks > 0 {
+		return fail("runlog: refusing to finish as 'clean' with %d unresolved asks — the run "+
+			"has findings still with the user, so it did not end clean. Record the outcome it "+
+			"did end with, or resolve the asks and record a cycle first.", *asks)
+	}
 	planned := plannedGates(plan)
 	var unexplained []string
 	for _, g := range executed.keys {
@@ -1035,9 +1150,8 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 			"at all):\n  %s\nA status says what happened; the reason is the part anyone reading "+
 			"this later actually needs. Give each one a measurable reason.", strings.Join(unexplained, ", "))
 	}
-	switch escalations.(type) {
-	case json.Number, bool:
-		return fail("runlog: --escalations must be a JSON list")
+	if err := checkEscalations(escalations); err != nil {
+		return err
 	}
 	missing := unaccounted(planned, executed, asList(escalations))
 	allow := *s.bools["allow-unaccounted"]
@@ -1070,7 +1184,7 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 		"agents": agents, "findings": findings, "unresolved_asks": intVal(s.ints["asks"]),
 		"head_at_finish": git("rev-parse", "HEAD"),
 	}
-	if err := appendRec(rec, reasonsIn(nil, executed, asList(escalations), rec)); err != nil {
+	if err := appendChecked(rec, reasonsIn(nil, executed, asList(escalations), rec), readableFinish(id)); err != nil {
 		return err
 	}
 	// Said at finish, where it can still be fixed, rather than at the push gate.
@@ -1308,6 +1422,41 @@ func cmdPending(out, errOut io.Writer) error {
 			fmt.Fprintf(errOut, "runlog: no run record for %s — left in place\n", f)
 		case run["branch"] == br:
 			fmt.Fprintln(out, f)
+		}
+	}
+	return nil
+}
+
+// cmdPendingAll is every pending-report file under the common dir, one per line as
+// `<path>\t<branch>`, the branch being the one its run was planned on. cmdPending's filter is
+// right for the PR of the branch checked out, and it is the only way a report is ever flushed —
+// so a report deferred on a branch that is later left (a merged PR, or `main`, which gets no PR)
+// was listed by no invocation at all and sat there for good. This lists them so each can be
+// flushed against its OWN branch's PR. Unlike cmdPending it needs no current branch: the
+// orphans are found from main or a detached HEAD as well. A file whose run has no record, or
+// no branch recorded (or only a detached HEAD), cannot be routed, so it is named on stderr and
+// left in place.
+func cmdPendingAll(out, errOut io.Writer) error {
+	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if common == "" {
+		fmt.Fprintln(errOut, "runlog: not in a git repository — pending reports left in place")
+		return nil
+	}
+	s, err := loadRaw(StorePath(), 0)
+	if err != nil {
+		return err
+	}
+	for _, p := range evidence.PendingReports(common) {
+		run := s.get(p.ID)
+		br, _ := run["branch"].(string)
+		switch {
+		case run == nil:
+			fmt.Fprintf(errOut, "runlog: no run record for %s — left in place\n", p.Path)
+		case br == "" || br == "HEAD":
+			// "HEAD" is what plan records on a detached HEAD: no branch, so no PR to route to.
+			fmt.Fprintf(errOut, "runlog: no branch recorded for %s — left in place\n", p.Path)
+		default:
+			fmt.Fprintf(out, "%s\t%s\n", p.Path, br)
 		}
 	}
 	return nil

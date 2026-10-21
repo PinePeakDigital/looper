@@ -340,7 +340,17 @@ func LoadStore(path string, limit int) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeLines(lines, dropped)
+}
 
+// decodeLines is LoadStore's merge over lines already read; dropped is how many lines the
+// tail skipped, so line numbers in errors are the store's. `looper record finish` runs its
+// own row through this before appending it, so the writer refuses exactly what every reader
+// would fail to decode, through the one decode path rather than a second copy of its rules.
+// The error is always nil today; it is kept so a per-row failure can still be made fatal in
+// one line, which is what record-torn-line-is-fatal and
+// record-decode-error-blocks-the-whole-store reintroduce.
+func decodeLines(lines []string, dropped int) (*Store, error) {
 	runs := map[string]*Run{}
 	st := &Store{}
 	for i, line := range lines {

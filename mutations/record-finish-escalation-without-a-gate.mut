@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestEscalationsMustBeAListOfGateAndReason$'
+expect: escalations as no gate
+why:    an escalation with no gate decodes — Escalation.Gate is a pointer — so nothing after this refuses it, and the PR report renders it as an escalation of `None` in the one section that exists so an escalation above the plan cannot be silent. A numeric or blank gate is the same defect.
+--- old
+		if !ok || pyStrip(g) == "" {
+--- new
+		if false {

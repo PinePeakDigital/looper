@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestPendingAllListsEveryBranch$'
+expect: pending --all stdout
+why:    `pending` lists only the checked-out branch's reports, and Step 0c is the only thing that flushes them, so a report deferred on a branch later left — a merged PR, or `main`, which never gets one — was listed by nothing, ever (friction log, 2026-10-09: six such files in looper). `--all` is the listing that finds them, each with the branch whose PR it belongs on.
+--- old
+		if *s.bools["all"] {
+--- new
+		if false {
