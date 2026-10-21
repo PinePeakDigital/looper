@@ -658,8 +658,12 @@ func jsonValueKind(v any) string {
 // finish is final, unrepairable. Refusing costs one re-run of the command.
 func readableFinish(id string) func(line string) error {
 	return func(line string) error {
+		st, err := decodeLines([]string{line}, 0)
+		if err != nil {
+			return err
+		}
 		why := errors.New("it is filed under no run")
-		for _, r := range decodeLines([]string{line}, 0).Runs {
+		for _, r := range st.Runs {
 			if r.ID == id {
 				if why = r.Err; why == nil && r.Finish == nil {
 					why = errors.New("it decoded to no finish")
