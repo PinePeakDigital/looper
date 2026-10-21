@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    a claim is its marker line alone, as pins.py read it: a pin wrapped onto a continuation line leaves its claim uncited, which on looper's own threat model was 45 of 46 claims, all pinned
+--- old
+	return s != "" && startsWithSpace(raw) && !isBullet(s)
+--- new
+	return false && s != "" && startsWithSpace(raw) && !isBullet(s)

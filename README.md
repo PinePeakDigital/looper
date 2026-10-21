@@ -441,11 +441,22 @@ looper deferred       # review-loop-deferred.md: {path, exists, entries, stale, 
 ```
 
 Both make the same kind of statement — something true about the code at a commit, cited as
-`[path:line @ sha]`, `[path:start-end @ sha]` or `[path @ sha]` — and a pin is **stale** when
-`git log <sha>..HEAD -- <path>` lists anything, reported with those commits. A pin whose sha
-names no commit here is in `broken_pins`: `git log` fails on it, which reads exactly like
-"nothing moved", so without that list it would look checked and be unwatched. The threat model
-counts each line holding `OBSERVED:` but no pin as `uncited`. The deferred list reads each line
+`[path:line @ sha]`, `[path:start-end @ sha]`, `[path:206,225-231 @ sha]` (a comma-separated
+list of lines and ranges, no spaces) or `[path @ sha]`, where the sha is 7 to 40 lower-case hex
+digits — and a pin is **stale** when `git log <sha>..HEAD -- <path>` lists anything, reported
+with those commits. Every pin on a line is read. A pin whose sha names no commit here is in
+`broken_pins`: `git log` fails on it, which reads exactly like "nothing moved", so without that
+list it would look checked and be unwatched. Text shaped like a pin — brackets, an `@`, then a
+hex-looking token — that does not parse as one is in `broken_pins` too, as `{line, malformed}`
+with the text as written, for the same reason; a placeholder such as `[file:line @ sha]` is not
+hex after the `@`, so prose describing the format is not reported.
+
+The threat model counts its **claims** — each line holding `OBSERVED:` opens one — and reads a
+claim as that line plus the continuation lines after it, up to the first line that is blank,
+unindented (a heading, the next top-level bullet, a footer), or an indented bullet of its own
+(`-`, `*`, `+`, `1.` or `1)` followed by a space). A claim with no pin anywhere in that block
+is `uncited`. Pins outside any claim — an `INFERRED` note, a `Watch this spot` or `Not an issue
+here` entry — are still watched for `stale` and `broken_pins`. The deferred list reads each line
 containing `DEFERRED` as an entry, with the indented non-blank lines after it, names entries
 with no pin (`unpinned`) and entries with no `Guard` anywhere in them (`unguarded`). Both run
 in the working directory, as the Python did — there is no `--repo` — and take the ledger path
@@ -453,7 +464,7 @@ from `git rev-parse --git-common-dir`, so a linked worktree reads the main check
 Outside a repo the path is `""` and the report says `exists: false`. Arguments are ignored, as
 the Python ignored them; exit 0 for any report.
 
-`TestLedgersMatchThePython` runs 63 scenarios through both commands and requires the exit
+`TestLedgersMatchThePython` runs 48 scenarios through both commands and requires the exit
 status, stdout and stderr the Python printed for the same repo, ledger and working directory,
 byte for byte — key order, indentation, `ensure_ascii` escapes — frozen under
 `internal/ledger/testdata/oracle` (captured at narthur/skills 8c3b0f4). The fixture repo is
@@ -466,6 +477,19 @@ since go1.24's are 15.0), lines split where `str.splitlines()` splits, after uni
 
 The divergences, each with its own test:
 
+- **Citations are read per claim, every pin counts, and a malformed pin is broken.** pins.py read
+  each line alone: a claim whose pin sat on a wrapped continuation line counted as `uncited`
+  (45 of the 46 claims in looper's own threat model, every one of them pinned), `claims` counted
+  pinned lines (63 there) rather than claims, and only the first pin on a line was read, so a
+  second was never checked. Its pattern took one line or one range, so a comma-separated list
+  was no citation at all, and like every other near-miss it was skipped silently: the claim
+  looked pinned and nothing could mark it stale. Fifteen parity scenarios changed answer with
+  this; `TestCitationsAreReadPerClaim` runs them against the Python's frozen answer and looper's
+  (`looper`, written from looper's output and reviewed by hand), and fails if the two are ever
+  the same. `TestClaimsAreBlocks`, `TestCitationsReadsEveryPin`, `TestThreatModelWatchesEveryPin`
+  and `TestDeferredWatchesEveryPin` hold the rules. `TestInvalidUTF8LedgerIsRead` compares the
+  threat model with looper's own report on the U+FFFD ledger, since the Python's now differs in
+  `claims`.
 - **An unreadable ledger** (not a missing one, which is still `exists: false`) exits 1 with
   `looper <cmd>: cannot read <path>: …` and nothing on stdout. The Python caught every `OSError`
   as `exists: false`, so an unreadable deferred list reported nothing deferred and an unreadable

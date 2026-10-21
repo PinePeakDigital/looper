@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    an indented bullet continues the claim above it, so a pin on a note of its own pins a claim that has none and the claim drops out of uncited
+--- old
+	return s != "" && startsWithSpace(raw) && !isBullet(s)
+--- new
+	return s != "" && startsWithSpace(raw)

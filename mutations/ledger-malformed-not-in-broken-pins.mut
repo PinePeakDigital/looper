@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestThreatModelWatchesEveryPin|TestDeferredWatchesEveryPin'
+expect: --- FAIL:
+why:    malformed pins are found and then dropped from broken_pins, so the report is the same as if nobody had looked
+--- old
+		all = append(all, at{m.Line, m.value()})
+--- new
+		_ = at{m.Line, m.value()}

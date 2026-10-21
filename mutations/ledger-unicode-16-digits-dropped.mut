@@ -1,5 +1,5 @@
 target: internal/ledger/py.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython|TestCitationsAreReadPerClaim'
 expect: --- FAIL:
 why:    \d borrowed from Go's Unicode 15 tables: a line pinned with a Unicode 16 digit stops being a citation here while the Python read it as one
 --- old

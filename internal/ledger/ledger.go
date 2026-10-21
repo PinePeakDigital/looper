@@ -97,20 +97,24 @@ func ThreatModel(args []string, out, errOut io.Writer) int {
 		return emit(out, obj{{"path", path}, {"exists", false}, {"claims", 0},
 			{"stale", []value{}}, {"broken_pins", []value{}}, {"uncited", 0}})
 	}
-	claims, uncited := Citations(text, "OBSERVED:")
-	if nulPath("threat-model", claims, errOut) {
+	pins, bad := Citations(text)
+	if nulPath("threat-model", pins, errOut) {
 		return 1
 	}
+	claims, uncited := Claims(text, "OBSERVED:")
 	return emit(out, obj{
 		{"path", path},
 		{"exists", true},
-		{"claims", len(claims)},
-		{"stale", pinList(Stale(claims))},
+		// OBSERVED claims, not pins: pins.py reported how many lines held a pin here.
+		{"claims", claims},
+		// Every pin in the model is watched, the claims' and the rest's — an INFERRED note, a
+		// Watch this spot or Not an issue here entry — as pins.py watched them.
+		{"stale", pinList(Stale(pins))},
 		// A claim pinned to an unresolvable sha returns nothing from Stale, so Step 2b's "skip
 		// the agent when stale is empty" would drop it — while it still looks pinned and stays
 		// out of uncited. For a `Not an issue here` dismissal that is a suppression nothing
-		// ever re-examines.
-		{"broken_pins", pinList(Broken(claims))},
+		// ever re-examines. A malformed pin is the same hazard, and is listed with them.
+		{"broken_pins", brokenList(pins, bad)},
 		{"uncited", uncited},
 	})
 }
@@ -121,6 +125,7 @@ type entry struct {
 	line int
 	text string
 	pins []Pin
+	bad  []Malformed
 }
 
 // first is the entry as the report names it: its line and the first line of its text.
@@ -148,11 +153,14 @@ func entries(text string) []entry {
 	out := make([]entry, len(bs))
 	for i, b := range bs {
 		joined := strings.Join(b.lines, "\n")
-		pins, _ := Citations(joined, "")
+		pins, bad := Citations(joined)
 		for j := range pins {
 			pins[j].Line += b.line - 1
 		}
-		out[i] = entry{line: b.line, text: strip(joined), pins: pins}
+		for j := range bad {
+			bad[j].Line += b.line - 1
+		}
+		out[i] = entry{line: b.line, text: strip(joined), pins: pins, bad: bad}
 	}
 	return out
 }
@@ -187,9 +195,11 @@ func Deferred(args []string, out, errOut io.Writer) int {
 	}
 	es := entries(text)
 	var all []Pin
+	var bad []Malformed
 	unpinned, unguarded := []value{}, []value{}
 	for _, e := range es {
 		all = append(all, e.pins...)
+		bad = append(bad, e.bad...)
 		if len(e.pins) == 0 {
 			// Named, not counted: an entry with no pin can never go stale, and the fix is to pin it.
 			unpinned = append(unpinned, e.first())
@@ -208,7 +218,7 @@ func Deferred(args []string, out, errOut io.Writer) int {
 		{"entries", len(es)},
 		{"stale", pinList(Stale(all))},
 		{"unpinned", unpinned},
-		{"broken_pins", pinList(Broken(all))},
+		{"broken_pins", brokenList(all, bad)},
 		{"unguarded", unguarded},
 	})
 }

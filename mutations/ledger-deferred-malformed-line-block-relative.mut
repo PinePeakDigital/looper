@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestDeferredWatchesEveryPin'
+expect: --- FAIL:
+why:    a malformed pin's line is left block-relative, so broken_pins names a line that is not where the pin is
+--- old
+			bad[j].Line += b.line - 1
+--- new
+			bad[j].Line += 0

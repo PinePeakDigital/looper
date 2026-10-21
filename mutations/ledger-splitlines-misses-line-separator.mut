@@ -1,5 +1,5 @@
 target: internal/py/py.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython|TestCitationsAreReadPerClaim'
 expect: --- FAIL:
 why:    U+2028 not a line break, so two claims on one physical line read as one and the second pin vanishes
 --- old

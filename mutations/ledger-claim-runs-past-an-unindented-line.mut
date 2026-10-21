@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    an unindented line (a heading, a footer) continues the claim, so a pin under the next heading pins a claim that has none
+--- old
+	return s != "" && startsWithSpace(raw) && !isBullet(s)
+--- new
+	return s != "" && !isBullet(s)

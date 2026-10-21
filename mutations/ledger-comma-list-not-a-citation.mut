@@ -1,0 +1,10 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin|TestThreatModelWatchesEveryPin|TestDeferredWatchesEveryPin'
+expect: --- FAIL:
+why:    [a/b.go:206,225-231 @ sha] is no citation, as in pins.py: the claim looks pinned and can never go stale (13 of looper's citations were in that state)
+--- old
+var citation = regexp.MustCompile(`\[([^\]` + spaceClass + `:]+)(?::(` + lineSpec + `(?:,` + lineSpec +
+	`)*))?[`
+--- new
+var citation = regexp.MustCompile(`\[([^\]` + spaceClass + `:]+)(?::(` + lineSpec + `(?:,` + lineSpec +
+	`){0}))?[`

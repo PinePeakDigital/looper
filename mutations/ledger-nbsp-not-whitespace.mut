@@ -1,5 +1,5 @@
 target: internal/ledger/py.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython|TestCitationsAreReadPerClaim'
 expect: --- FAIL:
 why:    \s narrowed to ASCII: a pin with a non-breaking space before its @ stops being a citation, so the claim goes unwatched
 --- old

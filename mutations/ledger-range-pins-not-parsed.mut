@@ -3,8 +3,6 @@ verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
 expect: --- FAIL:
 why:    a [path:a-b @ sha] range pin stops being a citation, so every ranged OBSERVED claim counts as uncited and its file is never watched
 --- old
-var citation = regexp.MustCompile(`\[([^\]` + spaceClass + `:]+)(?::([` + digitClass + `]+(?:-[` +
-	digitClass + `]+)?))?[`
+const lineSpec = `[` + digitClass + `]+(?:-[` + digitClass + `]+)?`
 --- new
-var citation = regexp.MustCompile(`\[([^\]` + spaceClass + `:]+)(?::([` + digitClass + `]+(?:[` +
-	digitClass + `]+)?))?[`
+const lineSpec = `[` + digitClass + `]+(?:[` + digitClass + `]+)?`

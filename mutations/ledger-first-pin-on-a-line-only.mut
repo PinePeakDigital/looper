@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin|TestThreatModelWatchesEveryPin'
+expect: --- FAIL:
+why:    only the first pin on a line is read, as pins.py did, so a second pin is never checked for staleness or a broken sha
+--- old
+		ms := citation.FindAllStringSubmatchIndex(raw, -1)
+--- new
+		ms := citation.FindAllStringSubmatchIndex(raw, 1)
