@@ -870,7 +870,7 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		}
 		return 0, cmdPlan(s, out)
 	case "finish":
-		for _, f := range []string{"run-id", "outcome", "tier", "executed", "escalations", "agents", "findings"} {
+		for _, f := range []string{"run-id", "tier", "executed", "escalations", "agents", "findings"} {
 			s.str(f, "")
 		}
 		s.num("asks", ip(0), "unresolved ask-bucket items")
@@ -882,6 +882,8 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 				outcomes = append(outcomes, o)
 			}
 		}
+		// Listed in -h so review-loop's preflight can probe for asks-open by name.
+		s.str("outcome", "how the run ended: "+strings.Join(outcomes, ", "))
 		for _, t := range Tiers {
 			if t != "carried" {
 				tiers = append(tiers, t)
