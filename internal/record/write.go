@@ -1127,6 +1127,13 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 			"finish row would rewrite an outcome that may already be on a PR and have cleared a "+
 			"push. Start a new run.", pyRepr(id), pyRepr(plan["outcome"]))
 	}
+	// Refused as cycle refuses its counts: a negative --asks is not a count, and the clean
+	// check below reads only a positive one, so a -1 would pass it and be written as the run's
+	// unresolved asks.
+	if asks := s.ints["asks"]; asks != nil && *asks < 0 {
+		return fail("runlog: --asks cannot be negative (got %d) — a negative count of unresolved "+
+			"asks passes the `clean` check below and is written to the record", *asks)
+	}
 	// `clean` with asks still with the user is a self-report the record contradicts: the
 	// derivation reads those asks as halted, so the row would say two things at once. The
 	// warning below used to be all this got, and the row was written regardless.

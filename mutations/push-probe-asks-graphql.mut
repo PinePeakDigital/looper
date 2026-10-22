@@ -5,13 +5,13 @@ why:    `gh pr view --json comments` goes through gh's GraphQL endpoint. The fri
 --- old
 	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
 	if rc != 0 {
-		return "", false
+		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
 	}
 --- new
 	rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body")
 	if rc == 0 {
-		return out, true
+		return out, true, ""
 	}
 	if rc != 0 {
-		return "", false
+		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
 	}

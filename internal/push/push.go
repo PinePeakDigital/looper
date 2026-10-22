@@ -194,8 +194,19 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 // the earlier name `couldAsk` claimed while the refused-run-id path asks nothing.
 //
 // branch is the branch whose PR's comments are read; "" skips the PR half, as a gh that could
-// not run does. `gh pr view` used to find the PR from gh's own reading of the checkout.
+// not run does. The two differ for the operator: with no branch known (a detached HEAD, an
+// unborn branch, a git that could not say) gh was never asked, so a Diag note must not blame
+// gh for not running. `gh pr view` used to find the PR from gh's own reading of the checkout.
 func reportProbe(runID string, r *record.Run, repo, branch string) (landed, attributable bool) {
+	landed, attributable, _ = probeReport(runID, r, repo, branch)
+	return landed, attributable
+}
+
+// probeReport is reportProbe plus ghWhy: one clause saying which gh call failed, or "" when
+// gh answered or was never asked (no branch). attributable cannot carry it, because a
+// readable pending file makes the refusal attributable whether or not the PR half answered,
+// and a report already posted to the PR is then invisible to the gate with no sign of why.
+func probeReport(runID string, r *record.Run, repo, branch string) (landed, attributable bool, ghWhy string) {
 	// The guard travels with the interpolation: evidence.Marker and evidence.PendingPath
 	// refuse an id that is not plain, so no caller can forget it. It once sat in Check only,
 	// and a run id of six `../` segments then resolved the pending path outside the repo.
@@ -207,26 +218,27 @@ func reportProbe(runID string, r *record.Run, repo, branch string) (landed, attr
 		// Attributable: the question was well-formed enough to answer and the answer is no.
 		// Nothing is asked here, which is why `couldAsk` needed this comment as an exception
 		// and `attributable` does not.
-		return false, true
+		return false, true, ""
 	}
 	needles := append([]string{marker}, Fingerprint(r)...)
-	if out, ok := prComments(repo, branch); ok {
+	out, ok, ghWhy := prComments(repo, branch)
+	if ok {
 		attributable = true
 		if containsAll(out, needles) {
-			return true, true
+			return true, true, ghWhy
 		}
 	}
 	rc, gitdir := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if rc != 0 || gitdir == "" {
-		return false, attributable
+		return false, attributable, ghWhy
 	}
 	// No attributable assignment here: git answered, so both paths below return true outright.
 	pending, _ := evidence.PendingPath(gitdir, runID) // the id passed evidence.Marker above
 	body, err := os.ReadFile(pending)
 	if err != nil {
-		return false, true
+		return false, true, ghWhy
 	}
-	return containsAll(string(body), needles), true
+	return containsAll(string(body), needles), true, ghWhy
 }
 
 // prComments is the bodies of the comments on branch's PR, and whether gh ANSWERED. Two REST
@@ -241,25 +253,31 @@ func reportProbe(runID string, r *record.Run, repo, branch string) (landed, attr
 //
 // An answer that does not decode as a PR list is no answer, for the reason report.FindPR
 // gives: stdout is shared with any descendant that inherited it.
-func prComments(repo, branch string) (string, bool) {
+//
+// why names the gh call that failed ("" when gh answered, or was never asked for want of a
+// branch), for the Diag note in Check.
+func prComments(repo, branch string) (body string, ok bool, why string) {
 	if branch == "" {
-		return "", false
+		return "", false, ""
 	}
 	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
 	if rc != 0 {
-		return "", false
+		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
 	}
 	var prs []struct {
 		Number int `json:"number"`
 	}
 	if json.Unmarshal([]byte(out), &prs) != nil {
-		return "", false
+		return "", false, "listing the PR returned something that is not a PR list"
 	}
 	if len(prs) == 0 {
-		return "", true
+		return "", true, ""
 	}
 	rc, out = sh(repo, "gh", "api", "--paginate", evidence.PRComments(prs[0].Number), "--jq", ".[].body")
-	return out, rc == 0
+	if rc != 0 {
+		return out, false, fmt.Sprintf("reading the PR's comments failed (gh exit %d)", rc)
+	}
+	return out, true, ""
 }
 
 // currentBranch is git's current branch in repo, or "" when there is none (a detached HEAD)
@@ -488,14 +506,25 @@ func Check(p CheckParams) (Result, error) {
 		defBranch = defaultBranch(p.Repo)
 	}
 	var unreported string
-	if landed, attributable := reportProbe(p.RunID, r, p.Repo, branch); !landed {
+	if landed, attributable, ghWhy := probeReport(p.RunID, r, p.Repo, branch); !landed {
+		if ghWhy != "" && p.Diag != nil {
+			// Said even when a pending file was readable (so the refusal is attributable): a
+			// report already on the PR cannot be seen while gh fails, and the refusal alone
+			// reads as an unposted one. The exit code is all sh carries; gh's stderr is not.
+			fmt.Fprintf(p.Diag, "push-check: the PR's comments could not be read — %s — so a report "+
+				"already posted there was not seen; the refusal below may not mean it is unposted\n", ghWhy)
+		}
 		unreported = "this run's report has not reached the PR or the pending-report file — " +
 			"run looper pr-report --run-id " + p.RunID + " --post first"
 		if !attributable && p.Diag != nil {
 			// The refusal below is correct either way — fail closed — but "go post the
 			// report" is the wrong instruction when the real problem is that neither probe
 			// ran. Said here rather than in the reason, which parity pins exactly.
-			fmt.Fprintf(p.Diag, "push-check: neither gh (the PR's comments) nor `git rev-parse` could be "+
+			ghNote := "gh (the PR's comments)"
+			if branch == "" {
+				ghNote = "gh (the PR's comments; never asked, no branch is known, as on a detached HEAD)"
+			}
+			fmt.Fprintf(p.Diag, "push-check: neither "+ghNote+" nor `git rev-parse` could be "+
 				"run in %s, or answered for certain (missing binary, not executable, killed at the %s "+
 				"budget, or a descendant held its output past the drain bound), so "+
 				"whether the report landed could not be determined; the refusal below fails "+

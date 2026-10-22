@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestCleanWithUnresolvedAsksIsRefused$'
+expect: a negative --asks was not refused
+why:    finish checked asks only for `> 0` under `clean`, so --asks -1 passed that check and was written as the run's unresolved-asks count, where the disclosure and the convergence derivation read it. cycle already refuses every negative count (a negative pulls spend back under the cap); finish took the same flag type with no such guard.
+--- old
+	if asks := s.ints["asks"]; asks != nil && *asks < 0 {
+--- new
+	if asks := s.ints["asks"]; asks != nil && *asks < 0 && false {

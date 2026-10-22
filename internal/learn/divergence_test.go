@@ -84,6 +84,8 @@ func TestALeadingDateIsNotWrittenTwice(t *testing.T) {
 		{"only the first date", "2026-10-20: 2026-10-19: the retry backoff", "- 2026-10-21: 2026-10-19: the retry backoff"},
 		{"a date later in the text", "the backoff broke on 2026-10-20", "- 2026-10-21: the backoff broke on 2026-10-20"},
 		{"digits that are no date", "20261020 rows were read", "- 2026-10-21: 20261020 rows were read"},
+		{"leading whitespace before the date", "  2026-10-20: the retry backoff matters", "- 2026-10-21: the retry backoff matters"},
+		{"a tab after the date", "2026-10-20\tthe retry backoff matters", "- 2026-10-21: the retry backoff matters"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := filepath.Join(t.TempDir(), "l.md")
@@ -128,6 +130,62 @@ func TestAShortEntryIsRefused(t *testing.T) {
 			}
 			if c.code == 1 && (!bytes.Equal(got, body) || !strings.Contains(errOut.String(), "too short")) {
 				t.Errorf("a short entry was written, or refused without saying why: stderr %q, file\n%s", errOut.String(), got)
+			}
+		})
+	}
+}
+
+// strings.Contains(x, "") is true, so bump with no text, "" or only whitespace re-dated the
+// first entry in the file. learn.py did too. Refused, and nothing is written.
+func TestBumpRefusesAnEmptyMatch(t *testing.T) {
+	body := "## Dismissed\n- 2026-01-01: foo bar (declined)\n- 2026-01-02: other\n"
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"no text", []string{"bump", "{f}"}},
+		{"an empty string", []string{"bump", "{f}", ""}},
+		{"whitespace", []string{"bump", "{f}", " \t "}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "l.md")
+			if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string(nil), c.args...)
+			args[1] = f
+			var out, errOut bytes.Buffer
+			if code := Command(args, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "match text is empty") {
+				t.Errorf("exit %d, stderr %q", code, errOut.String())
+			}
+			if got, _ := os.ReadFile(f); string(got) != body {
+				t.Errorf("the file was rewritten: %q", got)
+			}
+		})
+	}
+}
+
+// A date alone is no learning: add strips one leading ISO date (with any whitespace before it
+// and a colon, spaces or tabs after it), and what is left must still clear the length floor.
+func TestADateAloneIsTooShort(t *testing.T) {
+	for _, c := range []struct{ name, text string }{
+		{"a bare date", "2026-10-20"},
+		{"leading whitespace", "  2026-10-20"},
+		{"a tab after the date", "2026-10-20\t"},
+		{"a colon and a tab", "2026-10-20:\t"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "l.md")
+			body := "## Accepted patterns\n- 2026-01-01: a\n"
+			if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			if code := Command([]string{"add", f, c.text, "--section", "accepted"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "too short") {
+				t.Errorf("exit %d, stderr %q", code, errOut.String())
+			}
+			if got, _ := os.ReadFile(f); string(got) != body {
+				t.Errorf("the file was rewritten: %q", got)
 			}
 		})
 	}

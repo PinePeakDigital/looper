@@ -42,8 +42,8 @@ const usage = `usage: looper version
                    [--spec-artifact yes|no] [--delta-logic yes|no] [--context f] [--dry-run]
 
 push-check writes the decision as JSON to stdout and nothing else, and exits 0 when the
-push is permitted, 3 when it is refused (the JSON says why), and 1 or 2 when it could not
-decide (stdout empty). An omitted -branch or -default-branch is read from git in -repo:
+push is permitted, 3 when it is refused (the JSON says why), and 1 when it could not
+decide (stdout empty; 2 is reserved for usage errors of the looper command itself). An omitted -branch or -default-branch is read from git in -repo:
 the current branch, and the branch origin/HEAD names. stderr carries a
 note when the report check could not be run at all, or when no row for the run was
 readable in the store — two cases where the decision's own stated reason is the wrong
@@ -263,21 +263,24 @@ func runDocs(args []string, out io.Writer) error {
 // this to exitPushRefused without printing anything, so stderr carries no error for it.
 var errPushRefused = errors.New("push refused")
 
-// exitPushRefused is push-check's exit status for a refusal. Distinct from 1 and 2, which
-// mean the tool failed to answer.
+// exitPushRefused is push-check's exit status for a refusal. Distinct from 1 (the tool could
+// not decide) and 2 (reserved for usage errors of the looper command itself).
 const exitPushRefused = 3
 
 // runPushCheck answers Step 14's auto-push question. It prints the decision as JSON either
-// way, and exits 0 when the push is permitted, 3 when it is refused, 1 or 2 when it could not
-// decide (nothing on stdout then).
+// way, and exits 0 when the push is permitted, 3 when it is refused, 1 when it could not
+// decide (nothing on stdout then; every failure maps to 1, only an unknown top-level looper
+// command exits 2).
 //
 // Two reasons fix that contract, and each rules out the simpler one. The answer is the
 // OUTPUT: a refusal is a successful answer with a reason to act on, so it must not look like
 // the tool failing — that was why this exited 0 for both, and why a refusal still prints its
-// JSON and does not share 1 or 2 with a failure. But exit 0 for a refusal made
-// `looper push-check … && git push` push anyway: the friction log records it twice
-// (2026-10-16, 2026-10-20), both times on push:false. Nathan chose the distinct code on
-// 2026-10-21, over keeping 0 and over a plain non-zero exit.
+// JSON and does not share 1 with a failure. But exit 0 for a refusal made
+// `looper push-check … && git push` push anyway on push:false. A non-zero refusal stops that
+// plain chain. The two logged incidents (friction log, 2026-10-16 and 2026-10-20) were
+// pipe-masked — `push-check … | tail … && git push` takes tail's status — so exit 3 alone
+// would not have stopped them, and the JSON must still be read. Nathan chose the distinct
+// code on 2026-10-21, over keeping 0 and over a plain non-zero exit.
 func runPushCheck(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("push-check", flag.ContinueOnError)
 	// STDERR, not out. This command documents stdout as JSON and nothing else, and

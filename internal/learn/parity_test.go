@@ -51,7 +51,6 @@ var scenarios = []scenario{
 	{name: "add_bad_section", file: s(base), args: []string{"add", "{f}", "x", "--section", "other"}, usage: true},
 	{name: "bump_hit", file: s(base), args: []string{"bump", "{f}", "foo bar"}},
 	{name: "bump_first_of_two", file: s(base), args: []string{"bump", "{f}", "e"}},
-	{name: "bump_empty_matches_the_first", file: s(base), args: []string{"bump", "{f}"}},
 	{name: "bump_miss", file: s(base), args: []string{"bump", "{f}", "nope"}},
 	{name: "bump_miss_quotes", file: s(base), args: []string{"bump", "{f}", "it's"}},
 	{name: "bump_missing_file", args: []string{"bump", "{f}", "x"}},

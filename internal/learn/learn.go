@@ -283,6 +283,12 @@ func Command(args []string, out, errOut io.Writer) int {
 
 	switch cmd {
 	case "bump":
+		// strings.Contains(x, "") is true, so an empty match re-dated the first entry in the
+		// file, whichever it was. learn.py did the same; measured: `looper learn bump f ""`
+		// re-dated the first entry and exited 0.
+		if py.Strip(text) == "" {
+			return refuse("the match text is empty: it would match the first entry — nothing written")
+		}
 		if !Bump(lines, text, Today()) {
 			return refuse("no entry matched: " + record.PyRepr(text))
 		}

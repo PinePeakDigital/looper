@@ -315,11 +315,13 @@ jobs:
             echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
           fi
           c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
-          [ "$c" -ge 47 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 47"; cat learn.log; exit 1; }
+          # 46: bump_empty_matches_the_first left the oracle when bump began refusing an empty
+          # match (TestBumpRefusesAnEmptyMatch pins the new behaviour, named below).
+          [ "$c" -ge 46 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 46"; cat learn.log; exit 1; }
           echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
           for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone TestANonUTF8EntryIsRefused \
                    TestAnUnreadableFileIsAnError TestAnEntryDateIsASCIIDigits TestALeadingDateIsNotWrittenTwice \
-                   TestAShortEntryIsRefused; do
+                   TestAShortEntryIsRefused TestBumpRefusesAnEmptyMatch TestADateAloneIsTooShort; do
             grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
           done
 
@@ -408,7 +410,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 470 ] || { echo "only $n mutations, expected at least 470 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 473 ] || { echo "only $n mutations, expected at least 473 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

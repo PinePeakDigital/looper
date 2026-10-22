@@ -759,7 +759,7 @@ func TestEscalationsMustBeAListOfGateAndReason(t *testing.T) {
 	if b, _ := os.ReadFile(store); strings.Count(string(b), "\n") != 1 {
 		t.Errorf("a refused finish wrote a row:\n%s", b)
 	}
-	// The shape it asks for is accepted, and so is nothing at all.
+	// The shape it asks for is accepted.
 	errb.Reset()
 	if c := Command([]string{"finish", "--run-id", "es", "--outcome", "clean", "--tier", "fast",
 		"--escalations", `[{"gate":"security","reason":"ran wider"}]`}, &out, &errb); c != 0 {
@@ -789,6 +789,16 @@ func TestCleanWithUnresolvedAsksIsRefused(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
 		t.Errorf("a refused finish wrote to the store:\n%s", after)
+	}
+	// A negative count is not a count: refused under any outcome, nothing written.
+	errb.Reset()
+	before, _ = os.ReadFile(store)
+	if c := Command([]string{"finish", "--run-id", "ca", "--outcome", "clean", "--tier", "fast", "--asks", "-1"}, &out, &errb); c != 1 ||
+		!strings.Contains(errb.String(), "--asks cannot be negative (got -1)") {
+		t.Errorf("a negative --asks was not refused: exit %d, stderr %q", c, errb.String())
+	}
+	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
+		t.Errorf("a finish with a negative --asks wrote to the store:\n%s", after)
 	}
 	// Narrow: the same asks under another outcome, and clean with none, are both recorded.
 	errb.Reset()

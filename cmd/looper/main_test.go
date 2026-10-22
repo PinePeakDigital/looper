@@ -214,8 +214,8 @@ func write(t *testing.T, dir, name, body string) {
 
 // The push-check subcommand's own surface: the flags it refuses, and its exit statuses. A
 // refusal prints its answer on stdout AND exits exactly 3 — not 0, which let
-// `looper push-check … && git push` push on push:false (friction log, twice), and not 1 or 2,
-// which mean the tool failed to answer and print nothing on stdout.
+// `looper push-check … && git push` push on push:false (friction log, twice), and not 1 (the tool could not decide),
+// which means the tool failed to answer and prints nothing on stdout.
 func TestPushCheck(t *testing.T) {
 	dir := t.TempDir()
 	store := filepath.Join(dir, "runs.jsonl")

@@ -5,10 +5,10 @@ why:    no gh and no git must both read as NOT landed. pr-report guarantees the 
 --- old
 	body, err := os.ReadFile(pending)
 	if err != nil {
-		return false, true
+		return false, true, ghWhy
 	}
 --- new
 	body, err := os.ReadFile(pending)
 	if err != nil {
-		return true, true
+		return true, true, ghWhy
 	}

@@ -3,6 +3,7 @@ package push
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -269,6 +270,18 @@ func ghComments(t *testing.T, body string) {
 	t.Helper()
 	shimGh(t, `case "$*" in
   "api repos/{owner}/{repo}/pulls?state=all&head={owner}%3A"*) echo '[{"number":5}]' ;;
+  "api --paginate repos/{owner}/{repo}/issues/5/comments --jq .[].body") printf '`+body+`\n' ;;
+  *) exit 1 ;;
+esac`)
+}
+
+// ghCommentsFor is ghComments for one branch only: the pulls query must carry exactly
+// head={owner}%3A<url.QueryEscape(branch)>, and any other branch gets exit 1, so a probe that
+// looks up the wrong branch (the checkout's, say, over an explicit -branch) fails the test.
+func ghCommentsFor(t *testing.T, branch, body string) {
+	t.Helper()
+	shimGh(t, `case "$*" in
+  "api repos/{owner}/{repo}/pulls?state=all&head={owner}%3A`+url.QueryEscape(branch)+`") echo '[{"number":5}]' ;;
   "api --paginate repos/{owner}/{repo}/issues/5/comments --jq .[].body") printf '`+body+`\n' ;;
   *) exit 1 ;;
 esac`)
@@ -809,9 +822,12 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	})
 
 	t.Run("git could be asked and said no", func(t *testing.T) {
-		// A real repo with no pending file: the report genuinely is not there, which is the
-		// case the refusal's instruction IS right for. Nothing may be written to Diag, or the
-		// note becomes noise on every ordinary refusal and stops meaning anything.
+		// A real repo with no pending file and a gh that ANSWERS without the report: the report
+		// genuinely is not there, which is the case the refusal's instruction IS right for.
+		// Nothing may be written to Diag, or the note becomes noise on every ordinary refusal
+		// and stops meaning anything. (gh used to fail here; a failing gh is now noted, see
+		// "gh failed while a pending file was readable".)
+		ghComments(t, "some unrelated comment")
 		dir, _ := repo(t)
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
@@ -854,6 +870,37 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		}
 		if diag.String() != "" {
 			t.Errorf("Diag = %q, but gh answered — nothing could not be asked", diag.String())
+		}
+	})
+
+	t.Run("gh failed while a pending file was readable", func(t *testing.T) {
+		// git answers and a pending file exists, so the report probe has a cause the refusal
+		// already covers ("post the report first") and stays attributable. But the PR half
+		// failed too: a report already posted to the PR is invisible to this gate, and the
+		// refusal alone gives the operator nothing to tell that from an unposted one. Each
+		// failing call must be named.
+		for _, c := range []struct{ name, shim, want string }{
+			{"the PR list fails", `exit 3`, "listing the PR failed (gh exit 3)"},
+			{"the comments call fails", `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 4 ;; esac`,
+				"reading the PR's comments failed (gh exit 4)"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				shimGh(t, c.shim)
+				dir, gitdir := repo(t)
+				landReport(t, gitdir, "run1", []string{"## review-loop", "1 cycle(s) · 1 agent(s)"})
+				var diag strings.Builder
+				res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+					Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Push || !strings.Contains(res.Reason, "looper pr-report --run-id run1 --post") {
+					t.Fatalf("expected the owed-report refusal: %+v", res)
+				}
+				if !strings.Contains(diag.String(), c.want) {
+					t.Errorf("Diag = %q, want it to say %q", diag.String(), c.want)
+				}
+			})
 		}
 	})
 
@@ -1203,6 +1250,17 @@ func TestCheckReadsOmittedBranchesFromGit(t *testing.T) {
 		}
 	})
 
+	t.Run("an explicit -branch is the one gh is asked about", func(t *testing.T) {
+		// The report is on feat/x's PR only, and the checkout is feat/y: a gh lookup of the
+		// checkout's branch gets exit 1 from the shim and the gate refuses.
+		ghCommentsFor(t, "feat/x", fmt.Sprintf(reportMarker, "run1")+"\\n"+strings.Join(fp, "\\n"))
+		dir, _ := committedRepo(t, true)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		if res := check(t, dir, "feat/x", "main"); !res.Push {
+			t.Errorf("gh was not asked about the explicit -branch: %+v", res)
+		}
+	})
+
 	t.Run("no origin/HEAD stays unknown", func(t *testing.T) {
 		// `git remote add` + fetch leaves origin/HEAD unset. Guessing "main" there would let
 		// a repo whose default is something else push to it.
@@ -1249,6 +1307,31 @@ func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, false) — an unreadable list was read as an answer",
 				landed, attributable)
+		}
+	})
+
+	t.Run("the PR list answers and the comments call fails", func(t *testing.T) {
+		// gh found PR #5 and then could not read its comments: that is gh not answering, not
+		// "no PR", so with git unable to run too there is no stateable cause.
+		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 1 ;; esac`)
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, false) — a failed comments call was read as an answer",
+				landed, attributable)
+		}
+	})
+
+	t.Run("only the expected branch is looked up", func(t *testing.T) {
+		// The checkout is on feat/y, the caller asks about feat/x with a slash in it. The shim
+		// answers the exact escaped query for feat/x only.
+		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(Fingerprint(r), "\\n")
+		ghCommentsFor(t, "feat/x", body)
+		dir, _ := repo(t)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); !landed || !attributable {
+			t.Errorf("reportProbe(feat/x) = (%v, %v), want (true, true)", landed, attributable)
+		}
+		if landed, _ := reportProbe("run1", r, dir, "feat/y"); landed {
+			t.Errorf("reportProbe(feat/y) landed: the wrong branch's PR was accepted")
 		}
 	})
 

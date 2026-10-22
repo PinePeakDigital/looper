@@ -134,13 +134,16 @@ looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
 | --- | --- | --- |
 | 0 | push permitted | the JSON, `"push":true` |
 | 3 | push refused | the JSON, `"push":false` and the reason |
-| 1, 2 | no decision: a usage error, an unreadable store, a run id that is not plain | empty; stderr says why |
+| 1 | no decision: a bad flag, an unreadable store, a run id that is not plain | empty; stderr says why |
 
-So `looper push-check … && git push` pushes only on a permitted push. Until 2026-10-21 a
-refusal exited 0, so that it could not be mistaken for the tool failing to answer; the
-friction log records that exit 0 letting a chained `git push` run on `push:false` twice.
-Exit 3 keeps both: a refusal stops the chain, and it still prints its answer, which a
-failure never does. `-h` exits 0 with nothing on stdout.
+So a plain `looper push-check … && git push` pushes only on a permitted push. Until
+2026-10-21 a refusal exited 0, so that it could not be mistaken for the tool failing to
+answer. Exit 3 keeps that distinction (a refusal still prints its answer, which a failure
+never does) and stops the plain chain. It does not stop a piped one: both logged incidents
+(2026-10-16, 2026-10-20) ran `push-check … | tail … && git push`, where `tail`'s status
+masked push-check's, so the JSON must still be read. push-check exits 1 when it could not
+decide; exit 2 is reserved for usage errors of the `looper` command itself (an unknown
+top-level command). `-h` exits 0 with nothing on stdout.
 
 **An omitted `-branch` or `-default-branch` is read from git in `-repo`**: the current
 branch (`git branch --show-current`), and the branch `refs/remotes/origin/HEAD` names, with
@@ -188,10 +191,12 @@ by `-branch` (or git's current branch), the same lookup `looper pr-report` posts
 
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
 also carries a one-line note when neither gh (the PR's comments) nor `git rev-parse` could be
-run at all, because the gate then fails closed with a reason — "run `looper pr-report
+run at all (when no branch is known, as on a detached HEAD, the note says gh was never asked), because the gate then fails closed with a reason — "run `looper pr-report
 --run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
-reason for exact equality against what the Python printed, and it had no second stream. A refusal
+reason for exact equality against what the Python printed, and it had no second stream. A second note says the PR's comments could not be
+read, naming the gh call and its exit code, whenever gh failed on the PR half — even when the
+pending-report file was readable and the refusal is otherwise explained. A refusal
 for a report that is genuinely unposted stays silent, so the note's presence is the
 signal.
 
