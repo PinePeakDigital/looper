@@ -32,11 +32,10 @@ const lineSpec = `[` + digitClass + `]+(?:-[` + digitClass + `]+)?`
 // token. Where it is not also a citation it is malformed — a stray space, an upper-case or
 // six-character sha, a range written 1- — and is reported in broken_pins rather than skipped,
 // because skipped it reads exactly like a pin that is fine. The token must look like hex so a
-// placeholder such as [file:line @ sha] in prose is not reported. Hex alone is not enough:
-// [price @ 100] and [user@fade] are prose, so the left side must look like a path (a `.`, `/`
-// or `:`) or the token must be at least six hex digits, the shortest sha a writer types.
-var pinShape = regexp.MustCompile(`\[(?:[^\[\]@]*[./:][^\[\]@]*@[` + spaceClass + `]*[0-9A-Fa-f]+|[^\[\]@]+@[` +
-	spaceClass + `]*[0-9A-Fa-f]{6,})[` + spaceClass + `]*\]`)
+// placeholder such as [file:line @ sha] in prose is not reported. The token must also be at
+// least six hex digits, the shortest sha a writer types: [price @ 100], [user.name@fade] and
+// [note: see @ 100] are prose, and a three-digit "sha" on a file name is no pin anyone meant.
+var pinShape = regexp.MustCompile(`\[[^\[\]@]+@[` + spaceClass + `]*[0-9A-Fa-f]{6,}[` + spaceClass + `]*\]`)
 
 // Pin is one citation. Lines is nil for a whole-file pin. Commits is set only on a stale pin:
 // the `git log --oneline` lines that moved its file since Sha.

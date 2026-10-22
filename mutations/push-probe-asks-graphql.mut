@@ -5,7 +5,7 @@ why:    `gh pr view --json comments` goes through gh's GraphQL endpoint. The fri
 --- old
 	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
 	if rc != 0 {
-		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
+		return "", false, fmt.Sprintf("listing the PR failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
 	}
 --- new
 	rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body")
@@ -13,5 +13,5 @@ why:    `gh pr view --json comments` goes through gh's GraphQL endpoint. The fri
 		return out, true, ""
 	}
 	if rc != 0 {
-		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
+		return "", false, fmt.Sprintf("listing the PR failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
 	}

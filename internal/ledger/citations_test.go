@@ -132,6 +132,9 @@ func TestCitationsReadsEveryPin(t *testing.T) {
 		{"a price is not a pin", "costs [price @ 100]", nil, nil},
 		{"a short hex word is not a pin", "ask [user@fade]", nil, nil},
 		{"six hex digits without a path is a pin shape", "[see @ ABCDEF0]", nil, []string{"[see @ ABCDEF0]"}},
+		{"six hex digits are a pin shape", "[see @ ABCDEF]", nil, []string{"[see @ ABCDEF]"}},
+		{"five hex digits are prose", "[see @ abcde]", nil, nil},
+		{"a colon or dot on the left is still prose", "[note: see @ 100] [user.name@fade]", nil, nil},
 		{"a bracket before a pin is the pin's", "[[x.go @ abc1234]", []string{"[x.go:"}, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {

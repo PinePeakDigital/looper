@@ -880,9 +880,9 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		// refusal alone gives the operator nothing to tell that from an unposted one. Each
 		// failing call must be named.
 		for _, c := range []struct{ name, shim, want string }{
-			{"the PR list fails", `exit 3`, "listing the PR failed (gh exit 3)"},
+			{"the PR list fails", `exit 3`, "listing the PR failed (gh status 3"},
 			{"the comments call fails", `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 4 ;; esac`,
-				"reading the PR's comments failed (gh exit 4)"},
+				"reading the PR's comments failed (gh status 4"},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				shimGh(t, c.shim)

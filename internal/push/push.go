@@ -262,7 +262,7 @@ func prComments(repo, branch string) (body string, ok bool, why string) {
 	}
 	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
 	if rc != 0 {
-		return "", false, fmt.Sprintf("listing the PR failed (gh exit %d)", rc)
+		return "", false, fmt.Sprintf("listing the PR failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
 	}
 	var prs []struct {
 		Number int `json:"number"`
@@ -275,7 +275,7 @@ func prComments(repo, branch string) (body string, ok bool, why string) {
 	}
 	rc, out = sh(repo, "gh", "api", "--paginate", evidence.PRComments(prs[0].Number), "--jq", ".[].body")
 	if rc != 0 {
-		return out, false, fmt.Sprintf("reading the PR's comments failed (gh exit %d)", rc)
+		return out, false, fmt.Sprintf("reading the PR's comments failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
 	}
 	return out, true, ""
 }

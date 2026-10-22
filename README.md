@@ -665,7 +665,7 @@ among the arguments, abbreviated as argparse allowed, with `--` ending them. As 
 holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
 anything starting `-h` are options.
 
-`TestLearnMatchesThePython` runs 47 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 46 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
@@ -673,7 +673,7 @@ final error line: argparse's usage text names learn.py and its `--selftest`, whi
 does not have. Ten scenarios that added a probe-length text (`x`, `-1`, `first`) were given
 longer text when short text became a refusal, and their goldens recaptured from learn.py's
 compiled `learn.cpython-314.pyc`, learn.py itself being gone from the skills checkout. That
-bytecode reproduced all 47 existing goldens first, except that argparse's usage text named it
+bytecode reproduced all 47 goldens that existed then (one, bump_empty_matches_the_first, was later removed when bump began refusing an empty match), except that argparse's usage text named it
 `learn.pyc`; only the ten scenarios' `file` goldens changed.
 
 The divergences:
