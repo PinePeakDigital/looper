@@ -160,11 +160,12 @@ looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
 a human every time. **"It is broken" is a block**: a recorded `test-failure`,
 `blocked` or `abandoned` outcome, a blocked evidence gate, a finding skipped with no
 recorded dismissal, or the default branch. A run that ended with findings still waiting on
-the user records `asks-open`, which is unfinished, not broken: it derives `halted` and pushes
-with the disclosure, so its tip can be stamped as the baseline the next run's delta is measured
-from (issue #41). Before `asks-open` existed, `blocked` was the only outcome that fit, so such a
-run was refused, never stamped, and the run after the user's fixes re-reviewed the whole branch. **"There is no evidence either way" is also
-a block**, and so is a run that was never finished; both are deliberate divergences from
+the user records `asks-open`, which is unfinished, not broken. It derives `halted` when the run
+has cycle rows, or `unknown` when it has none, and push-check permits either with its disclosure
+when the other checks pass. review-loop then stamps the tip as the baseline the next run's delta
+is measured from (issue #41). Before `asks-open` existed, `blocked` was the only outcome that
+fit, so such a run was refused, never stamped, and the run after the user's fixes re-reviewed
+the whole branch. **"There is no evidence either way" is also a block**, and so is a run that was never finished; both are deliberate divergences from
 the Python — see below.
 
 Two things are read from the record rather than accepted as arguments, and both used
