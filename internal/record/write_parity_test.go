@@ -619,7 +619,9 @@ print(json.dumps({"banned": list(runlog.BANNED_REASON), "cap": runlog.DEFAULT_AG
 	}{
 		{"BANNED_REASON", py.Banned, BannedReason},
 		{"DEFAULT_AGENT_CAP", py.Cap, DefaultAgentCap},
-		{"OUTCOMES", py.Outcomes, Outcomes},
+		// asks-open is a deliberate addition with no runlog.py counterpart (issue #41),
+		// asserted by TestAsksOpenNeedsAsks; the rest of the list must still match.
+		{"OUTCOMES", py.Outcomes, without(Outcomes, AsksOpen)},
 		{"TIERS", py.Tiers, Tiers},
 		{"SUBCOMMAND_STATES", py.SubcommandStates, SubcommandStates},
 		{"GATE_ACCOUNTED", py.Accounted, GateAccounted},
@@ -990,5 +992,58 @@ func TestAnUnreadableStoreIsAnErrorNotEmpty(t *testing.T) {
 		if c := Command(args, &out, &errb); c != 1 || !strings.Contains(errb.String(), "cannot read the run store") {
 			t.Errorf("%v: exit %d, out %q, err %q", args, c, out.String(), errb.String())
 		}
+	}
+}
+
+func without(xs []string, drop string) []string {
+	out := []string{}
+	for _, x := range xs {
+		if x != drop {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// Issue #41: a run that ends with asks still owed records asks-open, which is not a broken
+// outcome. It needs at least one ask, and it derives halted, never converged.
+func TestAsksOpenNeedsAsks(t *testing.T) {
+	repo, _ := scenarioRepo(t, wscenario{})
+	t.Chdir(repo)
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	var out, errb bytes.Buffer
+	for _, id := range []string{"oa", "ob"} {
+		if c := Command([]string{"plan", "--tier", "fast", "--model", "m", "--run-id", id}, &out, &errb); c != 0 {
+			t.Fatalf("plan: %d %s", c, errb.String())
+		}
+	}
+	before, _ := os.ReadFile(store)
+	for _, asks := range [][]string{{"--asks", "0"}, nil} {
+		errb.Reset()
+		args := append([]string{"finish", "--run-id", "oa", "--outcome", "asks-open", "--tier", "fast"}, asks...)
+		if c := Command(args, &out, &errb); c != 1 ||
+			!strings.Contains(errb.String(), "refusing to finish as 'asks-open' with no unresolved asks") {
+			t.Errorf("asks-open with %v was not refused: exit %d, stderr %q", asks, c, errb.String())
+		}
+	}
+	if after, _ := os.ReadFile(store); !bytes.Equal(before, after) {
+		t.Errorf("a refused finish wrote to the store:\n%s", after)
+	}
+	errb.Reset()
+	if c := Command([]string{"cycle", "--run-id", "ob", "--n", "1", "--agents", "1", "--applied", "0", "--asked", "2"}, &out, &errb); c != 0 {
+		t.Fatalf("cycle: %d %s", c, errb.String())
+	}
+	errb.Reset()
+	if c := Command([]string{"finish", "--run-id", "ob", "--outcome", "asks-open", "--tier", "fast", "--asks", "2"}, &out, &errb); c != 0 {
+		t.Fatalf("asks-open with 2 asks was refused: exit %d, stderr %q", c, errb.String())
+	}
+	runs, err := Load(store, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conv, err := runs["ob"].Convergence(); err != nil || conv != Halted {
+		t.Errorf("asks-open run derived %q (err %v), want %q", conv, err, Halted)
 	}
 }

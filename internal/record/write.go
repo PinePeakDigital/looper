@@ -535,7 +535,12 @@ func anyArg(raw *string, what string) (any, error) {
 
 // Every state the record can hold, in one place.
 var (
-	Outcomes         = []string{"clean", "cycle-limit", "test-failure", "blocked", "abandoned", "skipped", "carried"}
+	Outcomes = []string{"clean", "cycle-limit", "asks-open", "test-failure", "blocked", "abandoned", "skipped", "carried"}
+	// AsksOpen is the one outcome runlog.py never had (issue #41): the run ended with
+	// findings still waiting on the user. It is not broken, so the push gate reads the
+	// derived `halted` and pushes with a disclosure. Before it, `blocked` was the only fit
+	// for that ending, and push-check reads `blocked` as a broken tree.
+	AsksOpen         = "asks-open"
 	Tiers            = []string{"skipped", "carried", "fast", "full", "partial"}
 	SubcommandStates = []string{"skipped", "carried"}
 	// A waiver passes its gate, so it must not force partial; review-stats still shows it.
@@ -865,7 +870,7 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		}
 		return 0, cmdPlan(s, out)
 	case "finish":
-		for _, f := range []string{"run-id", "outcome", "tier", "executed", "escalations", "agents", "findings"} {
+		for _, f := range []string{"run-id", "tier", "executed", "escalations", "agents", "findings"} {
 			s.str(f, "")
 		}
 		s.num("asks", ip(0), "unresolved ask-bucket items")
@@ -877,6 +882,8 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 				outcomes = append(outcomes, o)
 			}
 		}
+		// Listed in -h so review-loop's preflight can probe for asks-open by name.
+		s.str("outcome", "how the run ended: "+strings.Join(outcomes, ", "))
 		for _, t := range Tiers {
 			if t != "carried" {
 				tiers = append(tiers, t)
@@ -1141,6 +1148,13 @@ func cmdFinish(s *sub, out, errOut io.Writer) error {
 		return fail("runlog: refusing to finish as 'clean' with %d unresolved asks — the run "+
 			"has findings still with the user, so it did not end clean. Record the outcome it "+
 			"did end with, or resolve the asks and record a cycle first.", *asks)
+	}
+	// The mirror of the clean check: asks-open claims findings are still with the user, so
+	// a count of zero contradicts it.
+	if asks := s.ints["asks"]; *s.strs["outcome"] == AsksOpen && (asks == nil || *asks < 1) {
+		return fail("runlog: refusing to finish as 'asks-open' with no unresolved asks — pass " +
+			"--asks with the number of questions still owed to the user, or record the outcome " +
+			"the run did end with.")
 	}
 	planned := plannedGates(plan)
 	var unexplained []string

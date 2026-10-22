@@ -104,6 +104,11 @@ func TestDecide(t *testing.T) {
 		{"a recorded abandoned outcome blocks", with(ok, func(s *State) {
 			s.Convergence, s.GateState, s.Outcome = record.Converged, "passed", "abandoned"
 		}), false, "abandoned — broken"},
+		// Issue #41: a run that ended on open asks is unfinished, not broken. It pushes
+		// with the halted disclosure, which is what lets the tip be stamped as a baseline.
+		{"an asks-open outcome pushes as halted", with(ok, func(s *State) {
+			s.Convergence, s.GateState, s.Outcome = record.Halted, "passed", record.AsksOpen
+		}), true, "halted (review not finished)"},
 		{"a clean outcome does not block", with(ok, func(s *State) {
 			s.Convergence, s.GateState, s.Outcome = record.Converged, "passed", "clean"
 		}), true, "converged, evidence gate ok"},
@@ -192,12 +197,16 @@ func TestTheUnfinishedBlockOrder(t *testing.T) {
 // whether the row exists, not what it says. Broken outcomes then block on their own.
 func TestEveryFinishOutcomeClosesTheRun(t *testing.T) {
 	shimGh(t, "exit 1")
-	for _, outcome := range []string{"clean", "cycle-limit", "skipped", "carried", "test-failure"} {
+	for _, outcome := range []string{"clean", "cycle-limit", record.AsksOpen, "skipped", "carried", "test-failure"} {
 		dir, gitdir := repo(t)
+		asks := "" // finish refuses asks-open without asks, so its row carries them
+		if outcome == record.AsksOpen {
+			asks = `,"unresolved_asks":2`
+		}
 		store := writeStore(t,
 			`{"run_id":"fin1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 			`{"run_id":"fin1","phase":"cycle","n":1,"applied":0,"agents":2}`,
-			`{"run_id":"fin1","phase":"finish","outcome":"`+outcome+`"}`)
+			`{"run_id":"fin1","phase":"finish","outcome":"`+outcome+`"`+asks+`}`)
 		runs, err := record.Load(store, 0)
 		if err != nil {
 			t.Fatal(err)

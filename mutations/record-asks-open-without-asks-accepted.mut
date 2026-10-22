@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestAsksOpenNeedsAsks$'
+expect: was not refused
+why:    asks-open with no asks is a self-report the record contradicts: with nothing owed, the derivation can read the run as converged while the row says findings are still with the user.
+--- old
+	if asks := s.ints["asks"]; *s.strs["outcome"] == AsksOpen && (asks == nil || *asks < 1) {
+--- new
+	if asks := s.ints["asks"]; *s.strs["outcome"] == AsksOpen && (asks == nil || *asks < 1) && false {
