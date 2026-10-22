@@ -104,6 +104,11 @@ func TestDecide(t *testing.T) {
 		{"a recorded abandoned outcome blocks", with(ok, func(s *State) {
 			s.Convergence, s.GateState, s.Outcome = record.Converged, "passed", "abandoned"
 		}), false, "abandoned — broken"},
+		// Issue #41: a run that ended on open asks is unfinished, not broken. It pushes
+		// with the halted disclosure, which is what lets the tip be stamped as a baseline.
+		{"an asks-open outcome pushes as halted", with(ok, func(s *State) {
+			s.Convergence, s.GateState, s.Outcome = record.Halted, "passed", record.AsksOpen
+		}), true, "halted (review not finished)"},
 		{"a clean outcome does not block", with(ok, func(s *State) {
 			s.Convergence, s.GateState, s.Outcome = record.Converged, "passed", "clean"
 		}), true, "converged, evidence gate ok"},

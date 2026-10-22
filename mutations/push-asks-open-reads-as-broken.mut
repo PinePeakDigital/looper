@@ -1,0 +1,8 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestDecide$'
+expect: run recorded asks-open — broken
+why:    issue #41: runs that ended on open asks had no outcome but `blocked`, which this list reads as a broken tree, so the push was refused and the tip was never stamped as a review baseline. The next run then re-reviewed the whole branch. asks-open means unfinished, not broken.
+--- old
+var BrokenOutcomes = []string{"test-failure", "blocked", "abandoned"}
+--- new
+var BrokenOutcomes = []string{"test-failure", "blocked", "abandoned", "asks-open"}

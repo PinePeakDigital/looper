@@ -159,7 +159,11 @@ looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
 `disclose` line, because a cap that strands commits just moves the decision back to
 a human every time. **"It is broken" is a block**: a recorded `test-failure`,
 `blocked` or `abandoned` outcome, a blocked evidence gate, a finding skipped with no
-recorded dismissal, or the default branch. **"There is no evidence either way" is also
+recorded dismissal, or the default branch. A run that ended with findings still waiting on
+the user records `asks-open`, which is unfinished, not broken: it derives `halted` and pushes
+with the disclosure, so its tip can be stamped as the baseline the next run's delta is measured
+from (issue #41). Before `asks-open` existed, `blocked` was the only outcome that fit, so such a
+run was refused, never stamped, and the run after the user's fixes re-reviewed the whole branch. **"There is no evidence either way" is also
 a block**, and so is a run that was never finished; both are deliberate divergences from
 the Python — see below.
 
@@ -369,6 +373,10 @@ is hand-edited rather than captured: `asks at finish make it halted` finished as
 asks, which `finish` now refuses, so the scenario finishes as `cycle-limit` instead and its
 golden drops the `clean` warning and records that outcome — the rest is `runlog.py`'s output
 unchanged.
+
+`asks-open` is the one outcome `runlog.py` never had. `finish` refuses it with no `--asks` above
+zero, the mirror of refusing `clean` with asks, and the constants parity check compares the
+rest of the outcome list (`TestAsksOpenNeedsAsks`).
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
 its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
