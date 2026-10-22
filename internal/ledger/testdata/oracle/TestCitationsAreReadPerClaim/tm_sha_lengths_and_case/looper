@@ -1,0 +1,34 @@
+exit=0
+--- stdout ---
+{
+  "path": ".git/info/review-loop-threat-model.md",
+  "exists": true,
+  "claims": 4,
+  "stale": [
+    {
+      "line": 4,
+      "path": "src/types.ts",
+      "lines": null,
+      "sha": "5402b362ad3c942d23233d6e03303252872e195b",
+      "commits": [
+        "09c38e6 allow async draws"
+      ]
+    }
+  ],
+  "broken_pins": [
+    {
+      "line": 1,
+      "malformed": "[src/types.ts @ abcdef]"
+    },
+    {
+      "line": 2,
+      "malformed": "[src/types.ts @ ABCDEF0]"
+    },
+    {
+      "line": 3,
+      "malformed": "[src/types.ts @ 5402b362ad3c942d23233d6e03303252872e195ba]"
+    }
+  ],
+  "uncited": 3
+}
+--- stderr ---

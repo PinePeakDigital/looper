@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    a whitespace-only line continues the claim, so a pin in the next paragraph pins a claim that has none
+--- old
+	return s != "" && startsWithSpace(raw) && !isBullet(s)
+--- new
+	return startsWithSpace(raw) && !isBullet(s)

@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestAnUnreadableFinishSaysWhy$'
+expect: was not refused with the decode error
+why:    finish decodes its own row with the readers' code before appending it. Without that, any field the earlier checks do not cover — a numeric reason on a `done` gate is the one the test uses — is written, and the run reads as unknown to the push gate and the report from then on, with no way to repair it because a finish is final.
+--- old
+	if err := appendChecked(rec, reasonsIn(nil, executed, asList(escalations), rec), readableFinish(id)); err != nil {
+--- new
+	if err := appendChecked(rec, reasonsIn(nil, executed, asList(escalations), rec), nil); err != nil {

@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestAShortEntryIsRefused'
+expect: --- FAIL: TestAShortEntryIsRefused/short_once_trimmed
+why:    counting the padding lets a short probe through: "   test   " is ten characters as given and four once trimmed.
+--- old
+		if n := utf8.RuneCountInString(py.Strip(text)); n < minEntry {
+--- new
+		if n := utf8.RuneCountInString(text); n < minEntry {

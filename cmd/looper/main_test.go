@@ -212,10 +212,10 @@ func write(t *testing.T, dir, name, body string) {
 	}
 }
 
-// The push-check subcommand's own surface: the flags it refuses, and the fact that it
-// prints its answer on stdout and exits 0 whether or not the push is permitted. A refusal
-// that exits non-zero is indistinguishable from the tool failing to produce one, and Step 14
-// reads the JSON either way.
+// The push-check subcommand's own surface: the flags it refuses, and its exit statuses. A
+// refusal prints its answer on stdout AND exits exactly 3 — not 0, which let
+// `looper push-check … && git push` push on push:false (friction log, twice), and not 1 (the tool could not decide),
+// which means the tool failed to answer and prints nothing on stdout.
 func TestPushCheck(t *testing.T) {
 	dir := t.TempDir()
 	store := filepath.Join(dir, "runs.jsonl")
@@ -244,12 +244,17 @@ func TestPushCheck(t *testing.T) {
 		t.Errorf("a misspelled -gate-state gave exit %d and stderr %q", code, errOut)
 	}
 
-	// A refusal is still a successful answer: exit 0, JSON on stdout, push false. This run
-	// has no report landed anywhere, which is what refuses it.
+	// A refusal is still an answer: exit 3, JSON on stdout, push false. This run has no
+	// report landed anywhere, which is what refuses it.
 	code, out, errOut := doRun(t, "push-check", "-run-id", "pc1", "-store", store,
 		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
-	if code != 0 {
-		t.Fatalf("a refusal exited %d: stdout %q stderr %q", code, out, errOut)
+	if code != 3 {
+		t.Fatalf("a refusal exited %d, want 3: stdout %q stderr %q", code, out, errOut)
+	}
+	// The refusal is not an error, so run prints nothing for it: stderr carries only the
+	// diagnosis notes push documents, and none applies to a report that is simply unposted.
+	if strings.Contains(errOut, "push refused") {
+		t.Errorf("the refusal was printed as an error: %q", errOut)
 	}
 	var got struct {
 		Push        bool    `json:"push"`
@@ -275,7 +280,7 @@ func TestPushCheck(t *testing.T) {
 }
 
 // A run with a record but no finish row refuses through the same channel as every other
-// refusal — exit 0, JSON on stdout — naming the run and the commands that close it.
+// refusal — exit 3, JSON on stdout — naming the run and the commands that close it.
 func TestPushCheckRefusesAnUnfinishedRun(t *testing.T) {
 	dir := t.TempDir()
 	store := filepath.Join(dir, "runs.jsonl")
@@ -288,8 +293,8 @@ func TestPushCheckRefusesAnUnfinishedRun(t *testing.T) {
 	}
 	code, out, errOut := doRun(t, "push-check", "-run-id", "pc4", "-store", store,
 		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
-	if code != 0 {
-		t.Fatalf("a refusal exited %d: stdout %q stderr %q", code, out, errOut)
+	if code != 3 {
+		t.Fatalf("a refusal exited %d, want 3: stdout %q stderr %q", code, out, errOut)
 	}
 	var got struct {
 		Push   bool   `json:"push"`
@@ -313,6 +318,51 @@ func TestPushCheckRefusesAnUnfinishedRun(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "may be torn") {
 		t.Errorf("stderr does not mention a torn finish row: %q", errOut)
+	}
+}
+
+// A permitted push exits 0 with its JSON, so `looper push-check … && git push` pushes exactly
+// when push is true. No branch flags: both are read from git in -repo, which is the shape the
+// friction log's refusals came from ("current or default branch unknown" on a feature branch).
+func TestPushCheckPermittedExitsZero(t *testing.T) {
+	store := prReportStore(t, "pr1")
+	dir := fixture(t, map[string]string{"README.md": "x\n"})
+	// Named here rather than trusting init.defaultBranch, which is master on some machines.
+	git(t, dir, "branch", "-M", "main")
+	git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	git(t, dir, "checkout", "-q", "-b", "feat/x")
+	shim := t.TempDir()
+	// gh answers "no PR" to every call, so pr-report defers the body to the pending file and
+	// push-check finds it there.
+	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\necho '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if code, _, errOut := doRun(t, "pr-report", "-run-id", "pr1", "-store", store, "-repo", dir, "-post"); code != 0 {
+		t.Fatalf("pr-report exited %d: %q", code, errOut)
+	}
+
+	code, out, errOut := doRun(t, "push-check", "-run-id", "pr1", "-store", store,
+		"-gate-state", "passed", "-repo", dir)
+	var got struct {
+		Push   bool   `json:"push"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the JSON Step 14 reads (exit %d, stderr %q): %v\n%q", code, errOut, err, out)
+	}
+	if !got.Push || code != 0 {
+		t.Errorf("a permitted push: exit %d push %v reason %q, want exit 0 and push true", code, got.Push, got.Reason)
+	}
+
+	// The same repo on its default branch refuses with exit 3: the default branch was read
+	// from origin/HEAD, not left unknown.
+	git(t, dir, "checkout", "-q", "main")
+	code, out, _ = doRun(t, "push-check", "-run-id", "pr1", "-store", store,
+		"-gate-state", "passed", "-repo", dir)
+	if code != 3 || !strings.Contains(out, "never auto-push to it") {
+		t.Errorf("on the default branch: exit %d, stdout %q; want exit 3 and the default-branch refusal", code, out)
 	}
 }
 
@@ -373,10 +423,12 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 	// No -store. If the default wiring is gone this reads some other file, finds no run, and
 	// derives `unknown` instead of the `capped` the fixture records — which is exactly the
 	// silent failure a wrong store path produces in production.
+	// Exit 3: no report has landed in this non-repo dir, so it refuses — with the JSON this
+	// test reads.
 	code, out, errOut := doRun(t, "push-check", "-run-id", "pc2",
 		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
-	if code != 0 {
-		t.Fatalf("exit = %d: stdout %q stderr %q", code, out, errOut)
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3: stdout %q stderr %q", code, out, errOut)
 	}
 	var got struct {
 		Convergence string  `json:"convergence"`
@@ -423,8 +475,8 @@ func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
 
 	code, out, errOut := doRun(t, "push-check", "-run-id", "pc3", "-store", store,
 		"-gate-state", "passed", "-branch", "feat/x", "-default-branch", "main", "-repo", dir)
-	if code != 0 {
-		t.Fatalf("exit = %d: stdout %q stderr %q", code, out, errOut)
+	if code != 3 {
+		t.Fatalf("exit = %d, want 3: stdout %q stderr %q", code, out, errOut)
 	}
 	if !strings.Contains(errOut, "could not be determined") {
 		t.Errorf("stderr = %q, want the diagnosis that the report check could not be run", errOut)

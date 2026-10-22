@@ -1,0 +1,15 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck$'
+expect: stdout is not the JSON Step 14 reads
+why:    a refusal is an ANSWER, and its reason is what the operator acts on — "post the report first", "close the run". Returning the refusal before the JSON is written makes exit 3 a bare "no" with nothing to act on, and indistinguishable in content from the tool failing (1, empty stdout). The original exit-0 contract existed to keep exactly that distinction; exit 3 keeps it only while the JSON is still printed.
+--- old
+	if _, err := out.Write(b); err != nil {
+		return err
+	}
+--- new
+	if !res.Push {
+		return errPushRefused
+	}
+	if _, err := out.Write(b); err != nil {
+		return err
+	}

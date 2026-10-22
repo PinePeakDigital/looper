@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin'
+expect: --- FAIL:
+why:    any word after the @ makes a pin shape, so a placeholder in prose such as [file:line @ sha] is reported as a broken pin nobody can fix
+--- old
+var pinShape = regexp.MustCompile(`\[(?:[^\[\]@]*[./][^\[\]@]*@[` + spaceClass + `]*[0-9A-Fa-f]+|
+--- new
+var pinShape = regexp.MustCompile(`\[(?:[^\[\]@]*[./:][^\[\]@]*@[` + spaceClass + `]*[0-9A-Za-z]+|

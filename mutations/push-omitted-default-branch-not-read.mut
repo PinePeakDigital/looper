@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: did not make main the default
+why:    the default branch is the one the gate exists to protect, and an omitted -default-branch left it "" — a refusal for "branch unknown" on every branch, the default included, so the reason never named the real problem. Read from origin/HEAD, it refuses the default branch for the right reason and permits a feature branch.
+--- old
+	if defBranch == "" {
+		defBranch = defaultBranch(p.Repo)
+	}
+--- new

@@ -1,0 +1,17 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportLandedFromAPRComment'
+expect: a PR comment carrying the marker and the fingerprint must satisfy the gate
+why:    `gh pr view --json comments` goes through gh's GraphQL endpoint. The friction log (2026-10-09) records a sandbox where every GraphQL call failed with `x509: OSStatus -26276` while REST calls worked, so a report already on the PR read as not landed and the gate refused on advice that could not help. The probe asks REST; the test shims match each REST argv whole and fail anything else, which is what makes a return to GraphQL visible here.
+--- old
+	rc, out := sh(repo, "gh", "api", evidence.PRsForBranch(branch))
+	if rc != 0 {
+		return "", false, fmt.Sprintf("listing the PR failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
+	}
+--- new
+	rc, out := sh(repo, "gh", "pr", "view", "--json", "comments", "-q", ".comments[].body")
+	if rc == 0 {
+		return out, true, ""
+	}
+	if rc != 0 {
+		return "", false, fmt.Sprintf("listing the PR failed (gh status %d — a status sh also reports when gh never started, was killed or left its output open)", rc)
+	}

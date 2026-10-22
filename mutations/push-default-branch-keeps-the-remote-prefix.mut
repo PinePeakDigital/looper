@@ -1,0 +1,12 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: did not make main the default
+why:    `git symbolic-ref --short refs/remotes/origin/HEAD` answers "origin/main", not "main". Compared raw against the current branch it never matches, so the default-branch guard silently passes on the default branch itself — an auto-push to main with every other check green. The prefix is stripped, and an answer without it is treated as unknown.
+--- old
+	name, ok := strings.CutPrefix(out, "origin/")
+	if !ok {
+		return ""
+	}
+	return name
+--- new
+	return out

@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestALeadingDateIsNotWrittenTwice'
+expect: the entry's date is wrong or written twice
+why:    add stamps its own date, so text passed as "2026-10-20: …" lands as "- <today>: 2026-10-20: …", two dates on one entry, and the second one is never bumped.
+--- old
+		text = leadingDate.ReplaceAllString(text, "")
+--- new
+		_ = leadingDate

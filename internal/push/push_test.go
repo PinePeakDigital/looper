@@ -3,6 +3,7 @@ package push
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -261,6 +262,31 @@ func shimGh(t *testing.T, body string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+// ghComments shims a gh that ANSWERS over REST: PR #5 for any branch, whose comments are body
+// (a printf format, so "\\n" separates lines). Each argv is matched whole, so a probe that asks
+// GraphQL again, or reads one page of comments, gets exit 1 — gh failing — and the tests that
+// need gh to answer fail. `{owner}`/`{repo}` arrive literally: gh fills them, not the caller.
+func ghComments(t *testing.T, body string) {
+	t.Helper()
+	shimGh(t, `case "$*" in
+  "api repos/{owner}/{repo}/pulls?state=all&head={owner}%3A"*) echo '[{"number":5}]' ;;
+  "api --paginate repos/{owner}/{repo}/issues/5/comments --jq .[].body") printf '`+body+`\n' ;;
+  *) exit 1 ;;
+esac`)
+}
+
+// ghCommentsFor is ghComments for one branch only: the pulls query must carry exactly
+// head={owner}%3A<url.QueryEscape(branch)>, and any other branch gets exit 1, so a probe that
+// looks up the wrong branch (the checkout's, say, over an explicit -branch) fails the test.
+func ghCommentsFor(t *testing.T, branch, body string) {
+	t.Helper()
+	shimGh(t, `case "$*" in
+  "api repos/{owner}/{repo}/pulls?state=all&head={owner}%3A`+url.QueryEscape(branch)+`") echo '[{"number":5}]' ;;
+  "api --paginate repos/{owner}/{repo}/issues/5/comments --jq .[].body") printf '`+body+`\n' ;;
+  *) exit 1 ;;
+esac`)
+}
+
 // repo is a git repo with no remote, so upstreamExists is false there and the push reason
 // says "-u". Returns the repo root and its git dir.
 func repo(t *testing.T) (string, string) {
@@ -344,7 +370,7 @@ func TestReportLanded(t *testing.T) {
 func TestReportLandedFromAPRComment(t *testing.T) {
 	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
 	body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(Fingerprint(r), "\\n")
-	shimGh(t, "printf '"+body+"\\n'")
+	ghComments(t, body)
 	dir, _ := repo(t)
 	if !ReportLanded("run1", r, dir) {
 		t.Error("a PR comment carrying the marker and the fingerprint must satisfy the gate")
@@ -352,7 +378,7 @@ func TestReportLandedFromAPRComment(t *testing.T) {
 	// gh succeeding with a body that is missing the fingerprint must fall through to the
 	// pending file rather than being read as an answer: a PR with comments but no report
 	// is exactly the case this gate exists for.
-	shimGh(t, "printf 'some unrelated review comment\\n'")
+	ghComments(t, "some unrelated review comment")
 	if ReportLanded("run1", r, dir) {
 		t.Error("an unrelated PR comment satisfied the gate")
 	}
@@ -362,7 +388,7 @@ func TestReportLandedFromAPRComment(t *testing.T) {
 	// because one PR carries every run's comments and the pending file is keyed by run id
 	// in its own filename — so the pending path cannot exercise the marker at all, and a
 	// version of this case written there passed with the marker needle removed.
-	shimGh(t, "printf '"+body+"\\n'")
+	ghComments(t, body)
 	if ReportLanded("run2", r, dir) {
 		t.Error("run1's report comment satisfied run2's gate")
 	}
@@ -759,7 +785,7 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 
 	// The gh path too. Without the refusal the marker needle is "", so any PR comment
 	// carrying the fingerprint satisfies an id that names nothing.
-	shimGh(t, "printf '"+strings.Join(Fingerprint(r), "\\n")+"\\n'")
+	ghComments(t, strings.Join(Fingerprint(r), "\\n"))
 	if ReportLanded("a/b", r, dir) {
 		t.Error("a PR comment with no marker satisfied an invalid run id")
 	}
@@ -796,9 +822,12 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	})
 
 	t.Run("git could be asked and said no", func(t *testing.T) {
-		// A real repo with no pending file: the report genuinely is not there, which is the
-		// case the refusal's instruction IS right for. Nothing may be written to Diag, or the
-		// note becomes noise on every ordinary refusal and stops meaning anything.
+		// A real repo with no pending file and a gh that ANSWERS without the report: the report
+		// genuinely is not there, which is the case the refusal's instruction IS right for.
+		// Nothing may be written to Diag, or the note becomes noise on every ordinary refusal
+		// and stops meaning anything. (gh used to fail here; a failing gh is now noted, see
+		// "gh failed while a pending file was readable".)
+		ghComments(t, "some unrelated comment")
 		dir, _ := repo(t)
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
@@ -829,7 +858,7 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		// TestReportLandedFromAPRComment shims a SUCCEEDING gh at three call sites. It was
 		// unobserved because ReportLanded discards the second value and Check reads it only
 		// when `landed` is false.
-		shimGh(t, "printf 'some unrelated comment\\n'")
+		ghComments(t, "some unrelated comment")
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
 			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir(), Diag: &diag})
@@ -841,6 +870,37 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		}
 		if diag.String() != "" {
 			t.Errorf("Diag = %q, but gh answered — nothing could not be asked", diag.String())
+		}
+	})
+
+	t.Run("gh failed while a pending file was readable", func(t *testing.T) {
+		// git answers and a pending file exists, so the report probe has a cause the refusal
+		// already covers ("post the report first") and stays attributable. But the PR half
+		// failed too: a report already posted to the PR is invisible to this gate, and the
+		// refusal alone gives the operator nothing to tell that from an unposted one. Each
+		// failing call must be named.
+		for _, c := range []struct{ name, shim, want string }{
+			{"the PR list fails", `exit 3`, "listing the PR failed (gh status 3"},
+			{"the comments call fails", `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 4 ;; esac`,
+				"reading the PR's comments failed (gh status 4"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				shimGh(t, c.shim)
+				dir, gitdir := repo(t)
+				landReport(t, gitdir, "run1", []string{"## review-loop", "1 cycle(s) · 1 agent(s)"})
+				var diag strings.Builder
+				res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+					Branch: "feat/x", DefaultBranch: "main", Repo: dir, Diag: &diag})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Push || !strings.Contains(res.Reason, "looper pr-report --run-id run1 --post") {
+					t.Fatalf("expected the owed-report refusal: %+v", res)
+				}
+				if !strings.Contains(diag.String(), c.want) {
+					t.Errorf("Diag = %q, want it to say %q", diag.String(), c.want)
+				}
+			})
 		}
 	})
 
@@ -883,7 +943,7 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		// satisfying report at the destination and so can tell the two routes apart.
 		shimGh(t, "exit 1")
 		dir, _ := repo(t)
-		landed, attributable := reportProbe("../escape", r, dir)
+		landed, attributable := reportProbe("../escape", r, dir, "feat/x")
 		if landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, true)", landed, attributable)
 		}
@@ -891,9 +951,9 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 
 	t.Run("gh matches", func(t *testing.T) {
 		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(good, "\\n")
-		shimGh(t, "printf '"+body+"\\n'")
+		ghComments(t, body)
 		dir, _ := repo(t)
-		if landed, attributable := reportProbe("run1", r, dir); !landed || !attributable {
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); !landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (true, true)", landed, attributable)
 		}
 	})
@@ -903,9 +963,9 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		// branch, whose second value is a literal `true`. Named for that, because an earlier
 		// version called this the gh path and asserted on a hardcoded constant: deleting
 		// `attributable = true` from the gh branch left this subtest green.
-		shimGh(t, "printf 'unrelated\\n'")
+		ghComments(t, "unrelated")
 		dir, _ := repo(t)
-		if landed, attributable := reportProbe("run1", r, dir); landed || !attributable {
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, true) — git answered and the "+
 				"pending file was absent", landed, attributable)
 		}
@@ -915,8 +975,8 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		// The seventh state, and the only one where the gh branch's `attributable = true`
 		// reaches a return: gh answered, so the refusal is attributable, while git cannot run
 		// at all. A non-git dir rather than repo(t) is the whole difference.
-		shimGh(t, "printf 'unrelated\\n'")
-		if landed, attributable := reportProbe("run1", r, t.TempDir()); landed || !attributable {
+		ghComments(t, "unrelated")
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered on its own",
 				landed, attributable)
 		}
@@ -926,7 +986,7 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		shimGh(t, "exit 1")
 		dir, gitdir := repo(t)
 		landReport(t, gitdir, "run1", good)
-		if landed, attributable := reportProbe("run1", r, dir); !landed || !attributable {
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); !landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (true, true)", landed, attributable)
 		}
 	})
@@ -935,14 +995,14 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 		shimGh(t, "exit 1")
 		dir, gitdir := repo(t)
 		landReport(t, gitdir, "run1", []string{"## review-loop", "1 cycle(s) · 1 agent(s)"})
-		if landed, attributable := reportProbe("run1", r, dir); landed || !attributable {
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, true) — git answered", landed, attributable)
 		}
 	})
 
 	t.Run("neither probe can run", func(t *testing.T) {
 		shimGh(t, "exit 1")
-		if landed, attributable := reportProbe("run1", r, t.TempDir()); landed || attributable {
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, false) — this is the ONLY path "+
 				"where the refusal has no stateable cause", landed, attributable)
 		}
@@ -1113,6 +1173,175 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 		}
 		if iStore > iProbe {
 			t.Errorf("Diag = %q, want the store note first — it is the outer cause", got)
+		}
+	})
+}
+
+// committedRepo is repo(t) with one commit on main, origin/main at it and, when withHead,
+// origin/HEAD naming it — what a clone leaves. Returns the repo root and its git dir.
+func committedRepo(t *testing.T, withHead bool) (string, string) {
+	t.Helper()
+	dir, gitdir := repo(t)
+	gitIn(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "core.hooksPath=/dev/null",
+		"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "seed")
+	// Named here rather than trusting init.defaultBranch, which is master on some machines.
+	gitIn(t, dir, "branch", "-M", "main")
+	gitIn(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if withHead {
+		gitIn(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	}
+	return dir, gitdir
+}
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// An omitted -branch or -default-branch is read from git, as the upstream always was: both
+// defaulting to "" with nothing behind them refused every omission with "current or default
+// branch unknown" on an ordinary feature branch, which the friction log records twice. What
+// git cannot name stays unknown and refuses, so the default-branch guard is never skipped.
+func TestCheckReadsOmittedBranchesFromGit(t *testing.T) {
+	shimGh(t, "exit 1")
+	st := writeStore(t, cappedRun("run1")...)
+	runs, err := record.Load(st, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := Fingerprint(runs["run1"])
+	check := func(t *testing.T, dir, branch, def string) Result {
+		t.Helper()
+		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
+			Branch: branch, DefaultBranch: def, Repo: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	t.Run("the current branch is read from git", func(t *testing.T) {
+		dir, gitdir := committedRepo(t, true)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		landReport(t, gitdir, "run1", fp)
+		if res := check(t, dir, "", "main"); !res.Push {
+			t.Errorf("an omitted -branch on feat/y was not read from git: %+v", res)
+		}
+	})
+
+	t.Run("the default branch is read from origin/HEAD", func(t *testing.T) {
+		// On main itself, so a default read as anything but "main" — unknown, or origin/HEAD's
+		// short name "origin/main" left unstripped — misses the default-branch guard.
+		dir, gitdir := committedRepo(t, true)
+		landReport(t, gitdir, "run1", fp)
+		if res := check(t, dir, "", ""); res.Push || !strings.Contains(res.Reason, "never auto-push to it") {
+			t.Errorf("on main with no flags, origin/HEAD did not make main the default: %+v", res)
+		}
+	})
+
+	t.Run("a detached HEAD stays unknown", func(t *testing.T) {
+		dir, gitdir := committedRepo(t, true)
+		gitIn(t, dir, "checkout", "-q", "--detach")
+		landReport(t, gitdir, "run1", fp)
+		if res := check(t, dir, "", "main"); res.Push || !strings.Contains(res.Reason, "branch unknown") {
+			t.Errorf("a detached HEAD was given a branch name: %+v", res)
+		}
+	})
+
+	t.Run("an explicit -branch is the one gh is asked about", func(t *testing.T) {
+		// The report is on feat/x's PR only, and the checkout is feat/y: a gh lookup of the
+		// checkout's branch gets exit 1 from the shim and the gate refuses.
+		ghCommentsFor(t, "feat/x", fmt.Sprintf(reportMarker, "run1")+"\\n"+strings.Join(fp, "\\n"))
+		dir, _ := committedRepo(t, true)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		if res := check(t, dir, "feat/x", "main"); !res.Push {
+			t.Errorf("gh was not asked about the explicit -branch: %+v", res)
+		}
+	})
+
+	t.Run("no origin/HEAD stays unknown", func(t *testing.T) {
+		// `git remote add` + fetch leaves origin/HEAD unset. Guessing "main" there would let
+		// a repo whose default is something else push to it.
+		dir, gitdir := committedRepo(t, false)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		landReport(t, gitdir, "run1", fp)
+		if res := check(t, dir, "", ""); res.Push || !strings.Contains(res.Reason, "branch unknown") {
+			t.Errorf("a default branch was guessed with no origin/HEAD: %+v", res)
+		}
+	})
+
+	t.Run("a given flag outranks git", func(t *testing.T) {
+		// On main, told the branch is feat/x: the flags are the caller's statement and git is
+		// only the fallback, so this pushes as it did before the fallback existed. The default
+		// is given as main, so a branch read from git instead ("main") refuses — with any
+		// other default both readings push, and the case cannot tell them apart (measured: a
+		// "trunk" default let push-git-outranks-a-given-branch survive).
+		dir, gitdir := committedRepo(t, true)
+		landReport(t, gitdir, "run1", fp)
+		if res := check(t, dir, "feat/x", "main"); !res.Push {
+			t.Errorf("explicit -branch/-default-branch were overridden by git: %+v", res)
+		}
+	})
+}
+
+// The PR half of the report probe over REST: "no PR" is gh answering, and no branch asks
+// nothing.
+func TestReportProbeAsksGitHubOverREST(t *testing.T) {
+	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
+
+	t.Run("gh says there is no PR and git cannot be asked", func(t *testing.T) {
+		// `[]` is an answer: the refusal's advice — post the report — is the right one.
+		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[]' ;; *) exit 1 ;; esac`)
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || !attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered that there is no PR",
+				landed, attributable)
+		}
+	})
+
+	t.Run("an unreadable PR list is no answer", func(t *testing.T) {
+		// Exit 0 with bytes that are not a PR list — a descendant's, say — establishes
+		// nothing, so it must not count as gh having answered "no PR".
+		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo 'not json' ;; *) exit 1 ;; esac`)
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, false) — an unreadable list was read as an answer",
+				landed, attributable)
+		}
+	})
+
+	t.Run("the PR list answers and the comments call fails", func(t *testing.T) {
+		// gh found PR #5 and then could not read its comments: that is gh not answering, not
+		// "no PR", so with git unable to run too there is no stateable cause.
+		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 1 ;; esac`)
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, false) — a failed comments call was read as an answer",
+				landed, attributable)
+		}
+	})
+
+	t.Run("only the expected branch is looked up", func(t *testing.T) {
+		// The checkout is on feat/y, the caller asks about feat/x with a slash in it. The shim
+		// answers the exact escaped query for feat/x only.
+		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(Fingerprint(r), "\\n")
+		ghCommentsFor(t, "feat/x", body)
+		dir, _ := repo(t)
+		gitIn(t, dir, "checkout", "-q", "-b", "feat/y")
+		if landed, attributable := reportProbe("run1", r, dir, "feat/x"); !landed || !attributable {
+			t.Errorf("reportProbe(feat/x) = (%v, %v), want (true, true)", landed, attributable)
+		}
+		if landed, _ := reportProbe("run1", r, dir, "feat/y"); landed {
+			t.Errorf("reportProbe(feat/y) landed: the wrong branch's PR was accepted")
+		}
+	})
+
+	t.Run("no branch asks no PR", func(t *testing.T) {
+		// gh would answer with a matching comment, so only the guard keeps it unasked.
+		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(Fingerprint(r), "\\n")
+		ghComments(t, body)
+		if landed, attributable := reportProbe("run1", r, t.TempDir(), ""); landed || attributable {
+			t.Errorf("reportProbe = (%v, %v), want (false, false) — with no branch there is no PR to read",
+				landed, attributable)
 		}
 	})
 }

@@ -4,10 +4,8 @@ expect: did not reach the decision
 why:    the other half of the same unwiring. The report check can be correct in every detail and still never reach Decide, and the run then pushes with the reason "converged, evidence gate ok" while its summary exists nowhere.
 --- old
 	var unreported string
-	if landed, attributable := reportProbe(p.RunID, r, p.Repo); !landed {
-		unreported = "this run's report has not reached the PR or the pending-report file — " +
-			"run looper pr-report --run-id " + p.RunID + " --post first"
+	if landed, attributable, ghWhy := probeReport(p.RunID, r, p.Repo, branch); !landed {
 --- new
 	var unreported string
-	if _, attributable := reportProbe(p.RunID, r, p.Repo); false {
+	if _, attributable, ghWhy := probeReport(p.RunID, r, p.Repo, branch); false {
 		_ = attributable

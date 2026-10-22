@@ -1,0 +1,8 @@
+target: internal/evidence/evidence.go
+verify: go test ./internal/evidence/ -count=1 -run 'TestPRsForBranchEscapesTheBranch'
+expect: PRsForBranch("feat/x")
+why:    REST's pulls list defaults to OPEN PRs. The `gh pr list --state all` it replaced found a merged PR too, which is what Step 0c's backfill needs when the PR merged between the loop finishing and the flush — and what the push gate needs to find a report on a PR that has since closed. Dropping `state=all` would answer "no PR" for both.
+--- old
+	return "repos/{owner}/{repo}/pulls?state=all&head={owner}%3A" + url.QueryEscape(branch)
+--- new
+	return "repos/{owner}/{repo}/pulls?head={owner}%3A" + url.QueryEscape(branch)

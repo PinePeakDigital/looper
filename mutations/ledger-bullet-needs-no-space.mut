@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestClaimsAreBlocks'
+expect: --- FAIL:
+why:    any line starting with a dash or a number ends the claim, so a wrapped line that begins `-x` cuts off the pin below it and the claim reads as uncited
+--- old
+	return i == len(s) || isSpace(r)
+--- new
+	return true || isSpace(r)

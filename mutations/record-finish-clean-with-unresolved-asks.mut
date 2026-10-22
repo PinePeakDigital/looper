@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestCleanWithUnresolvedAsksIsRefused$'
+expect: clean with 2 unresolved asks was not refused
+why:    a finish row claimed `outcome: clean` with 2 unresolved asks (friction log, 2026-10-21); finish only warned, and the row overstated the run. The convergence derivation already reads those asks as halted, so the row contradicted itself in the record a PR comment is rendered from.
+--- old
+	if asks := s.ints["asks"]; *s.strs["outcome"] == "clean" && asks != nil && *asks > 0 {
+--- new
+	if asks := s.ints["asks"]; *s.strs["outcome"] == "clean" && asks != nil && *asks > 0 && false {

@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAGoModuleIsDetected'
+expect: --- FAIL: TestAGoModuleIsDetected/go.mod_alone
+why:    a Go module reports lint_cmd null, so Step 4a runs no project linter and an unformatted or vet-failing change reaches CI.
+--- old
+		lint, fix = "go fmt ./... && go vet ./...", true
+--- new
+		lint, fix = nil, true

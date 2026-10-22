@@ -1,0 +1,12 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeAsksGitHubOverREST'
+expect: gh answered that there is no PR
+why:    `[]` is gh ANSWERING: there is no PR for this branch, so no comment can carry the report and the refusal's advice — post it — is right. Read as "could not ask", it adds the stderr note saying the refusal "may not be about the report at all" whenever git is also unavailable, which is the wrong cause for the ordinary fresh-branch case.
+--- old
+	if len(prs) == 0 {
+		return "", true, ""
+	}
+--- new
+	if len(prs) == 0 {
+		return "", false, ""
+	}

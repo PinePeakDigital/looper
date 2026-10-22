@@ -349,6 +349,9 @@ func argsFor(sc scenario) []string {
 
 func TestLedgersMatchThePython(t *testing.T) {
 	for _, sc := range scenarios {
+		if _, ok := citationDivergences[sc.name]; ok {
+			continue // TestCitationsAreReadPerClaim runs it, against the Python's answer and looper's
+		}
 		t.Run(sc.name, func(t *testing.T) {
 			want := golden.Read(t, "transcript") // before runGo's Chdir: the golden path is relative
 			if got := runGo(t, sc, argsFor(sc)...); got != want {

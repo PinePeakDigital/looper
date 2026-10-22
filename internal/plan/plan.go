@@ -118,9 +118,21 @@ func githubReachable() (bool, string) {
 	if rc != 0 || !strings.Contains(out, "github.com") {
 		return false, "no github remote"
 	}
-	if rc, _, _ := run(ghTimeout, "gh", "auth", "status"); rc != 0 {
-		// Seen repeatedly: the sandbox proxy denies api.github.com while git push works.
-		return false, "gh not authenticated here (retry unsandboxed before accepting this)"
+	if rc, out, err := run(ghTimeout, "gh", "auth", "status"); rc != 0 {
+		// Unauthenticated only when gh SAYS so. plan.py reported "not authenticated" for any
+		// failure of this call, and in a sandbox it fails for a keychain or TLS reason (x509:
+		// OSStatus -26276) while `gh auth status` outside it reports logged in — a false
+		// cause, recorded in the run as the reason Agent #10 was skipped (friction log,
+		// 2026-10-02). The skip stands either way; the reason says what was observed.
+		if strings.Contains(strings.ToLower(out+"\n"+err), "not logged in") {
+			return false, "gh not authenticated here (retry unsandboxed before accepting this)"
+		}
+		why := authFailure(err, out)
+		if why == "" {
+			why = fmt.Sprintf("exit %d", rc)
+		}
+		return false, "gh auth status failed (" + why + ") without saying gh is logged out — " +
+			"auth is unconfirmed, not known to be missing (retry unsandboxed before accepting this)"
 	}
 	// One API call, not per-file: a repo with zero PRs cannot have PR comments on any file.
 	rc, out, err := run(ghTimeout, "gh", "pr", "list", "--state", "all", "--limit", "1", "--json", "number")
@@ -137,6 +149,28 @@ func githubReachable() (bool, string) {
 			"comments to mine, which is a different skip from an auth failure and needs no fix"
 	}
 	return true, "gh authenticated, github remote present, PR history confirmed"
+}
+
+// authFailure is the line of `gh auth status` output that says what failed: its first `X`
+// line, without the mark, else its first non-blank line; stderr before stdout. Not simply the
+// first line, which is the host header — measured in the sandbox (gh 2.102.0), the output
+// was "github.com" then "  X Failed to log in to github.com account narthur (keyring)".
+func authFailure(streams ...string) string {
+	for _, s := range streams {
+		for _, l := range py.Splitlines(s) {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(l), "X "); ok {
+				return strings.TrimSpace(rest)
+			}
+		}
+	}
+	for _, s := range streams {
+		for _, l := range py.Splitlines(s) {
+			if l = strings.TrimSpace(l); l != "" {
+				return l
+			}
+		}
+	}
+	return ""
 }
 
 // biggestChangedFile is the line count of the largest file this branch changed, as it is at

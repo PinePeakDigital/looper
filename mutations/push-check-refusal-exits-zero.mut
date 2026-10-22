@@ -1,0 +1,11 @@
+target: cmd/looper/main.go
+verify: go test ./cmd/looper/ -count=1 -run 'TestPushCheck$'
+expect: a refusal exited
+why:    a refusal that exits 0 makes a plain `looper push-check … && git push` push on push:false. A non-zero refusal stops that chain. The two logged incidents (2026-10-16, 2026-10-20) were pipe-masked (`… | tail … && git push` takes tail's status), so the exit code alone would not have stopped them and the JSON must still be read. Exit 0 was once the contract, so that a refusal could not be mistaken for the tool failing; Nathan chose a DISTINCT code instead (2026-10-21) — 3 with the JSON still printed — which keeps that distinction and stops the chain. Replaces push-check-refusal-exits-non-zero, which guarded the old contract.
+--- old
+	// After the write: a refusal carries its answer.
+	if !res.Push {
+		return errPushRefused
+	}
+--- new
+	// After the write: a refusal carries its answer.

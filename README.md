@@ -117,9 +117,7 @@ The catalog's first entries are the runner's own rules, so the tool measures its
 ## `looper push-check`
 
 Answers Step 14's one question — may this branch be auto-pushed — and prints the
-answer as JSON on stdout with exit 0, whether or not the push is permitted. A
-refusal is a successful answer; exiting non-zero would make it indistinguishable
-from the tool failing to produce one.
+answer as JSON on stdout, permitted or not.
 
 ```text
 looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
@@ -131,6 +129,30 @@ looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
 {"push":true,"reason":"capped (review not finished), evidence gate ok, feature branch with upstream",
  "convergence":"capped","disclose":"Review CAPPED at 9 of 8 agents: ..."}
 ```
+
+| exit | meaning | stdout |
+| --- | --- | --- |
+| 0 | push permitted | the JSON, `"push":true` |
+| 3 | push refused | the JSON, `"push":false` and the reason |
+| 1 | no decision: a bad flag, an unreadable store, a run id that is not plain | empty; stderr says why |
+
+So a plain `looper push-check … && git push` pushes only on a permitted push. Until
+2026-10-21 a refusal exited 0, so that it could not be mistaken for the tool failing to
+answer. Exit 3 keeps that distinction (a refusal still prints its answer, which a failure
+never does) and stops the plain chain. It does not stop a piped one: both logged incidents
+(2026-10-16, 2026-10-20) ran `push-check … | tail … && git push`, where `tail`'s status
+masked push-check's, so the JSON must still be read. push-check exits 1 when it could not
+decide; exit 2 is reserved for usage errors of the `looper` command itself (an unknown
+top-level command). `-h` exits 0 with nothing on stdout.
+
+**An omitted `-branch` or `-default-branch` is read from git in `-repo`**: the current
+branch (`git branch --show-current`), and the branch `refs/remotes/origin/HEAD` names, with
+`origin/` stripped. Both are git facts, like the upstream the gate already read itself; with
+nothing behind the flags' `""` defaults, every omission refused with "current or default
+branch unknown" on an ordinary feature branch. What git cannot name stays unknown and
+refuses as before: a detached HEAD, or an origin/HEAD that was never set (a clone sets it; a
+`git remote add` and fetch does not — `git remote set-head origin -a` does). Nothing is
+guessed, so the default-branch guard is never skipped. A flag that is given wins over git.
 
 The decision is split in two, and the split is the whole design. **"We stopped
 looking" is a disclosure**: a capped, halted or unknown run pushes and owes the
@@ -160,12 +182,21 @@ to forge (37 bytes of `printf` for a real run id) than the self-report it replac
 every terminal exit, converged included: the incident behind the design was a clean
 exit on a fresh branch whose summary never reached the PR.
 
+The PR's comments are read over gh's REST API — `gh api` on the branch's newest PR in any
+state, then that PR's `issues/<n>/comments` with `--paginate` — rather than `gh pr view
+--json comments`, which is GraphQL. The friction log records a sandbox where gh's GraphQL
+calls failed with `x509: OSStatus -26276` while its REST calls worked. The PR is looked up
+by `-branch` (or git's current branch), the same lookup `looper pr-report` posts by
+(`evidence.PRsForBranch`); a PR opened from a fork is not found that way.
+
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
-also carries a one-line note when neither `gh pr view` nor `git rev-parse` could be
-run at all, because the gate then fails closed with a reason — "run `looper pr-report
+also carries a one-line note when neither gh (the PR's comments) nor `git rev-parse` could be
+run at all (when no branch is known, as on a detached HEAD, the note says gh was never asked), because the gate then fails closed with a reason — "run `looper pr-report
 --run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
-reason for exact equality against what the Python printed, and it had no second stream. A refusal
+reason for exact equality against what the Python printed, and it had no second stream. A second note says the PR's comments could not be
+read, naming the gh call and its exit code, whenever gh failed on the PR half — even when the
+pending-report file was readable and the refusal is otherwise explained. A refusal
 for a report that is genuinely unposted stays silent, so the note's presence is the
 signal.
 
@@ -260,8 +291,11 @@ the same measurement.
 "no PR yet" — one assertion standing in for three causes, with the only stream that says
 which discarded into `_`. The advice it gave cannot fix the other two, and on the
 author's machine `gh` has already failed with a keychain TLS error while `git push`
-worked. This port asks `gh pr list --head <branch>`, which exits 0 with empty output for
-"there are none" and non-zero only when gh itself failed, and reports five states
+worked. This port lists the branch's PRs over gh's REST API — `gh api
+'repos/{owner}/{repo}/pulls?state=all&head={owner}%3A<branch>'`, where it once asked `gh pr
+list --head <branch> --state all`, which is GraphQL and failed in a sandbox where REST worked
+— and the list exits 0 with `[]` for "there are none" and non-zero only when gh itself
+failed. It reports five states
 distinctly: a PR was found, gh answered that there is none, gh could not be run at all,
 gh ran and failed, or there was no branch to ask about at all — a detached HEAD, an
 unborn branch, or a git that could not answer, in which case gh is never invoked and
@@ -318,6 +352,7 @@ looper record skipped --reason <r>
 looper record carried --from <sha> --to <sha> --how reviewed|skipped
 looper record check [--head sha] [--session id] [--run-id id] [--force]   # exit 1: a run is open, or the store is unreadable (stdout empty)
 looper record pending                                                     # this branch's pending reports
+looper record pending --all                                               # every pending report, as <path>\t<branch>
 ```
 
 It appends to the same store (`$REVIEW_LOOP_RUNS`, default `~/.claude/review-loop/runs.jsonl`)
@@ -329,7 +364,11 @@ the `convergence` subcommand, comes from the typed read half above, so it has on
 `TestWriteMatchesThePython` runs 37 scenarios through `looper record` against a seeded store and
 requires the exit status, stdout, stderr and decoded records that `runlog.py` produced for the
 same scenario, frozen under `internal/record/testdata/oracle` before its command line was deleted. It normalises timestamps (keeping their offset), run ids the implementation generated, the JSON decoder's own error text, the one message that names `runlog.py cycle` (the port names `looper record cycle`), and the wording of argparse's and Go's usage errors (exit 2 is still compared); the temp repo's path, git dir and commit; everything else is compared as written. The test pins the local zone to the -05:00 the goldens were captured in, so a port writing UTC timestamps fails on any machine. Each scenario is a sequence of
-calls, because most of what the write half guards is a relationship between calls.
+calls, because most of what the write half guards is a relationship between calls. One golden
+is hand-edited rather than captured: `asks at finish make it halted` finished as `clean` with 7
+asks, which `finish` now refuses, so the scenario finishes as `cycle-limit` instead and its
+golden drops the `clean` warning and records that outcome — the rest is `runlog.py`'s output
+unchanged.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
 its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
@@ -338,10 +377,36 @@ truthy non-object `--gates` or `--executed` is refused with a message where `run
 on `.items()`. A store holding invalid UTF-8 inside a JSON string is read, the bad bytes as U+FFFD, where
 `runlog.py` dies decoding it on every subcommand that reads the store (`cycle`, `convergence`,
 `finish`, `abandon`, `check`, `show`, `pending`) — one stray byte would brick the gate; a bad
-byte outside a string makes its row unparseable, and that row is skipped as a torn line is. And where a finish carries a field the typed reader cannot decode (a numeric gate
-reason, an escalations object), `finish` and `convergence` report `unknown` with the decode
-error, where `runlog.py` derived a verdict from the dict: the push gate reads the typed record,
-so that verdict is one it would never reproduce.
+byte outside a string makes its row unparseable, and that row is skipped as a torn line is.
+
+`finish` refuses four things `runlog.py` recorded, and writes nothing when it does:
+
+- **`--escalations` that is not a list of `{"gate": "<gate>", "reason": "<why>"}` objects** —
+  an object, a string, a non-object element, or an element whose `gate` or `reason` is
+  missing, blank or not a string. The refusal quotes the expected shape. A non-empty object
+  used to be recorded, and no typed reader could decode it.
+- **A row the readers could not decode.** Just before appending, `finish` decodes its own row
+  through the same code `Load` runs, and refuses with the decode error if that fails — a
+  numeric reason on a `done` gate is one such field no earlier check reads. Such a row used to
+  be written and then reported as `unknown` convergence; it left the run unknown to the push
+  gate and the report for good, since a later row cannot clear a run's decode error.
+- **`--outcome clean` with `--asks` above zero.** The convergence derivation reads unresolved
+  asks as halted, so the row would contradict itself; it used to be written with a warning.
+- **A second finish for the same run.** A finish is final, as it already was for `cycle` and
+  `abandon`: the outcome first recorded may be on a PR and may have cleared a push. A wrong
+  finish is fixed by starting a new run.
+
+Where an *earlier* row of the run cannot be decoded (a hand-written or older plan row),
+`finish` and `convergence` still report `unknown` with the decode error, where `runlog.py`
+derived a verdict from the dict: the push gate reads the typed record, so that verdict is one
+it would never reproduce.
+
+`pending` lists only the files whose run was planned on the checked-out branch, since Step 0c
+posts what it lists to this branch's PR. `pending --all` lists every pending file under the
+common git dir, one per line as `<path>\t<branch>` with the branch its run recorded, from any
+checkout including `main` or a detached HEAD, so a report deferred on a branch that was later
+left can be flushed against that branch's own PR. A file with no run record, or whose run
+recorded no branch (or a detached `HEAD`), is named on stderr and left in place.
 
 The flag syntax is Go's, not argparse's: unique prefixes are not expanded, `-flag` works as
 well as `--flag`, and a value may begin with `-`. Lowercasing for the precedent ban is Go's, which
@@ -441,11 +506,22 @@ looper deferred       # review-loop-deferred.md: {path, exists, entries, stale, 
 ```
 
 Both make the same kind of statement — something true about the code at a commit, cited as
-`[path:line @ sha]`, `[path:start-end @ sha]` or `[path @ sha]` — and a pin is **stale** when
-`git log <sha>..HEAD -- <path>` lists anything, reported with those commits. A pin whose sha
-names no commit here is in `broken_pins`: `git log` fails on it, which reads exactly like
-"nothing moved", so without that list it would look checked and be unwatched. The threat model
-counts each line holding `OBSERVED:` but no pin as `uncited`. The deferred list reads each line
+`[path:line @ sha]`, `[path:start-end @ sha]`, `[path:206,225-231 @ sha]` (a comma-separated
+list of lines and ranges, no spaces) or `[path @ sha]`, where the sha is 7 to 40 lower-case hex
+digits — and a pin is **stale** when `git log <sha>..HEAD -- <path>` lists anything, reported
+with those commits. Every pin on a line is read. A pin whose sha names no commit here is in
+`broken_pins`: `git log` fails on it, which reads exactly like "nothing moved", so without that
+list it would look checked and be unwatched. Text shaped like a pin — brackets, an `@`, then a
+hex-looking token — that does not parse as one is in `broken_pins` too, as `{line, malformed}`
+with the text as written, for the same reason; a placeholder such as `[file:line @ sha]` is not
+hex after the `@`, so prose describing the format is not reported.
+
+The threat model counts its **claims** — each line holding `OBSERVED:` opens one — and reads a
+claim as that line plus the continuation lines after it, up to the first line that is blank,
+unindented (a heading, the next top-level bullet, a footer), or an indented bullet of its own
+(`-`, `*`, `+`, `1.` or `1)` followed by a space). A claim with no pin anywhere in that block
+is `uncited`. Pins outside any claim — an `INFERRED` note, a `Watch this spot` or `Not an issue
+here` entry — are still watched for `stale` and `broken_pins`. The deferred list reads each line
 containing `DEFERRED` as an entry, with the indented non-blank lines after it, names entries
 with no pin (`unpinned`) and entries with no `Guard` anywhere in them (`unguarded`). Both run
 in the working directory, as the Python did — there is no `--repo` — and take the ledger path
@@ -453,7 +529,7 @@ from `git rev-parse --git-common-dir`, so a linked worktree reads the main check
 Outside a repo the path is `""` and the report says `exists: false`. Arguments are ignored, as
 the Python ignored them; exit 0 for any report.
 
-`TestLedgersMatchThePython` runs 63 scenarios through both commands and requires the exit
+`TestLedgersMatchThePython` runs 48 scenarios through both commands and requires the exit
 status, stdout and stderr the Python printed for the same repo, ledger and working directory,
 byte for byte — key order, indentation, `ensure_ascii` escapes — frozen under
 `internal/ledger/testdata/oracle` (captured at narthur/skills 8c3b0f4). The fixture repo is
@@ -466,6 +542,19 @@ since go1.24's are 15.0), lines split where `str.splitlines()` splits, after uni
 
 The divergences, each with its own test:
 
+- **Citations are read per claim, every pin counts, and a malformed pin is broken.** pins.py read
+  each line alone: a claim whose pin sat on a wrapped continuation line counted as `uncited`
+  (45 of the 46 claims in looper's own threat model, every one of them pinned), `claims` counted
+  pinned lines (63 there) rather than claims, and only the first pin on a line was read, so a
+  second was never checked. Its pattern took one line or one range, so a comma-separated list
+  was no citation at all, and like every other near-miss it was skipped silently: the claim
+  looked pinned and nothing could mark it stale. Fifteen parity scenarios changed answer with
+  this; `TestCitationsAreReadPerClaim` runs them against the Python's frozen answer and looper's
+  (`looper`, written from looper's output and reviewed by hand), and fails if the two are ever
+  the same. `TestClaimsAreBlocks`, `TestCitationsReadsEveryPin`, `TestThreatModelWatchesEveryPin`
+  and `TestDeferredWatchesEveryPin` hold the rules. `TestInvalidUTF8LedgerIsRead` compares the
+  threat model with looper's own report on the U+FFFD ledger, since the Python's now differs in
+  `claims`.
 - **An unreadable ledger** (not a missing one, which is still `exists: false`) exits 1 with
   `looper <cmd>: cannot read <path>: …` and nothing on stdout. The Python caught every `OSError`
   as `exists: false`, so an unreadable deferred list reported nothing deferred and an unreadable
@@ -524,6 +613,11 @@ The divergences, each with its own test:
   no scripts (`TestPackageScriptsAreAnObject`).
 - **A Makefile that is not UTF-8 is still searched** for its `test:` target. context.sh's strict
   decode crashed on it, losing the whole context (`TestALatin1MakefileIsRead`).
+- **A Go module has test and lint commands.** context.sh detected neither for a `go.mod`, so
+  both were null on looper itself. The test command is `go test ./...`, ranked as a manifest:
+  after `package.json`'s `test` script, pytest and `Cargo.toml`, ahead of a Makefile `test:`
+  target. The lint command is `go fmt ./... && go vet ./...` with `lint_fix` true, since `go fmt`
+  rewrites files; it ranks last, after every other linter (`TestAGoModuleIsDetected`).
 - **Text that is not UTF-8 reaches the JSON with U+FFFD** for each bad byte, in the learnings and in
   the diff stat. context.sh turned each such byte into a lone-surrogate escape (`\udcXX`), which
   many JSON parsers refuse (`TestLatin1LearningsAreReplaced`). Learnings lines are matched as
@@ -560,20 +654,27 @@ looper learn prune <file> [--cap 50]
 ```
 
 `add` stamps today's date and inserts the entry at the top of its section, creating the file or
-the section when missing. A Dismissed entry that cites precedent is refused with the run record's
-own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
+the section when missing. One ISO date opening the text, with the colon or spaces after it, is
+dropped first, so a dated text is not dated twice. Text under 10 characters once trimmed is
+refused (exit 1, nothing written): the shortest entry in looper's own learnings file runs past a hundred, and what falls
+under 10 is a probe such as `x` or an empty argument. A Dismissed entry that cites precedent is
+refused with the run record's own banned-phrase list. `bump` re-dates the first entry containing the text. `prune` evicts down to
 the cap: never a PATTERN entry, dismissed before accepted, oldest first. Options may come anywhere
 among the arguments, abbreviated as argparse allowed, with `--` ending them. As in argparse
 3.13+, an argument starting with a dash is text when it starts like a negative number (`-5%`) or
 holds a space, unless it names an option first: `--section=a b`, an ambiguous `--s=a b` and
 anything starting `-h` are options.
 
-`TestLearnMatchesThePython` runs 47 scenarios through `looper learn` and requires what learn.py did
+`TestLearnMatchesThePython` runs 46 scenarios through `looper learn` and requires what learn.py did
 to the same file, byte for byte in its exit status, output and resulting file, frozen under
 `internal/learn/testdata/oracle` (captured at narthur/skills f80a5ca). The date (`<today>`) and the
 temp file's path (`{f}`) are normalised. A usage error is compared on exit status, file and its
 final error line: argparse's usage text names learn.py and its `--selftest`, which this command
-does not have.
+does not have. Ten scenarios that added a probe-length text (`x`, `-1`, `first`) were given
+longer text when short text became a refusal, and their goldens recaptured from learn.py's
+compiled `learn.cpython-314.pyc`, learn.py itself being gone from the skills checkout. That
+bytecode reproduced all 47 goldens that existed then (one, bump_empty_matches_the_first, was later removed when bump began refusing an empty match), except that argparse's usage text named it
+`learn.pyc`; only the ten scenarios' `file` goldens changed.
 
 The divergences:
 
@@ -586,6 +687,13 @@ The divergences:
   it (`TestANonUTF8EntryIsRefused`).
 - **An entry's date is ASCII digits.** learn.py's `\d` was Unicode, so a date written in another
   script's digits was an entry there and is ordinary text here (`TestAnEntryDateIsASCIIDigits`).
+- **A leading date is not written twice.** learn.py stamped its date ahead of whatever text it
+  was given, so `2026-10-20: …` became `- <today>: 2026-10-20: …`. One leading ISO date and the
+  colon or spaces after it are dropped; a later date, or a second one, is text
+  (`TestALeadingDateIsNotWrittenTwice`).
+- **Text under 10 characters is refused.** learn.py wrote anything, the empty string included,
+  and a probe `x` reached a real learnings file that way (`TestAShortEntryIsRefused`). The
+  check follows the usage checks, so `add` without `--section` is still a usage error.
 - **`--cap` is a plain decimal integer.** Python's `int()` also took surrounding whitespace,
   underscores, other scripts' digits and values past 64 bits.
 - **A section name is lowercased by Go's rules.** Python's `.lower()` turns `İ` into two code
@@ -680,6 +788,12 @@ The divergences, each with its own test:
   that exits while a grandchild still holds its output is answered by its exit status and what
   it printed, a second after it exits; plan.py waited for the grandchild up to the timeout
   (`TestAProbeWithALingeringGrandchildIsAnswered`).
+- **A failed `gh auth status` says what gh printed,** and says "not authenticated" only when gh
+  reports being logged out. plan.py said "gh not authenticated here" for any failure of the call;
+  in a sandbox it fails on the keyring or TLS (`x509: OSStatus -26276`) while auth is fine, and
+  the run record then carried a false reason for skipping Agent #10. The skip stands; the reason
+  is now `gh auth status failed (<gh's X line, or the exit status>) without saying gh is logged
+  out` (`TestAFailedAuthProbeSaysWhatItSaw`).
 
 ## `looper docs`
 

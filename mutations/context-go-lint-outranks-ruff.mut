@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAGoModuleIsDetected'
+expect: --- FAIL: TestAGoModuleIsDetected/ruff_over_go.mod
+why:    go.mod takes the lint command ahead of a configured linter, so a repo with both a Go module and ruff.toml loses its ruff pass; each detector is meant to win in its listed order, go.mod last.
+--- old
+	case exists("ruff.toml") || exists(".ruff.toml"):
+--- new
+	case !exists("go.mod") && (exists("ruff.toml") || exists(".ruff.toml")):

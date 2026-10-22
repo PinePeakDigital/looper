@@ -1,0 +1,14 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsOmittedBranchesFromGit'
+expect: a default branch was guessed with no origin/HEAD
+why:    with no origin/HEAD (a `git remote add` + fetch leaves it unset) git cannot name the default branch, and the gate must refuse rather than guess. Guessing "main" protects main in a repo whose default is `master` or `trunk` and leaves the real default unguarded — the failure is silent, because the guard still looks like it ran.
+--- old
+	if rc != 0 {
+		return ""
+	}
+	name, ok := strings.CutPrefix(out, "origin/")
+--- new
+	if rc != 0 {
+		return "main"
+	}
+	name, ok := strings.CutPrefix(out, "origin/")

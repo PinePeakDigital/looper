@@ -38,6 +38,16 @@ var Skeleton = []string{
 	"<!-- Patterns the user has explicitly confirmed matter here. Skill weights matches higher. -->",
 }
 
+// leadingDate is one ISO date opening the entry text, with the colon or spaces after it. Add
+// stamps its own date, so a caller passing "2026-10-20: text" had the date written twice.
+var leadingDate = regexp.MustCompile(`^[ \t]*\d{4}-\d{2}-\d{2}(?::[ \t]*|[ \t]+|$)`)
+
+// minEntry is the fewest characters, after trimming, that add writes as an entry. The shortest
+// entry in looper's own learnings file runs past a hundred, and the shortest realistic fixture
+// text here ("a new pattern") is 13. Under 10 is a probe ("x", "test") or an empty argument,
+// and a probe `x` was once written to a real file as a learning.
+const minEntry = 10
+
 // Today is the date stamped on an entry. A variable so tests can pin it.
 var Today = func() string { return time.Now().Format("2006-01-02") }
 
@@ -273,10 +283,17 @@ func Command(args []string, out, errOut io.Writer) int {
 
 	switch cmd {
 	case "bump":
+		// strings.Contains(x, "") is true, so an empty match re-dated the first entry in the
+		// file, whichever it was. learn.py did the same; measured: `looper learn bump f ""`
+		// re-dated the first entry and exited 0.
+		if py.Strip(text) == "" {
+			return refuse("the match text is empty: it would match the first entry — nothing written")
+		}
 		if !Bump(lines, text, Today()) {
 			return refuse("no entry matched: " + record.PyRepr(text))
 		}
 	case "add":
+		text = leadingDate.ReplaceAllString(text, "")
 		if section == "dismissed" {
 			if err := record.RejectBanned("this dismissal", text); err != nil {
 				return refuse(err.Error())
@@ -284,6 +301,9 @@ func Command(args []string, out, errOut io.Writer) int {
 		}
 		if section == "" {
 			return usageErr("add requires --section")
+		}
+		if n := utf8.RuneCountInString(py.Strip(text)); n < minEntry {
+			return refuse(fmt.Sprintf("the entry text is %d characters, under %d: too short to be a learning — nothing written", n, minEntry))
 		}
 		lines = Add(lines, section, text, Today())
 	case "prune":

@@ -1,0 +1,8 @@
+target: internal/gather/gather.go
+verify: go test ./internal/gather/ -count=1 -run 'TestAGoModuleIsDetected'
+expect: --- FAIL: TestAGoModuleIsDetected/go.mod_alone
+why:    a Go module reports test_cmd null, so Step 3 warns that there are no tests and the loop never runs them.
+--- old
+		test = "go test ./..."
+--- new
+		test = nil

@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestALeadingDateIsNotWrittenTwice'
+expect: --- FAIL: TestALeadingDateIsNotWrittenTwice/space
+why:    a date followed by a space instead of a colon ("2026-10-20 text") is kept, so that spelling still writes the date twice.
+--- old
+(?::[ \t]*|[ \t]+|$)
+--- new
+(?::[ \t]*|$)

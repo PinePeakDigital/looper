@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsReadsEveryPin'
+expect: --- FAIL:
+why:    with no path on the left and no length floor any hex-looking word makes a pin shape, so prose such as [price @ 100] or [user@fade] lands in broken_pins as a pin to fix
+--- old
+	spaceClass + `]*[0-9A-Fa-f]{6,})[` + spaceClass + `]*\]`)
+--- new
+	spaceClass + `]*[0-9A-Fa-f]+)[` + spaceClass + `]*\]`)

@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestAShortEntryIsRefused'
+expect: a short entry was written, or refused without saying why
+why:    a probe such as `x`, or an empty argument, is written to the learnings file as a dated entry that every review agent is then handed as a learning.
+--- old
+		if n := utf8.RuneCountInString(py.Strip(text)); n < minEntry {
+--- new
+		if n := utf8.RuneCountInString(py.Strip(text)); false && n < minEntry {

@@ -1,0 +1,8 @@
+target: internal/ledger/ledger.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestDeferredWatchesEveryPin'
+expect: --- FAIL:
+why:    the deferred list finds malformed pins per entry and never reports them, so a deferral pinned with a typo looks watched
+--- old
+		bad = append(bad, e.bad...)
+--- new
+		_ = e.bad

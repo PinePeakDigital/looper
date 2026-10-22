@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestThreatModelWatchesEveryPin'
+expect: --- FAIL:
+why:    malformed pins trail the unresolvable ones instead of standing at their place in the file, so the worklist reads out of order
+--- old
+	sort.SliceStable(all, func(i, j int) bool { return all[i].line < all[j].line })
+--- new
+	sort.SliceStable(all, func(i, j int) bool { return false })

@@ -79,10 +79,12 @@ func TestFindPRDistinguishesTheThreeCauses(t *testing.T) {
 		saysInNote string
 	}{
 		{name: "a PR exists", gh: `echo '[{"number":7}]'`, want: PRFound, saysInNote: "PR #7"},
-		// gh pr list EXITS 0 and prints the empty ARRAY when there are none — the whole reason
-		// the probe asks `pr list` rather than `pr view`, which exits 1 for this and for every
-		// failure alike. Verified against the live repo: `--head` on a branch with no PR gives
-		// rc 0 and `[]`; on this branch it gives `[{"number":5}]`. The shim prints `[]` and not
+		// The PR list EXITS 0 and prints the empty ARRAY when there are none — the whole reason
+		// the probe lists rather than asking `pr view`, which exits 1 for this and for every
+		// failure alike. Verified against the live repo for both spellings: `gh pr list --head`
+		// on a branch with no PR gave rc 0 and `[]`, and so does the REST list the probe now
+		// asks (`gh api repos/PinePeakDigital/looper/pulls?state=all&head=…%3Ano-such-branch-xyz`,
+		// 2026-10-21); for a branch with a PR it gives that PR. The shim prints `[]` and not
 		// nothing, because the probe decodes gh's JSON rather than reading a bare number, and
 		// empty output is NOT a valid answer — it is an answer that cannot be read.
 		{name: "no PR for the branch", gh: `echo '[]'`, want: NoPR, saysInNote: "no PR for this branch yet"},
@@ -191,7 +193,7 @@ func TestPostKeepsTheBodyOnEveryUnpostablePath(t *testing.T) {
 		{name: "gh failing", gh: `echo "502 Bad Gateway" >&2; exit 1`, saysInDiag: "502 Bad Gateway"},
 		// A PR exists and the COMMENT fails: the one case where the Python already deferred,
 		// kept here because it is the case a refactor is most likely to drop.
-		{name: "the comment fails", gh: `case "$*" in "pr list"*) echo '[{"number":9}]';; *) echo "rate limited" >&2; exit 1;; esac`,
+		{name: "the comment fails", gh: `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; *) echo "rate limited" >&2; exit 1;; esac`,
 			saysInDiag: "rate limited", commented: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -230,7 +232,7 @@ func TestPostKeepsTheBodyOnEveryUnpostablePath(t *testing.T) {
 
 func TestPostCommentsAndStillKeepsALocalCopy(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	path, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "converged", Body: postBody, Diag: &diag})
@@ -258,7 +260,7 @@ func TestPostCommentsAndStillKeepsALocalCopy(t *testing.T) {
 // to learn whether the review finished. Three removals and one add, so two cannot stand at once.
 func TestPostMovesTheLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -285,7 +287,7 @@ func TestPostMovesTheLabel(t *testing.T) {
 // to a missing `labels` scope would be the module's own rule inverted.
 func TestALabelFailureDoesNotFailThePost(t *testing.T) {
 	dir := gitRepo(t)
-	shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; "pr comment"*) exit 0;; *) echo "missing scope" >&2; exit 1;; esac`)
+	shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; "pr comment"*) exit 0;; *) echo "missing scope" >&2; exit 1;; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -332,7 +334,7 @@ func TestRisk(t *testing.T) {
 // family untouched by it.
 func TestPostMovesTheRiskLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Risk: "medium", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -355,7 +357,7 @@ func TestPostMovesTheRiskLabel(t *testing.T) {
 // earlier run would claim a safety this run's plan cannot vouch for. Said on stderr too.
 func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -374,7 +376,7 @@ func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
 		t.Errorf("stderr does not say no risk label was applied: %q", diag.String())
 	}
 	// A failed removal there leaves one stale label, not two, and says so.
-	shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; *"--remove-label risk:low"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; *"--remove-label risk:low"*) echo "HTTP 502" >&2; exit 1;; esac`)
 	diag.Reset()
 	if _, err := Post(PostParams{Repo: dir, RunID: "post02", Branch: "feat/x",
 		Convergence: "capped", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -388,7 +390,7 @@ func TestNoRiskRemovesEveryRiskLabel(t *testing.T) {
 // The comment-failed path labels too, risk included, and keeps the risk line in the note.
 func TestACommentFailureStillMovesTheRiskLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; "pr comment"*) echo "HTTP 502" >&2; exit 1;; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; "pr comment"*) echo "HTTP 502" >&2; exit 1;; esac`)
 	path, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "capped", Risk: "high", Body: postBody, Label: true})
 	if err != nil {
@@ -511,7 +513,7 @@ func TestWritePending(t *testing.T) {
 // would have cost a posted report its label with no note saying why.
 func TestAnUnknownConvergenceAppliesNoLabel(t *testing.T) {
 	dir := gitRepo(t)
-	log := shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+	log := shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 	var diag strings.Builder
 	if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 		Convergence: "mostly-fine", Body: postBody, Label: true, Diag: &diag}); err != nil {
@@ -628,8 +630,10 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		if got.State != PRFound || got.Number != "11" {
 			t.Fatalf("state %v number %q, want PRFound/11 (detail %q)", got.State, got.Number, got.Detail)
 		}
-		if !strings.Contains(calls(t, log), "--head feat/detected") {
-			t.Errorf("gh was not asked about the branch git reported:\n%s", calls(t, log))
+		// Asked over REST, through gh's placeholders. `gh pr list --head` is GraphQL, which a
+		// sandbox failed with a keychain TLS error while REST worked (friction log, 2026-10-09).
+		if c := calls(t, log); !strings.Contains(c, "api repos/{owner}/{repo}/pulls?state=all&head={owner}%3Afeat%2Fdetected") {
+			t.Errorf("gh was not asked over REST about the branch git reported:\n%s", c)
 		}
 	})
 
@@ -663,7 +667,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// The deliberate swallow: the report IS posted, so losing the belt-and-braces copy
 		// must not fail the publish — it must say so and carry on.
 		dir := gitRepo(t)
-		shimGh(t, `case "$*" in "pr list"*) echo '[{"number":9}]';; esac`)
+		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
 		// Replace .git with a file, so git can run but reports no common dir.
 		if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 			t.Fatal(err)
@@ -841,7 +845,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// post a second public disclosure.
 		dir := gitRepo(t)
 		log := shimGh(t, `case "$*" in
-  "pr list"*) echo '[{"number":9}]';;
+  "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';;
   "pr comment"*) (sleep 5) & exit 0;;
 esac`)
 		_ = exec.Command("gh", "--warm").Run()
@@ -1015,7 +1019,7 @@ esac`)
 func TestTheLabelMovesEvenWhenTheCommentFails(t *testing.T) {
 	dir := gitRepo(t)
 	log := shimGh(t, `case "$*" in
-	  "pr list"*) echo '[{"number":9}]';;
+	  "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';;
 	  "pr comment"*) echo "rate limited" >&2; exit 1;;
 	  *) exit 0;;
 	esac`)
@@ -1039,7 +1043,7 @@ func TestTheLabelMovesEvenWhenTheCommentFails(t *testing.T) {
 func TestAFailedLabelRemovalIsReported(t *testing.T) {
 	dir := gitRepo(t)
 	shimGh(t, `case "$*" in
-	  "pr list"*) echo '[{"number":9}]';;
+	  "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';;
 	  *"--remove-label review:converged"*) echo "HTTP 403: Resource not accessible by integration" >&2; exit 1;;
 	  *"--remove-label review:capped"*) echo "'review:capped' not found" >&2; exit 1;;
 	  *) exit 0;;
@@ -1074,7 +1078,7 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 	// Every removal fails, with an error that is not gh's "not found": only review:converged
 	// is on the PR, so it is the only one that may warn.
 	gh := `case "$*" in
-	  "pr list"*) echo '[{"number":9}]';;
+	  "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';;
 	  "pr view 9 --json labels") %s;;
 	  *"--remove-label"*) echo "HTTP 502" >&2; exit 1;;
 	  *) exit 0;;

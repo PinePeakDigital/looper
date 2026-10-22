@@ -1,0 +1,8 @@
+target: internal/record/write.go
+verify: go test ./internal/record/ -count=1 -run 'TestEscalationsMustBeAListOfGateAndReason$'
+expect: escalations as no reason
+why:    an escalation is a gate run above the plan's floor WITH the reason; absent or blank, the row decodes and the report says a gate was escalated and never why. Disabled with `&& false` rather than replaced, so `r` stays read and the mutant compiles.
+--- old
+		if pyStrip(r) == "" {
+--- new
+		if pyStrip(r) == "" && false {

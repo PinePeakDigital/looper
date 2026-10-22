@@ -1,0 +1,8 @@
+target: internal/learn/learn.go
+verify: go test ./internal/learn/ -count=1 -run 'TestBumpRefusesAnEmptyMatch$'
+expect: --- FAIL:
+why:    strings.Contains(x, "") is true, so `looper learn bump <file> ""` (or no text) re-dated the first entry in the file, whichever it was, and exited 0. Measured before the guard: the first dismissal was re-dated today. A bump exists to keep one entry from being evicted, so an empty match quietly protects the wrong one.
+--- old
+		if py.Strip(text) == "" {
+--- new
+		if py.Strip(text) == "" && false {

@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeAsksGitHubOverREST'
+expect: with no branch there is no PR to read
+why:    with no branch (a detached HEAD, git unable to say) there is no PR to look up, and asking anyway sends `head={owner}%3A` — an empty head, whose answer is GitHub's to interpret, not this gate's. Whatever comes back is not this branch's PR.
+--- old
+	if branch == "" {
+		return "", false, ""
+	}
+--- new
