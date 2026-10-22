@@ -197,12 +197,16 @@ func TestTheUnfinishedBlockOrder(t *testing.T) {
 // whether the row exists, not what it says. Broken outcomes then block on their own.
 func TestEveryFinishOutcomeClosesTheRun(t *testing.T) {
 	shimGh(t, "exit 1")
-	for _, outcome := range []string{"clean", "cycle-limit", "skipped", "carried", "test-failure"} {
+	for _, outcome := range []string{"clean", "cycle-limit", record.AsksOpen, "skipped", "carried", "test-failure"} {
 		dir, gitdir := repo(t)
+		asks := "" // finish refuses asks-open without asks, so its row carries them
+		if outcome == record.AsksOpen {
+			asks = `,"unresolved_asks":2`
+		}
 		store := writeStore(t,
 			`{"run_id":"fin1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 			`{"run_id":"fin1","phase":"cycle","n":1,"applied":0,"agents":2}`,
-			`{"run_id":"fin1","phase":"finish","outcome":"`+outcome+`"}`)
+			`{"run_id":"fin1","phase":"finish","outcome":"`+outcome+`"`+asks+`}`)
 		runs, err := record.Load(store, 0)
 		if err != nil {
 			t.Fatal(err)

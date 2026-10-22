@@ -375,8 +375,8 @@ golden drops the `clean` warning and records that outcome — the rest is `runlo
 unchanged.
 
 `asks-open` is the one outcome `runlog.py` never had. `finish` refuses it with no `--asks` above
-zero, the mirror of refusing `clean` with asks, and the constants parity check compares the
-rest of the outcome list (`TestAsksOpenNeedsAsks`).
+zero, the mirror of refusing `clean` with asks (`TestAsksOpenNeedsAsks`), and the constants
+parity check, `TestWriteConstantsMatchThePython`, compares the rest of the outcome list.
 
 Where `runlog.py` crashes with a traceback, `looper record` decides instead, and each case has
 its own test: a numeric agent id is recorded (the run as partial), a number or bool as `--agents` or `--escalations` is refused, and a reason that is not a
