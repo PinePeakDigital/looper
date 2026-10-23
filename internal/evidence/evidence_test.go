@@ -49,9 +49,10 @@ func TestPRsForBranchEscapesTheBranch(t *testing.T) {
 	}
 }
 
-// Every run dir's pending report, a stray dir name included, so the caller can name it.
+// Every run dir's pending report, a stray dir name included, so the caller can name it. The
+// home holds `[` and `*`, which a Glob would read as a pattern and list nothing.
 func TestPendingReportsListsEveryFileInPathOrder(t *testing.T) {
-	home := t.TempDir()
+	home := filepath.Join(t.TempDir(), "h[1*")
 	t.Setenv("REVIEW_LOOP_HOME", home)
 	var want []string
 	for _, id := range []string{"a", "a-1", "x y"} {

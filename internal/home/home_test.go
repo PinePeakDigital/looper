@@ -195,3 +195,58 @@ func TestMigratePendingContinuesPastAFailure(t *testing.T) {
 		t.Errorf("bbb not moved: %q", b)
 	}
 }
+
+// A run dir that already holds its report keeps it, and the old copy stays put.
+func TestMigratePendingLeavesAnExistingReport(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
+	repo := gitInit(t)
+	old := filepath.Join(repo, ".git", "info", "review-loop-pending-report.abc123.md")
+	write(t, old, "old\n")
+	rd, _ := RunDir("abc123")
+	write(t, filepath.Join(rd, "pending-report.md"), "new\n")
+	if err := MigratePending(repo, func(string) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(rd, "pending-report.md")); string(b) != "new\n" {
+		t.Errorf("run dir report = %q, want it untouched", b)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("the old report was removed: %v", err)
+	}
+}
+
+// A symlink or a directory at the old ledger path is not a ledger: nothing is copied and the
+// source is left alone.
+func TestLedgerIgnoresANonRegularOldFile(t *testing.T) {
+	for _, kind := range []string{"symlink", "dir"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
+			repo := gitInit(t)
+			old := filepath.Join(repo, ".git", "info", "review-loop-deferred.md")
+			if kind == "dir" {
+				if err := os.MkdirAll(old, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				target := filepath.Join(t.TempDir(), "elsewhere")
+				write(t, target, "x\n")
+				if err := os.Symlink(target, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p, err := Ledger(repo, Deferred)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rd, _ := RepoDir(repo); p != filepath.Join(rd, Deferred) {
+				t.Errorf("Ledger = %q, want the store path", p)
+			}
+			if _, err := os.Lstat(p); !os.IsNotExist(err) {
+				t.Errorf("a store file was made: %v", err)
+			}
+			if _, err := os.Lstat(old); err != nil {
+				t.Errorf("the old path was removed: %v", err)
+			}
+		})
+	}
+}

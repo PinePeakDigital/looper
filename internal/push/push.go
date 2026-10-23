@@ -162,7 +162,8 @@ func Fingerprint(r *record.Run) []string {
 //
 // No "cannot tell" result: no gh and no home directory both read as NOT landed, which fails closed, and
 // pr-report guarantees the body lands in one of the two places checked — a PR comment or
-// this run's pending file — including when the post fails. So "neither" means pr-report did
+// this run's pending file — including when the post fails, unless there is no home
+// directory to hold the pending file, which reads as not landed too. So "neither" means pr-report did
 // not run, which is the one thing this gate exists to catch.
 func ReportLanded(runID string, r *record.Run, repo string) bool {
 	landed, _ := reportProbe(runID, r, repo, currentBranch(repo))

@@ -31,13 +31,13 @@ func shimGh(t *testing.T, body string) string {
 	return log
 }
 
-// noGh puts a PATH with NO gh on it, and no git either when bare is false — the
-// not-installed case, which must read as "unknown", not as "there is no PR".
+// noGh puts a PATH with NO gh on it — the not-installed case, which must read as
+// "unknown", not as "there is no PR".
 func noGh(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	// git has to stay reachable: the deferral writes into its --git-common-dir, and a test
-	// that removes both cannot tell a missing gh from a missing git.
+	// git has to stay reachable: FindPR asks `git branch --show-current` before it asks gh,
+	// and a test that removes both cannot tell a missing gh from a missing git.
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("no git on PATH")

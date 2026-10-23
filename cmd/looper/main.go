@@ -121,10 +121,19 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	case "deferred":
 		return ledger.Deferred(args[1:], out, errOut)
 	case "home":
-		// The repo's store, for the skill's shell snippets: `$(looper home)/learnings.md`.
+		// The repo's store, for the skill's shell snippets: `$(looper home)/learnings.md`. The
+		// ledgers are moved in first: a `looper learn add` on that path before anything had read
+		// the ledger would create a new file, and the old one would then never be moved.
 		var d string
-		if d, err = home.RepoDir(""); err == nil {
-			_, err = fmt.Fprintln(out, d)
+		for _, n := range []string{home.ThreatModel, home.Deferred, home.Learnings} {
+			if _, err = home.Ledger("", n); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			if d, err = home.RepoDir(""); err == nil {
+				_, err = fmt.Fprintln(out, d)
+			}
 		}
 	case "plan":
 		return plan.Command(args[1:], in, out, errOut)
@@ -453,7 +462,14 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		if rd, err := home.RunDir(*runID); err == nil {
 			if p := filepath.Join(rd, "narrative.md"); fileExists(p) {
 				*findingsFile = p
+				if *post {
+					fmt.Fprintf(errOut, "pr-report: narrative from %s\n", p)
+				}
 			}
+		}
+		// Only when posting: without -post the body is on stdout for the reader to see.
+		if *post && *findingsFile == "" {
+			fmt.Fprintln(errOut, "pr-report: no -findings-file and no narrative.md in the run dir; the report carries no findings narrative")
 		}
 	}
 	narrative, err := readNarrative(*findingsFile, in)

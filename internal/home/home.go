@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/pinepeakdigital/looper/internal/run"
 )
 
 // Ledger file names in a repo's store, and the name each had under <git-common-dir>/info.
@@ -41,14 +43,15 @@ func Base() (string, error) {
 	return filepath.Join(h, ".claude", "review-loop"), nil
 }
 
+// git is git's trimmed stdout, or "" when it fails. Bounded like every other looper git call:
+// a git whose descendant holds stdout open (a hook, a credential helper) once hung `looper home`
+// for as long as the descendant lived, and an undrained pipe's bytes would name the wrong store.
 func git(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
+	r := run.Run(dir, 10*time.Second, "git", args...)
+	if r.Error != nil || r.Code != 0 || !r.Drained {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(r.Out))
 }
 
 // commonDir is dir's absolute git common dir, or "" outside a repo. --git-common-dir, never
@@ -140,13 +143,19 @@ func MigratePending(dir string, valid func(string) bool) error {
 	if common == "" {
 		return nil
 	}
-	olds, err := filepath.Glob(filepath.Join(common, "info", legacyPfx+"pending-report.*.md"))
+	// Listed, not globbed: a common dir holding `[` or `*` is a pattern to Glob.
+	des, err := os.ReadDir(filepath.Join(common, "info"))
 	if err != nil {
-		return err
+		return nil
 	}
 	var errs []error
-	for _, old := range olds {
-		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(old), legacyPfx+"pending-report."), ".md")
+	for _, de := range des {
+		pfx, n := legacyPfx+"pending-report.", de.Name()
+		if !strings.HasPrefix(n, pfx) || !strings.HasSuffix(n, ".md") {
+			continue
+		}
+		old := filepath.Join(common, "info", n)
+		id := strings.TrimSuffix(strings.TrimPrefix(n, pfx), ".md")
 		if !valid(id) {
 			continue
 		}

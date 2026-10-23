@@ -454,7 +454,7 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 //
 // stdout must still carry only the decision: the note is a second stream, not a prefix.
 func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
-	// gh shimmed to fail AND no store, so neither probe can run — the one
+	// gh shimmed to fail AND no review-loop home, so neither probe can run — the one
 	// state that owes the note.
 	shim := t.TempDir()
 	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {

@@ -24,6 +24,19 @@ func TestHomePrintsTheRepoStore(t *testing.T) {
 	if !strings.HasPrefix(out, os.Getenv("REVIEW_LOOP_HOME")+"/repos/") {
 		t.Errorf("%q is not under $REVIEW_LOOP_HOME/repos", out)
 	}
+
+	// A ledger still at the old place is moved in first, so `$(looper home)/learnings.md` names
+	// the real one rather than a new empty file.
+	old := filepath.Join(".git", "info", "review-loop-learnings.md")
+	if err := os.WriteFile(old, []byte("L\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := doRun(t, "home"); code != 0 {
+		t.Fatalf("home = %d (stderr %q)", code, errOut)
+	}
+	if b, _ := os.ReadFile(filepath.Join(want, home.Learnings)); string(b) != "L\n" {
+		t.Errorf("store learnings = %q, want the old ledger moved in", b)
+	}
 	t.Setenv("REVIEW_LOOP_HOME", "")
 	t.Setenv("HOME", "")
 	if code, out, _ := doRun(t, "home"); code == 0 {

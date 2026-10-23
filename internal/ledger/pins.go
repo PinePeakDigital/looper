@@ -88,10 +88,10 @@ func gitRaw(args ...string) []byte {
 	return out.Bytes()
 }
 
-// infoPath is the ledger's path in the repo's store (home.Ledger), or "" outside a repo. The
+// ledgerPath is the ledger's path in the repo's store (home.Ledger), or "" outside a repo. The
 // store is outside .git so a worktree-isolated builder can write it (narthur/skills#16); a
 // ledger still at its old place under <git-common-dir>/info is moved in on first use.
-func infoPath(name string) (string, error) {
+func ledgerPath(name string) (string, error) {
 	if strip(decode(gitRaw("rev-parse", "--git-common-dir"))) == "" {
 		return "", nil
 	}

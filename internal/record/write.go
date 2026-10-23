@@ -957,7 +957,7 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		}
 		return 0, cmdShow(*s.strs["run-id"], out)
 	case "pending":
-		s.flagBool("all", "every pending report, each with its run's recorded branch, whatever is checked out")
+		s.flagBool("all", "every pending report of this repo's runs, each with its run's recorded branch, whatever is checked out")
 		if err := s.parse(args, nil); err != nil {
 			return 0, err
 		}

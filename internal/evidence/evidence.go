@@ -12,7 +12,9 @@ package evidence
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -101,14 +103,18 @@ func PendingReports(repo string) ([]Pending, error) {
 	if err != nil {
 		return nil, errors.Join(merr, err)
 	}
-	files, err := filepath.Glob(filepath.Join(base, "run", "*", PendingName))
-	if err != nil {
+	// Listed, not globbed: a $REVIEW_LOOP_HOME holding `[` made Glob fail and list nothing.
+	des, err := os.ReadDir(filepath.Join(base, "run"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, errors.Join(merr, err)
 	}
-	sort.Strings(files)
-	out := make([]Pending, len(files))
-	for i, f := range files {
-		out[i] = Pending{f, filepath.Base(filepath.Dir(f))}
+	out := []Pending{}
+	for _, de := range des {
+		f := filepath.Join(base, "run", de.Name(), PendingName)
+		if _, err := os.Lstat(f); err == nil {
+			out = append(out, Pending{f, de.Name()})
+		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path }) // by path, as Glob gave
 	return out, merr
 }
