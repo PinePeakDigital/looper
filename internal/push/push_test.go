@@ -853,6 +853,10 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 		// TestReportLandedFromAPRComment shims a SUCCEEDING gh at three call sites. It was
 		// unobserved because ReportLanded discards the second value and Check reads it only
 		// when `landed` is false.
+		//
+		// No store: the pending-file half needs only a home dir, so with one it answers too and
+		// would hide a gh answer that was not counted.
+		noStore(t)
 		ghComments(t, "some unrelated comment")
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
@@ -1288,8 +1292,10 @@ func TestCheckReadsOmittedBranchesFromGit(t *testing.T) {
 func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
 
-	t.Run("gh says there is no PR and git cannot be asked", func(t *testing.T) {
-		// `[]` is an answer: the refusal's advice — post the report — is the right one.
+	t.Run("gh says there is no PR and there is no store", func(t *testing.T) {
+		// `[]` is an answer: the refusal's advice — post the report — is the right one. No store,
+		// or the pending-file half answers and hides it.
+		noStore(t)
 		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[]' ;; *) exit 1 ;; esac`)
 		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || !attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, true) — gh answered that there is no PR",

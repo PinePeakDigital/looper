@@ -31,7 +31,8 @@ func read(path string) (text string, ok bool, err error) {
 		return "", false, nil
 	}
 	b, err := os.ReadFile(path)
-	// ENOTDIR is a path component being a file: no ledger can be under it, so there is none, as the Python said.
+	// ENOTDIR is a path component being a file (a $REVIEW_LOOP_HOME that is a file): no ledger can
+	// be under it, so there is none, as the Python said.
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return "", false, nil
 	}

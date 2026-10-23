@@ -154,6 +154,26 @@ func TestInfoAsAFileIsNoLedger(t *testing.T) {
 	}
 }
 
+// A store under a regular file holds no ledger either: ENOTDIR is "none", as the Python read it.
+// (`.git/info` as a file no longer reaches read at all — the ledger is in the store.)
+func TestAStoreUnderAFileIsNoLedger(t *testing.T) {
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "file")
+			if err := os.WriteFile(f, []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(newFixture(t).root) // not divergence.setup, which makes the store dir
+			t.Setenv("REVIEW_LOOP_HOME", f)
+			var o, e bytes.Buffer
+			code, out, errOut := command(cmd)(nil, &o, &e), o.String(), e.String()
+			if code != 0 || !strings.Contains(out, `"exists": false`) {
+				t.Errorf("exit %d, stderr %q, stdout:\n%s", code, errOut, out)
+			}
+		})
+	}
+}
+
 func infoAsFile(t *testing.T, root string) {
 	info := filepath.Join(root, ".git", "info")
 	if err := os.RemoveAll(info); err != nil {
