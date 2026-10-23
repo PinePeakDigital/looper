@@ -41,8 +41,8 @@ func TestHomePrintsTheRepoStore(t *testing.T) {
 			t.Errorf("store %s = %q, want the old ledger moved in", n, b)
 		}
 	}
-	// A ledger that cannot move is named, and the store is still printed: Step 0 reads a
-	// failing `looper home` as "looper too old".
+	// A ledger that cannot move fails the command, is named, and no store is printed: a caller
+	// that wrote to `$(looper home)/<ledger>.md` anyway would orphan the old one for good.
 	if err := os.MkdirAll(want, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestHomePrintsTheRepoStore(t *testing.T) {
 	if err := os.WriteFile(bad, []byte("x"), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, errOut := doRun(t, "home"); code != 0 || out != want+"\n" || !strings.Contains(errOut, home.Deferred) {
+	if code, out, errOut := doRun(t, "home"); code == 0 || out != "" || !strings.Contains(errOut, home.Deferred) {
 		t.Errorf("unreadable old ledger: home = %d %q, stderr %q", code, out, errOut)
 	}
 	t.Setenv("REVIEW_LOOP_HOME", "")

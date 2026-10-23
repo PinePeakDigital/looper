@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func gitInit(t *testing.T) string {
@@ -251,8 +252,8 @@ func TestLedgerIgnoresANonRegularOldFile(t *testing.T) {
 	}
 }
 
-// A git that leaves its pipe held open is an error, not "outside a repo": the cwd fallback
-// would name another store. Before the time limit this hung for as long as the holder lived.
+// A git that times out, or leaves its pipe held open, is an error, not "outside a repo": the
+// old code fell back to the cwd and so named another store. A missing git is outside a repo.
 func TestRepoDirRefusesAGitThatCannotAnswer(t *testing.T) {
 	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
 	repo := gitInit(t)
@@ -260,14 +261,26 @@ func TestRepoDirRefusesAGitThatCannotAnswer(t *testing.T) {
 	if err != nil {
 		t.Skip("no git on PATH")
 	}
-	shim := t.TempDir()
-	write(t, filepath.Join(shim, "git"), "#!/bin/sh\nsleep 30 &\nexec "+real+" \"$@\"\n")
-	if err := os.Chmod(filepath.Join(shim, "git"), 0o755); err != nil {
-		t.Fatal(err)
+	path := os.Getenv("PATH")
+	defer func(b time.Duration) { gitBudget = b }(gitBudget)
+	gitBudget = 300 * time.Millisecond
+	for name, body := range map[string]string{
+		"held pipe": "sleep 30 &\nexec " + real + ` "$@"`,
+		"timeout":   "exec sleep 30",
+	} {
+		shim := t.TempDir()
+		write(t, filepath.Join(shim, "git"), "#!/bin/sh\n"+body+"\n")
+		if err := os.Chmod(filepath.Join(shim, "git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", shim+string(os.PathListSeparator)+path)
+		if p, err := RepoDir(repo); err == nil {
+			t.Errorf("%s: RepoDir = %q, want an error", name, p)
+		}
 	}
-	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if p, err := RepoDir(repo); err == nil {
-		t.Errorf("RepoDir = %q with a hung git, want an error", p)
+	t.Setenv("PATH", t.TempDir())
+	if _, err := RepoDir(repo); err != nil {
+		t.Errorf("no git: RepoDir errored (%v), want the cwd-keyed store", err)
 	}
 }
 

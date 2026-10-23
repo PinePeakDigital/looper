@@ -43,17 +43,21 @@ func Base() (string, error) {
 	return filepath.Join(h, ".claude", "review-loop"), nil
 }
 
-// errGit is a git that ran but could not answer in time. It is not "outside a repo": falling
-// back to the working directory would quietly name another store and split the ledgers.
-var errGit = errors.New("git did not answer within its time limit, so the repo is unknown")
+// errGit is a git that timed out, or exited while a process it started (a hook, a credential
+// helper) held its output open. It is not "outside a repo": falling back to the working
+// directory would quietly name another store and split the ledgers.
+var errGit = errors.New("git timed out or a process it started held its output open, so the repo is unknown")
+
+// gitBudget is git's time limit; a var so a test can shorten it.
+var gitBudget = 10 * time.Second
 
 // git is git's trimmed stdout, or "" when it fails or is missing, which reads as "outside a
 // repo". Bounded like every other looper git call: a git whose descendant holds stdout open (a
 // hook, a credential helper) once hung `looper home` for as long as the descendant lived. A
 // git that ran out of time or left its pipe undrained is errGit.
 func git(dir string, args ...string) (string, error) {
-	r := run.Run(dir, 10*time.Second, "git", args...)
-	if r.Started && (r.Expired || !r.Drained) {
+	r := run.Run(dir, gitBudget, "git", args...)
+	if r.Expired || !r.Drained {
 		return "", errGit
 	}
 	if r.Error != nil || r.Code != 0 {

@@ -123,17 +123,21 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	case "home":
 		// The repo's store, for the skill's shell snippets: `$(looper home)/learnings.md`. The
 		// ledgers are moved in first: a `looper learn add` on that path before anything had read
-		// the ledger would create a new file, and the old one would then never be moved. A ledger
-		// that cannot move is named on stderr and the rest are still tried; only a store that
-		// cannot be named fails, since the skill's Step 0 reads that as "looper too old".
+		// the ledger would create a new file, and the old one would then never be moved. So a
+		// ledger that cannot move fails the command and prints no store: a caller that ignores
+		// stderr (Step 0 does) must not go on to write a fresh ledger over the orphaned one. The
+		// rest are still tried, and each failure is named.
 		var d string
 		if d, err = home.RepoDir(""); err == nil {
+			var errs []error
 			for _, n := range []string{home.ThreatModel, home.Deferred, home.Learnings} {
 				if _, lerr := home.Ledger("", n); lerr != nil {
-					fmt.Fprintf(errOut, "looper home: %s not moved in: %v\n", n, lerr)
+					errs = append(errs, fmt.Errorf("%s not moved in: %w", n, lerr))
 				}
 			}
-			_, err = fmt.Fprintln(out, d)
+			if err = errors.Join(errs...); err == nil {
+				_, err = fmt.Fprintln(out, d)
+			}
 		}
 	case "plan":
 		return plan.Command(args[1:], in, out, errOut)
