@@ -124,19 +124,22 @@ func TestBaseRefusesNoHome(t *testing.T) {
 	}
 }
 
-// The migrated copy keeps the source's mode, so a umask-077 user's ledger stays private.
+// The migrated copy keeps the source's mode: 0600 stays private under a 077 umask, and 0644 is
+// not narrowed to CreateTemp's 0600.
 func TestMoveKeepsTheSourceMode(t *testing.T) {
-	d := t.TempDir()
-	src, dst := filepath.Join(d, "src"), filepath.Join(d, "out", "dst")
-	write(t, src, "x\n")
-	if err := os.Chmod(src, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := move(src, dst); err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("dst mode = %v, %v; want 0600", fi.Mode(), err)
+	for _, mode := range []os.FileMode{0o600, 0o644} {
+		d := t.TempDir()
+		src, dst := filepath.Join(d, "src"), filepath.Join(d, "out", "dst")
+		write(t, src, "x\n")
+		if err := os.Chmod(src, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := move(src, dst); err != nil {
+			t.Fatal(err)
+		}
+		if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != mode {
+			t.Errorf("dst mode = %v, %v; want %v", fi.Mode(), err, mode)
+		}
 	}
 }
 
