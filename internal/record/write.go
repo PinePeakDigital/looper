@@ -1427,7 +1427,11 @@ func cmdPending(out, errOut io.Writer) error {
 		return err
 	}
 	repo := repoID()
-	for _, p := range evidence.PendingReports("") {
+	ps, perr := evidence.PendingReports("")
+	if perr != nil {
+		fmt.Fprintf(errOut, "runlog: %v\n", perr)
+	}
+	for _, p := range ps {
 		f, rid := p.Path, p.ID
 		run := s.get(rid)
 		switch {
@@ -1461,7 +1465,11 @@ func cmdPendingAll(out, errOut io.Writer) error {
 		return err
 	}
 	repo := repoID()
-	for _, p := range evidence.PendingReports("") {
+	ps, perr := evidence.PendingReports("")
+	if perr != nil {
+		fmt.Fprintf(errOut, "runlog: %v\n", perr)
+	}
+	for _, p := range ps {
 		run := s.get(p.ID)
 		br, _ := run["branch"].(string)
 		switch {

@@ -1171,22 +1171,11 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 	})
 }
 
-// noGit is noGh's mirror: a PATH with gh but no git, so WritePending's two failure modes can
-// be told apart.
 // noStore leaves no home directory, so there is no run dir to keep a report in.
 func noStore(t *testing.T) {
 	t.Helper()
 	t.Setenv("REVIEW_LOOP_HOME", "")
 	t.Setenv("HOME", "")
-}
-
-func noGit(t *testing.T) {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
 }
 
 func mustGit(t *testing.T, dir string, args ...string) {

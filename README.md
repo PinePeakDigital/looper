@@ -195,8 +195,8 @@ by `-branch` (or git's current branch), the same lookup `looper pr-report` posts
 (`evidence.PRsForBranch`); a PR opened from a fork is not found that way.
 
 stdout carries the JSON and nothing else; `-h` and flag errors go to stderr. stderr
-also carries a one-line note when neither gh (the PR's comments) nor `git rev-parse` could be
-run at all (when no branch is known, as on a detached HEAD, the note says gh was never asked), because the gate then fails closed with a reason — "run `looper pr-report
+also carries a one-line note when gh (the PR's comments) could not be run and there is no home
+directory to hold the pending-report file (when no branch is known, as on a detached HEAD, the note says gh was never asked), because the gate then fails closed with a reason — "run `looper pr-report
 --run-id <id> --post` first" — that is the wrong instruction for a missing binary or a killed
 subprocess. The reason itself cannot say so: the parity gate compares the decoded
 reason for exact equality against what the Python printed, and it had no second stream. A second note says the PR's comments could not be
@@ -539,8 +539,9 @@ is `uncited`. Pins outside any claim — an `INFERRED` note, a `Watch this spot`
 here` entry — are still watched for `stale` and `broken_pins`. The deferred list reads each line
 containing `DEFERRED` as an entry, with the indented non-blank lines after it, names entries
 with no pin (`unpinned`) and entries with no `Guard` anywhere in them (`unguarded`). Both run
-in the working directory, as the Python did — there is no `--repo` — and take the ledger path
-from `git rev-parse --git-common-dir`, so a linked worktree reads the main checkout's ledgers.
+in the working directory, as the Python did — there is no `--repo` — and read the repo's store
+(see [Where state lives](#where-state-lives)), keyed by the git common dir's parent, so a linked
+worktree reads the main checkout's ledgers.
 Outside a repo the path is `""` and the report says `exists: false`. Arguments are ignored, as
 the Python ignored them; exit 0 for any report.
 

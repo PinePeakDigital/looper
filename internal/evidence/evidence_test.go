@@ -69,7 +69,11 @@ func TestPendingReportsListsEveryFileInPathOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, p := range PendingReports(t.TempDir()) {
+	ps, err := PendingReports(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
 		got = append(got, p.Path+"="+p.ID)
 	}
 	// Path order, as runlog.py sorted: `-` sorts before `/`, so a-1's file precedes a's.

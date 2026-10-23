@@ -893,6 +893,32 @@ func TestPendingAllListsEveryBranch(t *testing.T) {
 	}
 }
 
+// Plain `pending` is the list Step 0c flushes onto THIS branch's PR, so another repo's run on
+// a branch of the same name must not be on it: run dirs are shared by every repo.
+func TestPendingSkipsAnotherReposRunOnTheSameBranch(t *testing.T) {
+	sc := wscenario{files: []string{"review-loop-pending-report.mine.md", "review-loop-pending-report.other.md"}}
+	repo, _ := scenarioRepo(t, sc)
+	t.Chdir(repo)
+	if out, err := exec.Command("git", "checkout", "-qb", "feat").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	if err := os.WriteFile(store, []byte(`{"run_id":"mine","phase":"plan","branch":"feat"}`+"\n"+
+		`{"run_id":"other","phase":"plan","branch":"feat","repo":"/elsewhere"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if c := Command([]string{"pending"}, &out, &errb); c != 0 {
+		t.Fatalf("pending: exit %d, stderr %q", c, errb.String())
+	}
+	want := filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), "run", "mine", "pending-report.md") + "\n"
+	if out.String() != want {
+		t.Errorf("pending stdout %q, want %q", out.String(), want)
+	}
+}
+
 // The fourth recorded divergence, added after the port. runlog.py recorded any non-blank
 // --missing, but the push refusal now prints `--missing '<gates>'`, and pasted unchanged that
 // would record the placeholder as the gates not run. The port refuses the placeholder itself,

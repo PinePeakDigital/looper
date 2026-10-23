@@ -748,8 +748,8 @@ func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 	r := &record.Run{ID: "x", Cycles: []record.Cycle{cyc(9)}}
 
 	// A real, satisfying report planted where a traversing id would reach it. The id below
-	// resolves to <parent-of-repo>/escaped.md, so if the guard is gone the gate is satisfied
-	// by a file outside the repo entirely.
+	// resolves to <parent-of-store>/escaped/pending-report.md, so if the guard is gone the gate
+	// is satisfied by a file outside the store entirely.
 	// Enough `..` to clear the run dirs and the store above them. The count is CHECKED below
 	// rather than reasoned about: an earlier version, splicing into a filename under .git,
 	// used three and landed back inside .git.

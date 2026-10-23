@@ -97,6 +97,9 @@ var swept = regexp.MustCompile(`^[ \t\n\v\f\r]*<!--[ \t\n\v\f\r]*[Ss]wept:[ \t\n
 func learnings() (string, int, *string) {
 	p, err := home.Ledger("", home.Learnings)
 	if err != nil {
+		// Said, not swallowed: an empty learnings field reads as "nothing dismissed", so every
+		// dismissed finding would be raised again with no sign of why.
+		fmt.Fprintf(os.Stderr, "looper context: learnings unreadable, reviewing without them: %v\n", err)
 		return "", 0, nil
 	}
 	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {

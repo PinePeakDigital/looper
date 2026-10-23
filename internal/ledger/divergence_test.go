@@ -225,7 +225,10 @@ func TestMergedNamesResolvedEntriesOnTheDefaultBranch(t *testing.T) {
 	runGit(t, f.root, nil, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 	ledger := "- DEFERRED a\n  RESOLVED @ " + first[:7] + " (run r1)\n" +
 		"- DEFERRED b\n  RESOLVED @ " + head + " (run r2)\n" +
-		"- DEFERRED c\n"
+		"- DEFERRED c\n" +
+		// Prose quoting the marker is not the marker: d is unresolved, and dropping it would
+		// lose the deferral.
+		"- DEFERRED d\n  Guard: once RESOLVED @ " + first[:7] + " lands, re-check\n"
 	if err := os.WriteFile(f.ledger(t, DeferredFile), []byte(ledger), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +245,23 @@ func TestMergedNamesResolvedEntriesOnTheDefaultBranch(t *testing.T) {
   ]`
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("want only entry a merged, got:\n%s", out.String())
+	}
+}
+
+// With no origin/HEAD the default branch is unknown, and merged is null, not [] — "could not
+// tell" must not read as "none merged".
+func TestMergedIsNullWithNoDefaultBranch(t *testing.T) {
+	f := newFixture(t)
+	head := runGit(t, f.root, nil, "rev-parse", "HEAD")
+	if err := os.WriteFile(f.ledger(t, DeferredFile), []byte("- DEFERRED a\n  RESOLVED @ "+head+" (run r1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(f.root)
+	var out, errb bytes.Buffer
+	if code := Deferred(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), `"merged": null`) {
+		t.Errorf("want merged null with no origin/HEAD, got:\n%s", out.String())
 	}
 }

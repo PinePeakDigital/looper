@@ -31,7 +31,7 @@ func read(path string) (text string, ok bool, err error) {
 		return "", false, nil
 	}
 	b, err := os.ReadFile(path)
-	// ENOTDIR is info/ being a file: no ledger can be under it, so there is none, as the Python said.
+	// ENOTDIR is a path component being a file: no ledger can be under it, so there is none, as the Python said.
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return "", false, nil
 	}
@@ -80,8 +80,8 @@ func unreadable(cmd, path string, err error, errOut io.Writer) int {
 	return 1
 }
 
-// ThreatModel is `looper threat-model`: threat-model.py's report on
-// <git-common-dir>/info/review-loop-threat-model.md, from the working directory. Every OBSERVED
+// ThreatModel is `looper threat-model`: threat-model.py's report on the repo's store
+// threat-model.md (home.Ledger), from the working directory. Every OBSERVED
 // claim owes a pin; `uncited` counts those without one. Arguments are ignored, as the Python
 // ignored them, except --selftest. Exit 0 for a report, whatever it says.
 func ThreatModel(args []string, out, errOut io.Writer) int {
@@ -176,8 +176,8 @@ func startsWithSpace(s string) bool {
 	return false
 }
 
-// Deferred is `looper deferred`: deferred.py's report on
-// <git-common-dir>/info/review-loop-deferred.md, from the working directory. Arguments are
+// Deferred is `looper deferred`: deferred.py's report on the repo's store deferred.md
+// (home.Ledger), from the working directory. Arguments are
 // ignored, as the Python ignored them, except --selftest. Exit 0 for a report.
 func Deferred(args []string, out, errOut io.Writer) int {
 	if selftest("deferred", args, errOut) {
@@ -228,8 +228,10 @@ func Deferred(args []string, out, errOut io.Writer) int {
 	})
 }
 
-// resolvedRe is the mark a run leaves on an entry it fixed: `RESOLVED @ <sha>`.
-var resolvedRe = regexp.MustCompile(`RESOLVED @ ([0-9a-fA-F]{7,40})\b`)
+// resolvedRe is the mark a run leaves on an entry it fixed: `RESOLVED @ <sha>` opening a line
+// (after indentation or a bullet). Anchored, so a Guard or note that merely quotes the marker
+// does not count: a match there would drop a deferral that was never resolved.
+var resolvedRe = regexp.MustCompile(`(?m)^[ \t]*(?:- )?RESOLVED @ ([0-9a-fA-F]{7,40})\b`)
 
 // merged names the entries marked `RESOLVED @ <sha>` whose sha is on the default branch
 // (origin/HEAD), which the skill then deletes. An entry resolved only on an unmerged branch

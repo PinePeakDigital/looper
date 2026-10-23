@@ -10,6 +10,7 @@
 package evidence
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -88,21 +89,26 @@ func PRComments(n int) string {
 type Pending struct{ Path, ID string }
 
 // PendingReports lists every pending report in every run dir, sorted by path, after moving
-// any left at the old place under repo's git common dir into their run dirs. Run dirs are
-// shared by every repo, so the caller scopes the list by the run record's repo. The ID is the
-// dir's name unchecked, so a stray dir still surfaces for the caller to name rather than
-// vanishing.
-func PendingReports(repo string) []Pending {
-	_ = home.MigratePending(repo, ValidRunID) // best effort: a report that fails to move stays where it was
+// any left at the old place under repo's git common dir ("" is the working directory's) into
+// their run dirs.
+// Run dirs are shared by every repo, so the caller scopes the list by the run record's repo.
+// The ID is the dir's name unchecked, so a stray dir still surfaces for the caller to name
+// rather than vanishing. The error says which reports could not be moved or listed; the list
+// is still every report that could be.
+func PendingReports(repo string) ([]Pending, error) {
+	merr := home.MigratePending(repo, ValidRunID)
 	base, err := home.Base()
 	if err != nil {
-		return nil
+		return nil, errors.Join(merr, err)
 	}
-	files, _ := filepath.Glob(filepath.Join(base, "run", "*", PendingName))
+	files, err := filepath.Glob(filepath.Join(base, "run", "*", PendingName))
+	if err != nil {
+		return nil, errors.Join(merr, err)
+	}
 	sort.Strings(files)
 	out := make([]Pending, len(files))
 	for i, f := range files {
 		out[i] = Pending{f, filepath.Base(filepath.Dir(f))}
 	}
-	return out
+	return out, merr
 }

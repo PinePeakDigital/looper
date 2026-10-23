@@ -1,7 +1,7 @@
 // Package home is where review-loop keeps state that is not the run record: one store per
 // repo for the ledgers, and one dir per run for its inputs and its pending report.
 //
-// Both live under ~/.claude/review-loop, not under the repo's .git: Claude Code's worktree
+// Both live under $REVIEW_LOOP_HOME (default ~/.claude/review-loop), not under the repo's .git: Claude Code's worktree
 // isolation refuses any path under .git, so a worktree-isolated builder could not write a
 // ledger kept in <git-common-dir>/info and every such run ended owing the main session a
 // hand-applied update (narthur/skills#16). One store per repo, not per branch: two branches
@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,13 +133,18 @@ func RunDir(id string) (string, error) {
 
 // MigratePending moves every pending report left at the old place,
 // <git-common-dir>/info/review-loop-pending-report.<id>.md, into <run dir>/pending-report.md.
-// valid says which ids can name a dir; a name it refuses is left where it is.
+// valid says which ids can name a dir; a name it refuses is left where it is. A report that
+// fails to move stays where it was and the rest are still tried; the error names every one.
 func MigratePending(dir string, valid func(string) bool) error {
 	common := commonDir(dir)
 	if common == "" {
 		return nil
 	}
-	olds, _ := filepath.Glob(filepath.Join(common, "info", legacyPfx+"pending-report.*.md"))
+	olds, err := filepath.Glob(filepath.Join(common, "info", legacyPfx+"pending-report.*.md"))
+	if err != nil {
+		return err
+	}
+	var errs []error
 	for _, old := range olds {
 		id := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(old), legacyPfx+"pending-report."), ".md")
 		if !valid(id) {
@@ -153,29 +159,46 @@ func MigratePending(dir string, valid func(string) bool) error {
 			continue
 		}
 		if err := move(old, p); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("%s left in place: %w", old, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-// move copies a regular file old to new (creating new's dir) and then tries to remove old. A
-// missing or non-regular old is nothing to move.
-func move(old, new string) error {
-	fi, err := os.Lstat(old)
+// move copies a regular file src to dst (creating dst's dir) and then tries to remove src. A
+// missing or non-regular src is nothing to move. The copy is written to a temp file and renamed
+// into place, so dst exists only once complete: callers treat an existing dst as migrated and
+// never read src again, so a half-written dst would shadow the whole ledger for good.
+func move(src, dst string) error {
+	fi, err := os.Lstat(src)
 	if err != nil || !fi.Mode().IsRegular() {
 		return nil
 	}
-	b, err := os.ReadFile(old)
+	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(new), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(new, b, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(dst), ".migrate-*")
+	if err != nil {
 		return err
 	}
-	_ = os.Remove(old) // refused in a worktree-isolated session; the copy already stands
+	_, werr := f.Write(b)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(f.Name(), 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(f.Name(), dst)
+	}
+	if werr != nil {
+		_ = os.Remove(f.Name())
+		return werr
+	}
+	_ = os.Remove(src) // refused in a worktree-isolated session; the copy already stands
 	return nil
 }
