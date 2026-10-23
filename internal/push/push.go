@@ -160,9 +160,10 @@ func Fingerprint(r *record.Run) []string {
 // ReportLanded reports whether this run's rendered report has reached somewhere a reader
 // will see it.
 //
-// No "cannot tell" result: no gh and no git both read as NOT landed, which fails closed, and
+// No "cannot tell" result: no gh and no home directory both read as NOT landed, which fails closed, and
 // pr-report guarantees the body lands in one of the two places checked — a PR comment or
-// this run's pending file — including when the post fails. So "neither" means pr-report did
+// this run's pending file — including when the post fails, unless there is no home
+// directory to hold the pending file, which reads as not landed too. So "neither" means pr-report did
 // not run, which is the one thing this gate exists to catch.
 func ReportLanded(runID string, r *record.Run, repo string) bool {
 	landed, _ := reportProbe(runID, r, repo, currentBranch(repo))
@@ -170,20 +171,20 @@ func ReportLanded(runID string, r *record.Run, repo string) bool {
 }
 
 // reportProbe is ReportLanded plus the one thing the bool cannot carry: whether either probe
-// could RUN. A genuinely unposted report, a missing or non-executable `gh`/`git`, and a fired
-// timeout all mean "not landed" — correctly, the gate fails closed — but they call for
+// could RUN. A genuinely unposted report, a missing or non-executable `gh`, no home directory
+// and a fired timeout all mean "not landed" — correctly, the gate fails closed — but they call for
 // different actions, and the refusal text cannot distinguish them, because parity_test.go
 // pins it exactly against push-check.py's frozen output. So the distinction goes to stderr,
 // where neither implementation writes anything and nothing parses.
 //
 // attributable is whether the not-landed answer has a cause the refusal text already covers:
-// a probe ran and said no, or the run id was refused outright. It is FALSE only when neither
-// probe could run.
+// a probe ran and said no, or the run id was refused outright. It is FALSE only when gh could
+// not answer and there is no home directory to hold the pending file.
 //
 // That is NOT the only state an operator cannot act on from the refusal alone, and an earlier
 // version of this comment said it was. Measured: with a store that does not hold the run — a
 // wrong -store, a missing file, a mistyped -run-id — record.Load returns an empty map and NO
-// error, so Fingerprint asks for `0 cycle(s) · 0 agent(s)`, git answers, `attributable` is
+// error, so Fingerprint asks for `0 cycle(s) · 0 agent(s)`, the pending file is read, `attributable` is
 // true, and the refusal's stated remedy cannot fix it: posting the report again renders the
 // same two lines off the same empty record. Check now writes a second Diag note for that
 // state, naming the run and the store it read — see the `r == nil` block below. An earlier
@@ -228,12 +229,15 @@ func probeReport(runID string, r *record.Run, repo, branch string) (landed, attr
 			return true, true, ghWhy
 		}
 	}
-	rc, gitdir := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if rc != 0 || gitdir == "" {
-		return false, attributable, ghWhy
+	// The run dir is keyed by the run id alone, so no git is needed to find it.
+	pending, ok := evidence.PendingPath(runID) // the id passed evidence.Marker above
+	if !ok {
+		return false, attributable, ghWhy // no home directory: nowhere to look
 	}
-	// No attributable assignment here: git answered, so both paths below return true outright.
-	pending, _ := evidence.PendingPath(gitdir, runID) // the id passed evidence.Marker above
+	// A report deferred by a looper older than the run dirs is not moved here: that runs git
+	// with no budget on the gate's path. `record pending` moves it (Step 0c runs it before any
+	// push), and until then it reads as not landed, which fails closed.
+	// No attributable assignment here: the path resolved, so both paths below return true outright.
 	body, err := os.ReadFile(pending)
 	if err != nil {
 		return false, true, ghWhy
@@ -524,9 +528,10 @@ func Check(p CheckParams) (Result, error) {
 			if branch == "" {
 				ghNote = "gh (the PR's comments; never asked, no branch is known, as on a detached HEAD)"
 			}
-			fmt.Fprintf(p.Diag, "push-check: neither "+ghNote+" nor `git rev-parse` could be "+
-				"run in %s, or answered for certain (missing binary, not executable, killed at the %s "+
-				"budget, or a descendant held its output past the drain bound), so "+
+			fmt.Fprintf(p.Diag, "push-check: "+ghNote+" could not be run in %s, or answered "+
+				"for certain (missing binary, not executable, killed at the %s budget, or a "+
+				"descendant held its output past the drain bound), and there is no home directory "+
+				"to hold the pending-report file, so "+
 				"whether the report landed could not be determined; the refusal below fails "+
 				"closed and may not be about the report at all\n", p.Repo, shBudget)
 		}

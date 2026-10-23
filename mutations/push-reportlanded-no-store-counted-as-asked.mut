@@ -1,0 +1,10 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestReportProbeReportsBothAnswers'
+expect: --- FAIL:
+why:    with no store there is no run dir to look in, so the pending-file half asked nothing. Falling through reads os.ReadFile("") as "looked and found no report", which counts as asked, and the refusal then tells the operator to post a report when the cause is that neither gh nor the store could be reached.
+--- old
+	if !ok {
+		return false, attributable, ghWhy // no home directory: nowhere to look
+--- new
+	if false && !ok {
+		return false, attributable, ghWhy // no home directory: nowhere to look

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/pinepeakdigital/looper/internal/home"
 	"github.com/pinepeakdigital/looper/internal/record"
 )
 
@@ -221,7 +222,13 @@ func (sc scenario) build(t *testing.T) world {
 		git(t, w.repo, "remote", "add", "origin", sc.remote)
 	}
 
-	tm := filepath.Join(w.repo, ".git", "info", "review-loop-threat-model.md")
+	// The repo's store, under the $REVIEW_LOOP_HOME TestMain set, which the looper subprocess
+	// inherits. Not <git-common-dir>/info: a directory there would read as nothing to move in.
+	rd, err := home.RepoDir(w.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := filepath.Join(rd, home.ThreatModel)
 	switch sc.ledger {
 	case "":
 	case "dir":
@@ -291,6 +298,9 @@ var runID = regexp.MustCompile(`(?m)^[0-9a-f]{12}$`)
 func (w world) result(t *testing.T, code int, out, errOut string) string {
 	t.Helper()
 	norm := func(s string) string {
+		if d, err := home.RepoDir(w.repo); err == nil {
+			s = strings.ReplaceAll(s, d, "<store>") // its name carries a hash of the temp path
+		}
 		if real, err := filepath.EvalSymlinks(w.base); err == nil && real != w.base {
 			s = strings.ReplaceAll(s, real, "<tmp>")
 		}

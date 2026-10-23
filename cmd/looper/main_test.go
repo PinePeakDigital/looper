@@ -454,13 +454,16 @@ func TestPushCheckDefaultsTheStoreFromTheEnvironment(t *testing.T) {
 //
 // stdout must still carry only the decision: the note is a second stream, not a prefix.
 func TestPushCheckWritesTheDiagnosisToStderr(t *testing.T) {
-	// gh shimmed to fail AND a repo that is not a git dir, so neither probe can run — the one
+	// gh shimmed to fail AND no review-loop home, so neither probe can run — the one
 	// state that owes the note.
 	shim := t.TempDir()
 	if err := os.WriteFile(filepath.Join(shim, "gh"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// And no home, so there is no run dir to look in for a kept report.
+	t.Setenv("REVIEW_LOOP_HOME", "")
+	t.Setenv("HOME", "")
 
 	dir := t.TempDir()
 	store := filepath.Join(dir, "runs.jsonl")
@@ -793,7 +796,7 @@ func TestPrReportPostDefersAndReportsWhereTo(t *testing.T) {
 		"-repo", dir, "-branch", "feat/x", "-post"); strings.Contains(errOut, "stdin is piped") {
 		t.Errorf("a </dev/null post warned about a narrative it could not have had: %q", errOut)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, ".git", "info", "review-loop-pending-report.pr1.md"))
+	b, err := os.ReadFile(filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), "run", "pr1", "pending-report.md"))
 	if err != nil {
 		t.Fatalf("the report was not kept: %v", err)
 	}

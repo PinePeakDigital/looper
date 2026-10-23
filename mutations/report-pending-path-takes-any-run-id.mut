@@ -1,10 +1,10 @@
 target: internal/evidence/evidence.go
 verify: go test ./internal/report/ -count=1 -run 'TestWritePending'
 expect: --- FAIL:
-why:    the run id arrives from -run-id and is interpolated into a PATH under the git common dir, so `../../../../tmp/evil` writes outside the repo. The guard lives in the constructor that builds the path, so no caller can forget it — the lesson push.reportProbe learned when the same check sat in Check() only and every direct caller bypassed it.
+why:    the run id arrives from -run-id and is interpolated into a PATH under the run dirs, so `../../../../tmp/evil` writes outside them. The guard lives in the constructor that builds the path, so no caller can forget it — the lesson push.reportProbe learned when the same check sat in Check() only and every direct caller bypassed it.
 --- old
-func PendingPath(commonDir, id string) (string, bool) {
+func PendingPath(id string) (string, bool) {
 	if !ValidRunID(id) {
 --- new
-func PendingPath(commonDir, id string) (string, bool) {
+func PendingPath(id string) (string, bool) {
 	if false && !ValidRunID(id) {

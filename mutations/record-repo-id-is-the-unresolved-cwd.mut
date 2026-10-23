@@ -1,15 +1,15 @@
-target: internal/record/write.go
+target: internal/home/home.go
 verify: go test ./internal/record/ -count=1 -run 'TestWriteMatchesThePython'
 expect: --- FAIL:
 why:    a run's repo is git's common-dir parent, as runlog.py records it, and check and pending match on it, so a writer that recorded the working directory instead would scope runs differently from runlog.py wherever a symlink sits in the path (macOS's /var -> /private/var, a symlinked checkout). The frozen gate keeps the unresolved path under its own placeholder so this stays visible on any machine where the two differ.
 --- old
-func repoID() string {
-	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
+func repoID(dir string) (string, error) {
+	common, err := commonDir(dir)
 	if common == "" {
 --- new
-func repoID() string {
-	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
+func repoID(dir string) (string, error) {
+	common, err := commonDir(dir)
 	if wd, _ := os.Getwd(); wd != "" {
-		return wd
+		return wd, err
 	}
 	if common == "" {

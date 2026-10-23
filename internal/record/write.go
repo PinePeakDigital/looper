@@ -26,6 +26,7 @@ import (
 	"unicode"
 
 	"github.com/pinepeakdigital/looper/internal/evidence"
+	"github.com/pinepeakdigital/looper/internal/home"
 	"github.com/pinepeakdigital/looper/internal/run"
 )
 
@@ -228,18 +229,8 @@ func git(args ...string) string {
 	return strings.TrimSpace(string(r.Out))
 }
 
-// repoID is a repo's identity across worktrees: its common dir's path.
-func repoID() string {
-	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if common == "" {
-		wd, _ := os.Getwd()
-		return wd
-	}
-	if filepath.Base(common) == ".git" {
-		return filepath.Dir(common)
-	}
-	return common
-}
+// repoID is a repo's identity across worktrees: its common dir's parent (home.RepoID).
+func repoID() string { return home.RepoID("") }
 
 // sessionKind is runlog.session_kind(). CLAUDE_CODE_SESSION_ATTENDED is the harness's own
 // answer and outranks the tty guess, which classifies every interactive Claude Code run as
@@ -966,7 +957,7 @@ func dispatch(name string, args []string, out, errOut io.Writer) (int, error) {
 		}
 		return 0, cmdShow(*s.strs["run-id"], out)
 	case "pending":
-		s.flagBool("all", "every pending report, each with its run's recorded branch, whatever is checked out")
+		s.flagBool("all", "every pending report of this repo's runs, each with its run's recorded branch, whatever is checked out")
 		if err := s.parse(args, nil); err != nil {
 			return 0, err
 		}
@@ -1421,9 +1412,9 @@ func cmdShow(id string, out io.Writer) error {
 	return writeIndented(out, run)
 }
 
-// cmdPending is Step 0c's worklist: pending-report files whose run was planned on THIS branch.
-// The files live under the common dir, which every branch and linked worktree shares, so
-// listing them all would post another branch's report and label onto this PR.
+// cmdPending is Step 0c's worklist: pending-report files whose run was planned in THIS repo on
+// THIS branch. Run dirs are shared by every repo, branch and linked worktree, so listing them
+// all would post another branch's report and label onto this PR.
 func cmdPending(out, errOut io.Writer) error {
 	br := git("rev-parse", "--abbrev-ref", "HEAD")
 	common := git("rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -1435,12 +1426,18 @@ func cmdPending(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range evidence.PendingReports(common) {
+	repo := repoID()
+	ps, perr := evidence.PendingReports("")
+	if perr != nil {
+		fmt.Fprintf(errOut, "runlog: %v\n", perr)
+	}
+	for _, p := range ps {
 		f, rid := p.Path, p.ID
 		run := s.get(rid)
 		switch {
 		case run == nil:
 			fmt.Fprintf(errOut, "runlog: no run record for %s — left in place\n", f)
+		case otherRepo(run, repo):
 		case run["branch"] == br:
 			fmt.Fprintln(out, f)
 		}
@@ -1448,7 +1445,7 @@ func cmdPending(out, errOut io.Writer) error {
 	return nil
 }
 
-// cmdPendingAll is every pending-report file under the common dir, one per line as
+// cmdPendingAll is every pending-report file of THIS repo's runs, one per line as
 // `<path>\t<branch>`, the branch being the one its run was planned on. cmdPending's filter is
 // right for the PR of the branch checked out, and it is the only way a report is ever flushed —
 // so a report deferred on a branch that is later left (a merged PR, or `main`, which gets no PR)
@@ -1467,12 +1464,19 @@ func cmdPendingAll(out, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range evidence.PendingReports(common) {
+	repo := repoID()
+	ps, perr := evidence.PendingReports("")
+	if perr != nil {
+		fmt.Fprintf(errOut, "runlog: %v\n", perr)
+	}
+	for _, p := range ps {
 		run := s.get(p.ID)
 		br, _ := run["branch"].(string)
 		switch {
 		case run == nil:
 			fmt.Fprintf(errOut, "runlog: no run record for %s — left in place\n", p.Path)
+		case otherRepo(run, repo):
+			// another repo's run: its own repo's pending lists it
 		case br == "" || br == "HEAD":
 			// "HEAD" is what plan records on a detached HEAD: no branch, so no PR to route to.
 			fmt.Fprintf(errOut, "runlog: no branch recorded for %s — left in place\n", p.Path)
@@ -1481,6 +1485,14 @@ func cmdPendingAll(out, errOut io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// otherRepo is whether run was planned in a repo other than repo. Run dirs are shared by every
+// repo, so a pending report is scoped by its run's recorded repo; a row that records none
+// cannot be scoped and is not filtered out.
+func otherRepo(run map[string]any, repo string) bool {
+	r, ok := run["repo"].(string)
+	return ok && r != repo
 }
 
 // RejectBanned is runlog.reject_banned for one free-text reason, for writers outside the run

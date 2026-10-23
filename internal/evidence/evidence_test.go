@@ -16,7 +16,7 @@ func TestOnlyAPlainRunIDBuildsEvidence(t *testing.T) {
 		if m, ok := Marker(id); ok || m != "" {
 			t.Errorf("Marker(%q) = %q, %v", id, m, ok)
 		}
-		if p, ok := PendingPath("/g", id); ok || p != "" {
+		if p, ok := PendingPath(id); ok || p != "" {
 			t.Errorf("PendingPath(%q) = %q, %v", id, p, ok)
 		}
 	}
@@ -24,7 +24,7 @@ func TestOnlyAPlainRunIDBuildsEvidence(t *testing.T) {
 		if m, ok := Marker(id); !ok || m != "<!-- review-loop:run="+id+" -->" {
 			t.Errorf("Marker(%q) = %q, %v", id, m, ok)
 		}
-		if p, ok := PendingPath("/g", id); !ok || p != "/g/info/review-loop-pending-report."+id+".md" {
+		if p, ok := PendingPath(id); !ok || p != os.Getenv("REVIEW_LOOP_HOME")+"/run/"+id+"/pending-report.md" {
 			t.Errorf("PendingPath(%q) = %q, %v", id, p, ok)
 		}
 	}
@@ -49,24 +49,35 @@ func TestPRsForBranchEscapesTheBranch(t *testing.T) {
 	}
 }
 
+// Every run dir's pending report, a stray dir name included, so the caller can name it. The
+// home holds `[` and `*`, which a Glob would read as a pattern and list nothing.
 func TestPendingReportsListsEveryFileInPathOrder(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "info"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	home := filepath.Join(t.TempDir(), "h[1*")
+	t.Setenv("REVIEW_LOOP_HOME", home)
 	var want []string
 	for _, id := range []string{"a", "a-1", "x y"} {
-		p := filepath.Join(dir, "info", "review-loop-pending-report."+id+".md")
+		p := filepath.Join(home, "run", id, "pending-report.md")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(p, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		want = append(want, p+"="+id)
 	}
+	// A run dir with no pending report is not listed.
+	if err := os.MkdirAll(filepath.Join(home, "run", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var got []string
-	for _, p := range PendingReports(dir) {
+	ps, err := PendingReports(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
 		got = append(got, p.Path+"="+p.ID)
 	}
-	// Path order, as runlog.py sorted: `-` sorts before `.`, so a-1's file precedes a's.
+	// Path order, as runlog.py sorted: `-` sorts before `/`, so a-1's file precedes a's.
 	want[0], want[1] = want[1], want[0]
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("got %q, want %q", got, want)

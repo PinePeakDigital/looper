@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 
 	"github.com/pinepeakdigital/looper/internal/docs"
 	"github.com/pinepeakdigital/looper/internal/evidence"
 	"github.com/pinepeakdigital/looper/internal/gather"
+	"github.com/pinepeakdigital/looper/internal/home"
 	"github.com/pinepeakdigital/looper/internal/learn"
 	"github.com/pinepeakdigital/looper/internal/ledger"
 	"github.com/pinepeakdigital/looper/internal/mutate"
@@ -35,6 +37,7 @@ const usage = `usage: looper version
        looper stats [--alarm] [--repo <substring>]
        looper threat-model
        looper deferred
+       looper home
        looper context
        looper learn {add,bump,prune} <file> [text] [--section dismissed|accepted] [--cap N]
        looper plan --model m --logic yes|no --behavioral-goal yes|no
@@ -51,13 +54,18 @@ instruction.
 
 pr-report renders the Step 14 disclosure from the record. Without -post it writes the
 body to stdout. With -post it comments on this branch's PR, and otherwise keeps the
-body in .git/info for Step 0c to flush — stderr says which, and names the cause when
+body in the run dir for Step 0c to flush. Without -findings-file the narrative is the run
+dir's narrative.md when there is one — stderr says which, and names the cause when
 gh could not answer rather than asserting there is no PR.
 
 stats reads the run record: the cadence report, or with --alarm the repeat-offender
 gates plan.py prints at Step 0 (silent when there are none). See README.md.
 
-threat-model and deferred report the two pinned ledgers under <git-common-dir>/info as
+home prints this repo's store, ~/.claude/review-loop/repos/<name>-<hash>, where the
+threat model, the deferred list and the learnings live (moved in from .git/info on first
+use). It is outside .git so a worktree-isolated builder can write it.
+
+threat-model and deferred report the two pinned ledgers in the repo's store as
 JSON, from the working directory: which pinned files moved since their pin (stale), which
 pins name no commit here or do not parse (broken_pins), and what owes a pin or a Guard
 line. Exit 0 for a report, 1 for a ledger that exists and cannot be read.
@@ -112,6 +120,25 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return ledger.ThreatModel(args[1:], out, errOut)
 	case "deferred":
 		return ledger.Deferred(args[1:], out, errOut)
+	case "home":
+		// The repo's store, for the skill's shell snippets: `$(looper home)/learnings.md`. The
+		// ledgers are moved in first: a `looper learn add` on that path before anything had read
+		// the ledger would create a new file, and the old one would then never be moved. So a
+		// ledger that cannot move fails the command and prints no store: a caller that ignores
+		// stderr (Step 0 does) must not go on to write a fresh ledger over the orphaned one. The
+		// rest are still tried, and each failure is named.
+		var d string
+		if d, err = home.RepoDir(""); err == nil {
+			var errs []error
+			for _, n := range []string{home.ThreatModel, home.Deferred, home.Learnings} {
+				if _, lerr := home.Ledger("", n); lerr != nil {
+					errs = append(errs, fmt.Errorf("%s not moved in: %w", n, lerr))
+				}
+			}
+			if err = errors.Join(errs...); err == nil {
+				_, err = fmt.Fprintln(out, d)
+			}
+		}
 	case "plan":
 		return plan.Command(args[1:], in, out, errOut)
 	case "context":
@@ -433,6 +460,18 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		return err
 	}
 
+	// No -findings-file: the run dir's narrative.md, which the skill always writes. A builder
+	// once could not pass the flag at all (narthur/skills#16), and the report went out bare.
+	if *findingsFile == "" {
+		if rd, err := home.RunDir(*runID); err == nil {
+			if p := filepath.Join(rd, "narrative.md"); fileExists(p) {
+				*findingsFile = p
+				if *post {
+					fmt.Fprintf(errOut, "pr-report: narrative from %s\n", p)
+				}
+			}
+		}
+	}
 	narrative, err := readNarrative(*findingsFile, in)
 	if err != nil {
 		return err
@@ -459,6 +498,11 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 		Risk: report.Risk(r.Plan), Body: body, Label: *label, Diag: errOut,
 	})
 	return err
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // readNarrative takes the narrative from -findings-file: a path, or "-" for stdin. Stdin is

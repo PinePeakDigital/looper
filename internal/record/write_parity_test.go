@@ -348,6 +348,7 @@ var managedEnv = []string{"AO_SESSION_ID", "CLAUDE_REVIEW_LOOP_SUBAGENT", "CLAUD
 
 func scenarioRepo(t *testing.T, sc wscenario) (repo, common string) {
 	t.Helper()
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir()) // this scenario's run dirs, and no other's
 	repo = t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
@@ -502,7 +503,9 @@ func frozen(tr transcript, repo, common, head, store string) string {
 	// The unresolved path keeps a placeholder of its own, so a port that reported the working
 	// directory instead of git's answer still differs from the golden wherever the two differ.
 	resolved, _ := filepath.EvalSymlinks(repo)
-	for _, r := range []struct{ from, to string }{{common, "<common>"}, {store, "<store>"}, {filepath.Dir(store), "<dir>"}, {resolved, "<repo>"}, {repo, "<repo-raw>"}, {head, "<head>"}} {
+	// Pending reports are in the run dirs since narthur/skills#16; runlog.py kept them under
+	// <common>/info, and the goldens were edited to <run> with that change.
+	for _, r := range []struct{ from, to string }{{filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), "run"), "<run>"}, {common, "<common>"}, {store, "<store>"}, {filepath.Dir(store), "<dir>"}, {resolved, "<repo>"}, {repo, "<repo-raw>"}, {head, "<head>"}} {
 		text = strings.ReplaceAll(text, r.from, r.to)
 	}
 	return text
@@ -849,7 +852,7 @@ func TestPendingAllListsEveryBranch(t *testing.T) {
 	sc := wscenario{files: []string{
 		"review-loop-pending-report.mine.md", "review-loop-pending-report.theirs.md",
 		"review-loop-pending-report.ghost.md", "review-loop-pending-report.loose.md",
-		"review-loop-pending-report.det.md",
+		"review-loop-pending-report.det.md", "review-loop-pending-report.other.md",
 	}}
 	repo, common := scenarioRepo(t, sc) // on main
 	t.Chdir(repo)
@@ -861,23 +864,58 @@ func TestPendingAllListsEveryBranch(t *testing.T) {
 		`{"run_id":"theirs","phase":"plan","branch":"main"}`,
 		`{"run_id":"loose","phase":"plan"}`,
 		`{"run_id":"det","phase":"plan","branch":"HEAD"}`,
+		// Another repo's run: run dirs are shared, so it is neither listed nor named here.
+		`{"run_id":"other","phase":"plan","branch":"feat","repo":"/elsewhere"}`,
 	}, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	info := filepath.Join(common, "info")
+	run := filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), "run")
 	var out, errb bytes.Buffer
 	if c := Command([]string{"pending", "--all"}, &out, &errb); c != 0 {
 		t.Fatalf("pending --all: exit %d, stderr %q", c, errb.String())
 	}
-	want := filepath.Join(info, "review-loop-pending-report.mine.md") + "\tfeat\n" +
-		filepath.Join(info, "review-loop-pending-report.theirs.md") + "\tmain\n"
+	// The files were left at the old place, <common>/info, and are listed from their run dirs.
+	want := filepath.Join(run, "mine", "pending-report.md") + "\tfeat\n" +
+		filepath.Join(run, "theirs", "pending-report.md") + "\tmain\n"
 	if out.String() != want {
 		t.Errorf("pending --all stdout:\n%q\nwant\n%q", out.String(), want)
 	}
+	if left, _ := filepath.Glob(filepath.Join(common, "info", "review-loop-pending-report.*")); len(left) != 0 {
+		t.Errorf("not moved out of the old place: %q", left)
+	}
+	if strings.Contains(errb.String(), "other") {
+		t.Errorf("another repo's report was named: %q", errb.String())
+	}
 	for _, f := range []string{"ghost", "loose", "det"} {
-		if !strings.Contains(errb.String(), "review-loop-pending-report."+f+".md — left in place") {
+		if !strings.Contains(errb.String(), filepath.Join(run, f, "pending-report.md")+" — left in place") {
 			t.Errorf("an unroutable file %s was not named on stderr: %q", f, errb.String())
 		}
+	}
+}
+
+// Plain `pending` is the list Step 0c flushes onto THIS branch's PR, so another repo's run on
+// a branch of the same name must not be on it: run dirs are shared by every repo.
+func TestPendingSkipsAnotherReposRunOnTheSameBranch(t *testing.T) {
+	sc := wscenario{files: []string{"review-loop-pending-report.mine.md", "review-loop-pending-report.other.md"}}
+	repo, _ := scenarioRepo(t, sc)
+	t.Chdir(repo)
+	if out, err := exec.Command("git", "checkout", "-qb", "feat").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	setEnv(t, nil)
+	store := filepath.Join(t.TempDir(), "runs.jsonl")
+	t.Setenv("REVIEW_LOOP_RUNS", store)
+	if err := os.WriteFile(store, []byte(`{"run_id":"mine","phase":"plan","branch":"feat"}`+"\n"+
+		`{"run_id":"other","phase":"plan","branch":"feat","repo":"/elsewhere"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if c := Command([]string{"pending"}, &out, &errb); c != 0 {
+		t.Fatalf("pending: exit %d, stderr %q", c, errb.String())
+	}
+	want := filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), "run", "mine", "pending-report.md") + "\n"
+	if out.String() != want {
+		t.Errorf("pending stdout %q, want %q", out.String(), want)
 	}
 }
 

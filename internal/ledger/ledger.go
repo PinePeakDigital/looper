@@ -6,14 +6,18 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/pinepeakdigital/looper/internal/home"
 )
 
-// The two ledgers' file names under <git-common-dir>/info.
+// The two ledgers' file names in the repo's store.
 const (
-	ThreatModelFile = "review-loop-threat-model.md"
-	DeferredFile    = "review-loop-deferred.md"
+	ThreatModelFile = home.ThreatModel
+	DeferredFile    = home.Deferred
 )
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
@@ -27,7 +31,8 @@ func read(path string) (text string, ok bool, err error) {
 		return "", false, nil
 	}
 	b, err := os.ReadFile(path)
-	// ENOTDIR is info/ being a file: no ledger can be under it, so there is none, as the Python said.
+	// ENOTDIR is a path component being a file (a $REVIEW_LOOP_HOME that is a file): no ledger can
+	// be under it, so there is none, as the Python said.
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return "", false, nil
 	}
@@ -76,15 +81,15 @@ func unreadable(cmd, path string, err error, errOut io.Writer) int {
 	return 1
 }
 
-// ThreatModel is `looper threat-model`: threat-model.py's report on
-// <git-common-dir>/info/review-loop-threat-model.md, from the working directory. Every OBSERVED
+// ThreatModel is `looper threat-model`: threat-model.py's report on the repo's store
+// threat-model.md (home.Ledger), from the working directory. Every OBSERVED
 // claim owes a pin; `uncited` counts those without one. Arguments are ignored, as the Python
 // ignored them, except --selftest. Exit 0 for a report, whatever it says.
 func ThreatModel(args []string, out, errOut io.Writer) int {
 	if selftest("threat-model", args, errOut) {
 		return 2
 	}
-	path, err := infoPath(ThreatModelFile)
+	path, err := ledgerPath(ThreatModelFile)
 	if err != nil {
 		fmt.Fprintf(errOut, "looper threat-model: %v\n", err)
 		return 1
@@ -172,14 +177,14 @@ func startsWithSpace(s string) bool {
 	return false
 }
 
-// Deferred is `looper deferred`: deferred.py's report on
-// <git-common-dir>/info/review-loop-deferred.md, from the working directory. Arguments are
+// Deferred is `looper deferred`: deferred.py's report on the repo's store deferred.md
+// (home.Ledger), from the working directory. Arguments are
 // ignored, as the Python ignored them, except --selftest. Exit 0 for a report.
 func Deferred(args []string, out, errOut io.Writer) int {
 	if selftest("deferred", args, errOut) {
 		return 2
 	}
-	path, err := infoPath(DeferredFile)
+	path, err := ledgerPath(DeferredFile)
 	if err != nil {
 		fmt.Fprintf(errOut, "looper deferred: %v\n", err)
 		return 1
@@ -220,5 +225,33 @@ func Deferred(args []string, out, errOut io.Writer) int {
 		{"unpinned", unpinned},
 		{"broken_pins", brokenList(all, bad)},
 		{"unguarded", unguarded},
+		{"merged", merged(es)},
 	})
+}
+
+// resolvedRe is the mark a run leaves on an entry it fixed: `RESOLVED @ <sha>` opening a line
+// (after indentation or a bullet). Anchored, so a Guard or note that merely quotes the marker
+// does not count: a match there would drop a deferral that was never resolved.
+var resolvedRe = regexp.MustCompile(`(?m)^[ \t]*(?:- )?RESOLVED @ ([0-9a-fA-F]{7,40})\b`)
+
+// merged names the entries marked `RESOLVED @ <sha>` whose sha is on the default branch
+// (origin/HEAD), which the skill then deletes. An entry resolved only on an unmerged branch
+// stays, so a dropped branch does not take its deferral with it: the ledger is one per repo,
+// not per branch (narthur/skills#16). nil (JSON null) when origin/HEAD is unknown, which is not
+// the same answer as "none merged".
+// ponytail: ancestry, so a squash merge never counts as merged; match on the PR's merge state if
+// squash merges start leaving RESOLVED entries behind.
+func merged(es []entry) value {
+	def := strip(decode(gitRaw("rev-parse", "--abbrev-ref", "origin/HEAD")))
+	if def == "" || def == "origin/HEAD" {
+		return nil
+	}
+	out := []value{}
+	for _, e := range es {
+		m := resolvedRe.FindStringSubmatch(e.text)
+		if m != nil && exec.Command("git", "merge-base", "--is-ancestor", m[1], def).Run() == nil {
+			out = append(out, e.first())
+		}
+	}
+	return out
 }

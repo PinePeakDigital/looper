@@ -1,13 +1,8 @@
 target: internal/evidence/evidence.go
 verify: go test ./internal/evidence/ -count=1 -run 'TestPendingReportsListsEveryFileInPathOrder'
 expect: --- FAIL:
-why:    `looper record pending` must list every file runlog.py's glob did, in path order, so that a stray one is still named on stderr instead of sitting unseen in .git/info. Filtering by evidence.ValidRunID looks like hardening and is a silent divergence: the first version of PendingReports did exactly that and also sorted by id.
+why:    `looper record pending` must list every file runlog.py's glob did, in path order, so that a stray one is still named on stderr instead of sitting unseen in its run dir. Filtering by evidence.ValidRunID looks like hardening and is a silent divergence: the first version of PendingReports did exactly that and also sorted by id.
 --- old
-	sort.Strings(files)
+		if _, err := os.Lstat(f); err == nil {
 --- new
-	sort.Strings(files)
-	for i := len(files) - 1; i >= 0; i-- {
-		if strings.Contains(files[i], " ") {
-			files = append(files[:i], files[i+1:]...)
-		}
-	}
+		if _, err := os.Lstat(f); err == nil && ValidRunID(de.Name()) {

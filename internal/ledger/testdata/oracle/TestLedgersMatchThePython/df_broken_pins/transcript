@@ -1,7 +1,7 @@
 exit=0
 --- stdout ---
 {
-  "path": ".git/info/review-loop-deferred.md",
+  "path": "<store>/deferred.md",
   "exists": true,
   "entries": 3,
   "stale": [
@@ -30,6 +30,7 @@ exit=0
       "sha": "9c2a7090627d0fffa9ed001bf7be98f86c2c8068"
     }
   ],
-  "unguarded": []
+  "unguarded": [],
+  "merged": null
 }
 --- stderr ---

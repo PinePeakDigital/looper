@@ -240,7 +240,7 @@ jobs:
                       TestAnUnreadableLedgerIsAnError:2 \
                       TestInvalidUTF8LedgerIsRead:2 TestSelftestIsRefused:2 \
                       TestNonUTF8GitOutputIsRead:2 TestANULInAPinPathIsAnError:2 \
-                      TestInfoAsAFileIsNoLedger:2 TestNonUTF8CommonDirIsAnError:2; do
+                      TestInfoAsAFileIsNoLedger:2; do
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' ledger.log)
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat ledger.log; exit 1; }
@@ -391,13 +391,18 @@ jobs:
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
       # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
+      # (The same gap was found and closed in the skills repo's workflow first.)
       # Raise the floor deliberately when adding entries; that edit is the review trail — and
       # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
       # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
       # and an empty record can no longer grant, so its defect is unreachable by construction
       # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
-      # not left to score `survived` forever.
-      # (The same gap was found and closed in the skills repo's workflow first.)
+      # not left to score `survived` forever. It went 475 -> 474 when ledgers moved out of
+      # .git/info (narthur/skills#16): ledger-common-dir-decoded and
+      # push-reportlanded-reads-a-relative-path guarded paths built from git's output, which
+      # no longer exist; push-reportlanded-no-store-counted-as-asked was added.
+      # Then 474 -> 476: home-git-ignores-timeout and home-git-ignores-held-pipe guard the two
+      # halves of home.git's "cannot answer" check.
       - name: no catalog entry has gone missing
         run: |
           # A glob array, not `ls | wc -l`: wc counts LINES, so one filename containing a
@@ -410,7 +415,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 475 ] || { echo "only $n mutations, expected at least 475 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 476 ] || { echo "only $n mutations, expected at least 476 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

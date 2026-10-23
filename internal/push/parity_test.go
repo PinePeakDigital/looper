@@ -169,7 +169,7 @@ func TestParityWithPushCheck(t *testing.T) {
 				defaultBranch = ""
 			}
 
-			dir, gitdir := repo(t)
+			dir, _ := repo(t)
 			store := writeStore(t, c.rows...)
 			if c.land {
 				// Rendered from the Go side's reading of the record. The goldens were captured
@@ -184,7 +184,7 @@ func TestParityWithPushCheck(t *testing.T) {
 				if r == nil {
 					t.Fatalf("fixture has no run %q to render a report for", id)
 				}
-				landReport(t, gitdir, id, Fingerprint(r))
+				landReport(t, id, Fingerprint(r))
 			}
 
 			py := pyPushCheck(t)
@@ -208,7 +208,7 @@ func parity02(t *testing.T, finished bool) Result {
 	t.Helper()
 	shimGh(t, "exit 1")
 	const id = "parity02"
-	dir, gitdir := repo(t)
+	dir, _ := repo(t)
 	rows := []string{
 		fmt.Sprintf(`{"run_id":%q,"phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":40}`, id),
 		fmt.Sprintf(`{"run_id":%q,"phase":"cycle","n":1,"applied":null,"agents":4}`, id),
@@ -221,7 +221,7 @@ func parity02(t *testing.T, finished bool) Result {
 	if err != nil {
 		t.Fatal(err)
 	}
-	landReport(t, gitdir, id, Fingerprint(runs[id]))
+	landReport(t, id, Fingerprint(runs[id]))
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
 		Branch: "feat/x", DefaultBranch: "main", Repo: dir})
 	if err != nil {
@@ -283,13 +283,13 @@ func TestTheDisclosureWordingDivergence(t *testing.T) {
 func TestTheEmptyRecordDivergence(t *testing.T) {
 	shimGh(t, "exit 1")
 	const id = "parity03"
-	dir, gitdir := repo(t)
+	dir, _ := repo(t)
 	// A store that exists and holds a DIFFERENT run, so the file is readable and only this
 	// run id is absent — the wrong-run-id case rather than the missing-file case.
 	store := writeStore(t,
 		`{"run_id":"other1","phase":"plan","planned_at":"2026-01-01T00:00:00","repo":"x","agent_cap":8}`,
 		`{"run_id":"other1","phase":"cycle","n":1,"applied":1,"agents":2}`)
-	landReport(t, gitdir, id, Fingerprint(&record.Run{ID: id}))
+	landReport(t, id, Fingerprint(&record.Run{ID: id}))
 
 	py := pyPushCheck(t)
 	got, err := Check(CheckParams{Store: store, RunID: id, GateState: "passed",
