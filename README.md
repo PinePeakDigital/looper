@@ -411,8 +411,9 @@ derived a verdict from the dict: the push gate reads the typed record, so that v
 it would never reproduce.
 
 `pending` lists only the files whose run was planned on the checked-out branch, since Step 0c
-posts what it lists to this branch's PR. `pending --all` lists every pending file under the
-common git dir, one per line as `<path>\t<branch>` with the branch its run recorded, from any
+posts what it lists to this branch's PR. `pending --all` lists every pending report of this repo
+(each run dir's `pending-report.md` whose run recorded this repo, after moving any still left
+in the common git dir), one per line as `<path>\t<branch>` with the branch its run recorded, from any
 checkout including `main` or a detached HEAD, so a report deferred on a branch that was later
 left can be flushed against that branch's own PR. A file with no run record, or whose run
 recorded no branch (or a detached `HEAD`), is named on stderr and left in place.
