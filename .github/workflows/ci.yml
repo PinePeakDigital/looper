@@ -396,7 +396,10 @@ jobs:
       # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
       # and an empty record can no longer grant, so its defect is unreachable by construction
       # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
-      # not left to score `survived` forever.
+      # not left to score `survived` forever. It went 475 -> 474 when ledgers moved out of
+      # .git/info (narthur/skills#16): ledger-common-dir-decoded and
+      # push-reportlanded-reads-a-relative-path guarded paths built from git's output, which
+      # no longer exist; push-reportlanded-no-store-counted-as-asked was added.
       # (The same gap was found and closed in the skills repo's workflow first.)
       - name: no catalog entry has gone missing
         run: |
@@ -410,7 +413,7 @@ jobs:
           # Zero is a different failure from n-1: the directory or the glob is gone, not one
           # file, and "was one deleted?" would name the wrong cause.
           [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
-          [ "$n" -ge 475 ] || { echo "only $n mutations, expected at least 475 — was one deleted?"; ls mutations/; exit 1; }
+          [ "$n" -ge 474 ] || { echo "only $n mutations, expected at least 474 — was one deleted?"; ls mutations/; exit 1; }
           echo "$n mutations present"
 
       # The suite passing says nothing on its own. This reintroduces each defect in

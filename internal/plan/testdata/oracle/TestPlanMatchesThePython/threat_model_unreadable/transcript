@@ -38,7 +38,7 @@ exit=0
     },
     "threat_model": {
       "planned": "run",
-      "reason": "looper threat-model failed (looper threat-model: cannot read .git/info/review-loop-threat-model.md: read .git/info/review-loop-threat-model.md: is a directory \u2014 it exists, so it is not reported as missing) \u2014 run the update rather than assume clean"
+      "reason": "looper threat-model failed (looper threat-model: cannot read <store>/threat-model.md: read <store>/threat-model.md: is a directory \u2014 it exists, so it is not reported as missing) \u2014 run the update rather than assume clean"
     },
     "security_review": {
       "planned": "run",

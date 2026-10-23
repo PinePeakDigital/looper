@@ -10,11 +10,12 @@ package ledger
 
 import (
 	"bytes"
-	"fmt"
 	"os/exec"
 	"regexp"
 	"sort"
 	"unicode/utf8"
+
+	"github.com/pinepeakdigital/looper/internal/home"
 )
 
 // citation is pins.CITATION — [path:line @ sha], [path:start-end @ sha] or [path @ sha] — with
@@ -87,21 +88,14 @@ func gitRaw(args ...string) []byte {
 	return out.Bytes()
 }
 
-// infoPath is `<git-common-dir>/info/<name>`, or "" outside a repo. --git-common-dir, never
-// --git-dir: in a linked worktree the latter has no info/, so the ledger would be written
-// where the next run cannot find it. A common dir that is not UTF-8 is an error: decoded, it
-// names no real file, so an existing ledger would read as missing. The Python crashed on it.
+// infoPath is the ledger's path in the repo's store (home.Ledger), or "" outside a repo. The
+// store is outside .git so a worktree-isolated builder can write it (narthur/skills#16); a
+// ledger still at its old place under <git-common-dir>/info is moved in on first use.
 func infoPath(name string) (string, error) {
-	raw := gitRaw("rev-parse", "--git-common-dir")
-	if !utf8.Valid(raw) {
-		return "", fmt.Errorf("git's common dir %q is not UTF-8, so the ledger under it cannot "+
-			"be named", bytes.TrimRight(raw, "\n"))
-	}
-	common := strip(decode(raw))
-	if common == "" {
+	if strip(decode(gitRaw("rev-parse", "--git-common-dir"))) == "" {
 		return "", nil
 	}
-	return common + "/info/" + name, nil
+	return home.Ledger("", name)
 }
 
 // Malformed is pin-shaped text that is not a citation: on Line, as written.

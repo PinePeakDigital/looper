@@ -1,4 +1,0 @@
-exit=1
---- stdout ---
---- stderr ---
-UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 8: invalid continuation byte

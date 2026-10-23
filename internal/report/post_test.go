@@ -441,40 +441,31 @@ func TestThePendingNoteNamesTheRiskLabel(t *testing.T) {
 }
 
 func TestWritePending(t *testing.T) {
-	t.Run("the path is per-run, under the git common dir", func(t *testing.T) {
-		dir := gitRepo(t)
-		path, err := WritePending(dir, "abc123", "halted", "", postBody)
+	t.Run("the path is per-run, in the run's dir", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("REVIEW_LOOP_HOME", home)
+		path, err := WritePending(gitRepo(t), "abc123", "halted", "", postBody)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Per RUN, not per repo: that directory is shared by every worktree, and one fixed
-		// name let two concurrent sessions overwrite each other's report.
-		// Through EvalSymlinks: git's --path-format=absolute resolves them, and on macOS the
-		// temp dir is /var -> /private/var, so a literal Join comparison fails on the link
-		// rather than on the path shape this asserts.
-		real, err := filepath.EvalSymlinks(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if want := filepath.Join(real, ".git", "info", "review-loop-pending-report.abc123.md"); path != want {
+		// Per RUN, not per repo: one fixed name let two concurrent sessions overwrite each
+		// other's report. Outside .git: a worktree-isolated session cannot write there.
+		if want := filepath.Join(home, "run", "abc123", "pending-report.md"); path != want {
 			t.Errorf("path %q, want %q", path, want)
 		}
 	})
 	t.Run("a traversing run id is refused", func(t *testing.T) {
-		dir := gitRepo(t)
 		// The id reaches a path here, and it arrives from -run-id. Refused rather than
 		// cleaned: a cleaned id would write a file the gate then cannot find.
-		if _, err := WritePending(dir, "../../../../tmp/evil", "halted", "", postBody); err == nil {
+		root := t.TempDir()
+		t.Setenv("REVIEW_LOOP_HOME", filepath.Join(root, "home"))
+		// <home>/run/../../evil is <root>/evil: inside the temp dir, so the walk below sees it.
+		if _, err := WritePending(gitRepo(t), "../../evil", "halted", "", postBody); err == nil {
 			t.Error("a traversing run id was accepted")
 		}
-		// And nothing was written ANYWHERE under the repo. The earlier version of this
-		// assertion checked os.Stat("/tmp/evil.md") and could not fail: the filename prefix
-		// ends in a dot, so the id's first ".." glues onto it as "report..." — not a parent
-		// reference — and the naive path resolves to <repo>/tmp/evil.md, measured. A
-		// completely unguarded WritePending would have passed that check.
 		var found []string
-		if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(path, "evil.md") {
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
 				found = append(found, path)
 			}
 			return nil
@@ -485,11 +476,12 @@ func TestWritePending(t *testing.T) {
 			t.Errorf("the traversal landed at %v", found)
 		}
 	})
-	t.Run("no git dir is an error, not a silent drop", func(t *testing.T) {
+	t.Run("no store is an error, not a silent drop", func(t *testing.T) {
 		// A report with nowhere to go is the one outcome worth failing on — the caller must
 		// not be told it was kept.
+		noStore(t)
 		if _, err := WritePending(t.TempDir(), "abc123", "halted", "", postBody); err == nil {
-			t.Error("a non-repo was accepted")
+			t.Error("no store was accepted")
 		}
 	})
 	t.Run("the label-owed note defaults to unknown", func(t *testing.T) {
@@ -637,21 +629,12 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		}
 	})
 
-	t.Run("WritePending tells an unrunnable git from a non-repo", func(t *testing.T) {
-		// Two differently-worded errors, and only the second was covered. A regression that
-		// collapsed them — dropping the Runnable check — would have gone unnoticed.
-		noGit(t)
-		if _, err := WritePending(t.TempDir(), "abc123", "halted", "", postBody); err == nil ||
-			!strings.Contains(err.Error(), "git could not be run") {
-			t.Errorf("want a git-unrunnable error, got %v", err)
-		}
-	})
-
 	t.Run("a report that can reach nowhere at all is an error", func(t *testing.T) {
 		// The module's one stated invariant has two halves: never fail on a failed post, and
 		// DO fail when the body could not be preserved. The second half had no test: every
 		// Post test used a real git repo, where WritePending always succeeds.
 		noGh(t)
+		noStore(t)
 		var diag strings.Builder
 		path, err := Post(PostParams{Repo: t.TempDir(), RunID: "post01", Branch: "feat/x",
 			Convergence: "capped", Body: postBody, Diag: &diag})
@@ -668,13 +651,7 @@ func TestTheBranchesNothingReached(t *testing.T) {
 		// must not fail the publish — it must say so and carry on.
 		dir := gitRepo(t)
 		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls"*) echo '[{"number":9}]';; esac`)
-		// Replace .git with a file, so git can run but reports no common dir.
-		if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("not a repo\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		noStore(t)
 		var diag strings.Builder
 		if _, err := Post(PostParams{Repo: dir, RunID: "post01", Branch: "feat/x",
 			Convergence: "capped", Body: postBody, Diag: &diag}); err != nil {
@@ -1196,6 +1173,13 @@ func TestOnlyALabelOnThePRIsRemovedOrWarnedAbout(t *testing.T) {
 
 // noGit is noGh's mirror: a PATH with gh but no git, so WritePending's two failure modes can
 // be told apart.
+// noStore leaves no home directory, so there is no run dir to keep a report in.
+func noStore(t *testing.T) {
+	t.Helper()
+	t.Setenv("REVIEW_LOOP_HOME", "")
+	t.Setenv("HOME", "")
+}
+
 func noGit(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()

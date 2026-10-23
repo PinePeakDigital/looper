@@ -228,12 +228,12 @@ func probeReport(runID string, r *record.Run, repo, branch string) (landed, attr
 			return true, true, ghWhy
 		}
 	}
-	rc, gitdir := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if rc != 0 || gitdir == "" {
-		return false, attributable, ghWhy
+	// The run dir is keyed by the run id alone, so no git is needed to find it.
+	pending, ok := evidence.PendingPath(runID) // the id passed evidence.Marker above
+	if !ok {
+		return false, attributable, ghWhy // no home directory: nowhere to look
 	}
-	// No attributable assignment here: git answered, so both paths below return true outright.
-	pending, _ := evidence.PendingPath(gitdir, runID) // the id passed evidence.Marker above
+	// No attributable assignment here: the path resolved, so both paths below return true outright.
 	body, err := os.ReadFile(pending)
 	if err != nil {
 		return false, true, ghWhy

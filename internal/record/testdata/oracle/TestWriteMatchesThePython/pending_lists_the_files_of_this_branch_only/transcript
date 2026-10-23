@@ -1,8 +1,8 @@
 pending
   exit=0
-  out=<common>/info/review-loop-pending-report.mine.md
+  out=<run>/mine/pending-report.md
 
-  err=runlog: no run record for <common>/info/review-loop-pending-report.ghost.md — left in place
+  err=runlog: no run record for <run>/ghost/pending-report.md — left in place
 
 --- store ---
 {"branch":"feat","phase":"plan","run_id":"mine"}

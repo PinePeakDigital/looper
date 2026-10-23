@@ -300,6 +300,7 @@ esac`)
 // says "-u". Returns the repo root and its git dir.
 func repo(t *testing.T) (string, string) {
 	t.Helper()
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir()) // this test's run dirs, and no other's
 	dir := t.TempDir()
 	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
@@ -330,16 +331,19 @@ func cappedRun(id string) []string {
 // needs to build a path evidence.PendingPath refuses to.
 const (
 	reportMarker = "<!-- review-loop:run=%s -->"
-	pendingFmt   = "info/review-loop-pending-report.%s.md"
+	pendingFmt   = "run/%s/pending-report.md" // under $REVIEW_LOOP_HOME
 )
 
-func landReport(t *testing.T, gitdir, runID string, lines []string) {
+// landReport writes the pending report into the run dir. The git dir is not where it goes
+// since narthur/skills#16, and is taken only so the callers read as before.
+func landReport(t *testing.T, _, runID string, lines []string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(gitdir, "info"), 0o755); err != nil {
+	p := filepath.Join(os.Getenv("REVIEW_LOOP_HOME"), fmt.Sprintf(pendingFmt, runID))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := fmt.Sprintf(reportMarker, runID) + "\n\n" + strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(gitdir, fmt.Sprintf(pendingFmt, runID)), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -720,38 +724,19 @@ func TestUpstreamExistsBothWays(t *testing.T) {
 	}
 }
 
-// ReportLanded's git-dir lookup failing must read as NOT landed. Every other test uses a real
-// repo, so this branch was never taken.
-//
-// The `gitdir == ""` half is what makes the guard load-bearing rather than defensive, and that
-// needs the second case to show: `git rev-parse` writes its error to stderr, so sh returns an
-// EMPTY stdout, and filepath.Join("", "info/review-loop-pending-report.X.md") is a RELATIVE
-// path. Without the guard the gate would read that path out of the working directory — so a
-// stray pending file beside wherever the tool happens to be invoked would satisfy it. Measured
-// by planting exactly that file and chdir-ing to it.
+// The pending report is found by run id alone, so a report in the run dir counts even where
+// git cannot answer: the run dir, not the git dir, is where it waits (narthur/skills#16).
 func TestReportLandedWithoutAGitDir(t *testing.T) {
 	shimGh(t, "exit 1")
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
 	r := &record.Run{ID: "run1", Cycles: []record.Cycle{cyc(9)}}
 	notARepo := t.TempDir()
 	if ReportLanded("run1", r, notARepo) {
-		t.Error("a directory that is not a git repo must read as not landed")
+		t.Error("with no report anywhere the gate must read NOT landed")
 	}
-
-	// The relative-read case. The planted file is a REAL, satisfying report, so the only
-	// thing standing between it and a false "landed" is the guard.
-	cwd := t.TempDir()
-	body := fmt.Sprintf(reportMarker, "run1") + "\n\n" + strings.Join(Fingerprint(r), "\n") + "\n"
-	rel := fmt.Sprintf(pendingFmt, "run1")
-	if err := os.MkdirAll(filepath.Join(cwd, filepath.Dir(rel)), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cwd, rel), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(cwd)
-	if ReportLanded("run1", r, notARepo) {
-		t.Error("a pending file in the working directory satisfied the gate — the git-dir " +
-			"lookup's empty result was joined into a relative path and read")
+	landReport(t, "", "run1", Fingerprint(r))
+	if !ReportLanded("run1", r, notARepo) {
+		t.Error("a report in the run dir was not found from outside a git repo")
 	}
 }
 
@@ -759,25 +744,25 @@ func TestReportLandedWithoutAGitDir(t *testing.T) {
 // callable without Check, so its refusal cannot depend on Check having run first.
 func TestReportLandedRefusesATraversingRunID(t *testing.T) {
 	shimGh(t, "exit 1")
-	dir, gitdir := repo(t)
+	dir, _ := repo(t)
 	r := &record.Run{ID: "x", Cycles: []record.Cycle{cyc(9)}}
 
 	// A real, satisfying report planted where a traversing id would reach it. The id below
 	// resolves to <parent-of-repo>/escaped.md, so if the guard is gone the gate is satisfied
 	// by a file outside the repo entirely.
-	// Enough `..` to clear info/, the filename segment it is spliced into, and .git itself.
-	// The count is CHECKED below rather than reasoned about: the first version used three and
-	// landed back inside .git, because the id is spliced mid-filename so the leading `..`
-	// pairs with that segment rather than with a directory.
-	esc := strings.Repeat("../", 6) + "escaped"
+	// Enough `..` to clear the run dirs and the store above them. The count is CHECKED below
+	// rather than reasoned about: an earlier version, splicing into a filename under .git,
+	// used three and landed back inside .git.
+	esc := strings.Repeat("../", 2) + "escaped"
 	// The marker is keyed on the id BEING TESTED, not on r.ID. The first version of this
 	// fixture wrote the marker for "x" while probing with `esc`, so the needle could never
 	// match and the test would have passed with the guard deleted — vacuous for the one
 	// thing it exists to check.
 	body := fmt.Sprintf(reportMarker, esc) + "\n\n" + strings.Join(Fingerprint(r), "\n") + "\n"
-	target := filepath.Join(gitdir, fmt.Sprintf(pendingFmt, esc))
-	if rel, err := filepath.Rel(gitdir, target); err != nil || !strings.HasPrefix(rel, "..") {
-		t.Fatalf("the fixture does not escape the git dir: %q resolves inside %q (rel %q)", target, gitdir, rel)
+	store := os.Getenv("REVIEW_LOOP_HOME")
+	target := filepath.Join(store, fmt.Sprintf(pendingFmt, esc))
+	if rel, err := filepath.Rel(store, target); err != nil || !strings.HasPrefix(rel, "..") {
+		t.Fatalf("the fixture does not escape the store: %q resolves inside %q (rel %q)", target, store, rel)
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
@@ -810,8 +795,9 @@ func TestCheckDiagnosesBeingUnableToAsk(t *testing.T) {
 	st := writeStore(t, cappedRun("run1")...)
 
 	t.Run("neither probe could run", func(t *testing.T) {
-		// Not a git repo, so `git rev-parse` fails too — the only case where nothing could be
-		// asked at all.
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
+		// No store either, so the pending-file half cannot look — the only case where nothing
+		// could be asked at all.
 		var diag strings.Builder
 		res, err := Check(CheckParams{Store: st, RunID: "run1", GateState: "passed",
 			Branch: "feat/x", DefaultBranch: "main", Repo: t.TempDir(), Diag: &diag})
@@ -1010,6 +996,7 @@ func TestReportProbeReportsBothAnswers(t *testing.T) {
 	})
 
 	t.Run("neither probe can run", func(t *testing.T) {
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
 		shimGh(t, "exit 1")
 		if landed, attributable := reportProbe("run1", r, t.TempDir(), "feat/x"); landed || attributable {
 			t.Errorf("reportProbe = (%v, %v), want (false, false) — this is the ONLY path "+
@@ -1165,6 +1152,7 @@ func TestCheckDiagnosesARunMissingFromTheStore(t *testing.T) {
 	})
 
 	t.Run("both notes fire when both are true, missing-run first", func(t *testing.T) {
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
 		// A run absent from the store AND neither probe runnable. Nothing reached this state,
 		// so a plausible "do not double-report" tightening passed the whole suite and the
 		// catalog. Order matters: the store is the outer cause.
@@ -1310,6 +1298,7 @@ func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 	})
 
 	t.Run("an unreadable PR list is no answer", func(t *testing.T) {
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
 		// Exit 0 with bytes that are not a PR list — a descendant's, say — establishes
 		// nothing, so it must not count as gh having answered "no PR".
 		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo 'not json' ;; *) exit 1 ;; esac`)
@@ -1320,6 +1309,7 @@ func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 	})
 
 	t.Run("the PR list answers and the comments call fails", func(t *testing.T) {
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
 		// gh found PR #5 and then could not read its comments: that is gh not answering, not
 		// "no PR", so with git unable to run too there is no stateable cause.
 		shimGh(t, `case "$*" in "api repos/{owner}/{repo}/pulls?"*) echo '[{"number":5}]' ;; *) exit 1 ;; esac`)
@@ -1345,6 +1335,7 @@ func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 	})
 
 	t.Run("no branch asks no PR", func(t *testing.T) {
+		noStore(t) // and no run dir to look in: the pending-file half cannot ask either
 		// gh would answer with a matching comment, so only the guard keeps it unasked.
 		body := fmt.Sprintf(reportMarker, "run1") + "\\n" + strings.Join(Fingerprint(r), "\\n")
 		ghComments(t, body)
@@ -1353,4 +1344,13 @@ func TestReportProbeAsksGitHubOverREST(t *testing.T) {
 				landed, attributable)
 		}
 	})
+}
+
+// noStore leaves the run dirs unresolvable — no $REVIEW_LOOP_HOME and no HOME — so the
+// pending-file half of the report probe cannot look. Since the pending report moved into the
+// run dir (narthur/skills#16) that, not a failing git, is what stops it.
+func noStore(t *testing.T) {
+	t.Helper()
+	t.Setenv("REVIEW_LOOP_HOME", "")
+	t.Setenv("HOME", "")
 }

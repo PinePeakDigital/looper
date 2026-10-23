@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/pinepeakdigital/looper/internal/home"
 	"github.com/pinepeakdigital/looper/internal/py"
 	"github.com/pinepeakdigital/looper/internal/run"
 )
@@ -94,11 +95,10 @@ var swept = regexp.MustCompile(`^[ \t\n\v\f\r]*<!--[ \t\n\v\f\r]*[Ss]wept:[ \t\n
 // learnings is the learnings file's text (trailing newlines removed), its entry count, and the
 // count the last sweep left, or nil when the file has never been swept.
 func learnings() (string, int, *string) {
-	common, ok := out("git", "rev-parse", "--git-common-dir")
-	if !ok || common == "" {
-		common = ".git"
+	p, err := home.Ledger("", home.Learnings)
+	if err != nil {
+		return "", 0, nil
 	}
-	p := common + "/info/review-loop-learnings.md"
 	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
 		return "", 0, nil
 	}

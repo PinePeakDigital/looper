@@ -501,20 +501,11 @@ func removeFamily(p PostParams, num string, keep Label, family map[string]Label,
 // the run's marker, so writing it is also what keeps a transient GitHub error from blocking
 // the push permanently.
 func WritePending(repo, runID, conv, risk, body string) (string, error) {
-	r := sh(repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if !r.Runnable {
-		return "", fmt.Errorf("git could not be run (%s) — nowhere to defer the report to", r.Err)
-	}
-	// !Drained too: this Out becomes a filesystem PATH, so a descendant's bytes in it would
-	// write the report somewhere nobody looks.
-	if r.Code != 0 || r.Out == "" || !r.Drained {
-		return "", fmt.Errorf("no git dir in %s — nowhere to defer the report to", repo)
-	}
 	// The run id reaches a PATH here, from the caller's -run-id, and a traversing one would
-	// write outside the repo. evidence.PendingPath refuses it.
-	path, ok := evidence.PendingPath(r.Out, runID)
+	// write outside the run dirs. evidence.PendingPath refuses it.
+	path, ok := evidence.PendingPath(runID)
 	if !ok {
-		return "", fmt.Errorf("run id %q is not a plain id — refusing to build a path from it", runID)
+		return "", fmt.Errorf("run id %q is not a plain id, or there is no home directory — refusing to build a path from it", runID)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err

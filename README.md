@@ -180,7 +180,7 @@ to be flags:
 
 The report check is the third, and it reads the artifact rather than a claim about
 it. A push is refused until this run's rendered report is found either in a PR
-comment or in `.git/info/review-loop-pending-report.<run-id>.md`, carrying all three
+comment or in the run dir's `pending-report.md`, carrying all three
 of the run's marker, the `## review-loop` heading, and its `N cycle(s) · M agent(s)`
 line — numbers that cannot be produced without rendering from the record. Requiring the marker alone was cheaper
 to forge (37 bytes of `printf` for a real run id) than the self-report it replaced. It is required on
@@ -274,7 +274,7 @@ looper pr-report -run-id <id> [-post] [-label] [-findings-file f|-]
 
 Without `-post` the body goes to stdout and nothing else does. With `-post` it comments
 on this branch's PR and *also* keeps a local copy, or — when it cannot comment — keeps
-only the local copy at `.git/info/review-loop-pending-report.<run-id>.md` for Step 0c to
+only the local copy at `~/.claude/review-loop/run/<run-id>/pending-report.md` for Step 0c to
 flush. The body is never dropped: a report that exists in neither place is what leaves
 `push-check` refusing the push on advice that cannot succeed.
 
@@ -505,14 +505,20 @@ integral float like `"agents":2.0` —
 
 ## `looper threat-model` and `looper deferred`
 
-The review-loop's two pinned ledgers, under `<git-common-dir>/info`: a port of the skill's
+The review-loop's two pinned ledgers, in the repo's store (`looper home`): a port of the skill's
 `threat-model.py` (Step 2b, and parsed by plan.py), `deferred.py` (Step 2a) and the `pins.py`
 they share, in `internal/ledger`.
 
 ```text
-looper threat-model   # review-loop-threat-model.md: {path, exists, claims, stale, broken_pins, uncited}
-looper deferred       # review-loop-deferred.md: {path, exists, entries, stale, unpinned, broken_pins, unguarded}
+looper threat-model   # threat-model.md: {path, exists, claims, stale, broken_pins, uncited}
+looper deferred       # deferred.md: {path, exists, entries, stale, unpinned, broken_pins, unguarded, merged}
 ```
+
+`merged` names the deferred entries marked `RESOLVED @ <sha>` whose sha is an ancestor of
+`origin/HEAD`: fixed on the default branch, so the skill deletes them. An entry resolved only
+on an unmerged branch stays, so dropping that branch does not lose the deferral. It is `null`
+when `origin/HEAD` is unknown, which is not "none merged". A squash merge leaves the sha off the
+default branch, so its entries stay until removed by hand (`TestMergedNamesResolvedEntriesOnTheDefaultBranch`).
 
 Both make the same kind of statement — something true about the code at a commit, cited as
 `[path:line @ sha]`, `[path:start-end @ sha]`, `[path:206,225-231 @ sha]` (a comma-separated
@@ -579,15 +585,15 @@ The divergences, each with its own test:
 - **git output that is not UTF-8** — a commit subject under `i18n.logOutputEncoding latin1`,
   say — is read with U+FFFD for the bad bytes, as the ledger is. The Python died with
   `UnicodeDecodeError` on one commit subject (`TestNonUTF8GitOutputIsRead`).
-- **A git common dir that is not UTF-8** exits 1 with a sentence. Decoded with U+FFFD it names
-  no real file, so an existing ledger would read as missing; the Python died with
-  `UnicodeDecodeError` (`TestNonUTF8CommonDirIsAnError`).
 - **A NUL byte in a pin's path** exits 1 naming the pin's line. git cannot be asked about such a
   path, and a failed git reads as "nothing moved", so the pin would look fresh forever; the
   Python died with `ValueError` (`TestANULInAPinPathIsAnError`).
 
-`.git/info` as a regular file is not a divergence: it is no ledger, `exists: false`, as the
-Python said, and the unreadable rule above does not swallow it (`TestInfoAsAFileIsNoLedger`).
+`.git/info` as a regular file is not a divergence: there is nothing at the old place to move
+into the store, so it is no ledger, `exists: false`, as the Python said, and the unreadable rule
+above does not swallow it (`TestInfoAsAFileIsNoLedger`). The Python read the ledgers from
+`<git-common-dir>/info`; looper reads them from the repo's store (see "Where state lives"), and
+the frozen answers' `path` reads `<store>/…` for that reason.
 
 ## `looper context`
 
@@ -823,6 +829,23 @@ that cannot start look flagless.
 Attribution is per line: a flag is checked against the scripts named on the same line.
 Prose spanning lines is skipped rather than guessed at — the aim is a signal worth
 acting on every time it fires, not a complete one.
+
+## Where state lives
+
+Everything but the run record lives under `~/.claude/review-loop/` (`$REVIEW_LOOP_HOME`), never
+under the repo's `.git`: Claude Code's worktree isolation refuses paths under `.git`, so a
+worktree-isolated builder could not write its ledgers there (narthur/skills#16).
+
+- **The repo's store**, `repos/<name>-<hash>/`, printed by `looper home`: `threat-model.md`,
+  `deferred.md` and `learnings.md`. One per repo, keyed by the common dir's parent (the run
+  record's `repo`), not per branch. A ledger still at its old place,
+  `<git-common-dir>/info/review-loop-<name>`, is moved in the first time looper looks for it.
+- **The run dir**, `run/<run-id>/`: the run's inputs, its `narrative.md` (which `pr-report`
+  reads when `-findings-file` is not given) and its `pending-report.md`. A pending report left
+  at `<git-common-dir>/info/review-loop-pending-report.<run-id>.md` is moved into its run dir by
+  `looper record pending`.
+
+The store is keyed by the repo's path, so moving or re-cloning a repo starts an empty one.
 
 ## `looper version`
 

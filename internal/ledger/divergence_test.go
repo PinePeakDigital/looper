@@ -3,7 +3,6 @@ package ledger
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,7 +35,7 @@ func (d divergence) setup(t *testing.T) (*fixture, string) {
 	if d.prep != nil {
 		d.prep(t, f.root)
 	}
-	p := filepath.Join(f.root, ".git", "info", ledgerName(d.cmd))
+	p := f.ledger(t, ledgerName(d.cmd))
 	var err error
 	if d.noLedger {
 	} else if d.dir {
@@ -71,7 +70,7 @@ func TestAnUnreadableLedgerIsAnError(t *testing.T) {
 				t.Fatalf("the frozen oracle no longer records exists:false for a directory:\n%s", py)
 			}
 			code, out, errOut := divergence{cmd: cmd, dir: true}.runGo(t)
-			want := "looper " + cmd + ": cannot read .git/info/" + ledgerName(cmd) + ": "
+			want := "looper " + cmd + ": cannot read <store>/" + ledgerName(cmd) + ": "
 			if code != 1 || out != "" || !strings.HasPrefix(errOut, want) {
 				t.Errorf("exit %d, stdout %q, stderr %q; want exit 1, no stdout, stderr starting %q",
 					code, out, errOut, want)
@@ -139,9 +138,10 @@ func TestSelftestIsRefused(t *testing.T) {
 	}
 }
 
-// .git/info as a regular file is no ledger, exists:false, as the Python said: open fails with
-// ENOTDIR, and nothing can be under a file. Not a divergence — the case the unreadable rule
-// above must not swallow.
+// .git/info as a regular file, where a ledger could only have been left by the old layout, is
+// no ledger, exists:false, as the Python said: open fails with ENOTDIR, and nothing can be
+// under a file, so there is nothing to move into the store. Not a divergence — the case the
+// unreadable rule above must not swallow.
 func TestInfoAsAFileIsNoLedger(t *testing.T) {
 	for _, cmd := range cmds {
 		t.Run(cmd, func(t *testing.T) {
@@ -214,36 +214,33 @@ func latin1Log(t *testing.T, root string) {
 	runGit(t, root, nil, "config", "i18n.logOutputEncoding", "latin1")
 }
 
-// A git common dir that is not UTF-8 exits 1 with a sentence. Decoded with U+FFFD it names no
-// real file, so an existing ledger would read as missing: the deferred list empty, the threat
-// model bootstrapped over. The Python died with UnicodeDecodeError. APFS refuses such a name,
-// so a wrapper git reports one.
-func TestNonUTF8CommonDirIsAnError(t *testing.T) {
-	for _, cmd := range cmds {
-		t.Run(cmd, func(t *testing.T) {
-			py := golden.Read(t, "transcript")
-			if !strings.HasPrefix(py, "exit=1\n") || !strings.Contains(py, "UnicodeDecodeError") {
-				t.Fatalf("the frozen oracle no longer records the crash:\n%s", py)
-			}
-			code, out, errOut := divergence{cmd: cmd, ledger: "- x\n", prep: latin1CommonDir}.runGo(t)
-			if code != 1 || out != "" || !strings.Contains(errOut, "is not UTF-8") {
-				t.Errorf("exit %d, stdout %q, stderr %q", code, out, errOut)
-			}
-		})
-	}
-}
-
-// latin1CommonDir puts a git first on PATH that answers --git-common-dir with a Latin-1 path
-// and hands everything else to the real git.
-func latin1CommonDir(t *testing.T, root string) {
-	real, err := exec.LookPath("git")
-	if err != nil {
+// An entry marked `RESOLVED @ <sha>` is listed under merged once that sha is on origin/HEAD,
+// and only then: one resolved on a commit the default branch lacks stays deferred, and so does
+// an entry with no mark. Not from the Python, which had no merged field.
+func TestMergedNamesResolvedEntriesOnTheDefaultBranch(t *testing.T) {
+	f := newFixture(t)
+	first := runGit(t, f.root, nil, "rev-list", "--max-parents=0", "HEAD")
+	head := runGit(t, f.root, nil, "rev-parse", "HEAD")
+	runGit(t, f.root, nil, "update-ref", "refs/remotes/origin/main", first)
+	runGit(t, f.root, nil, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	ledger := "- DEFERRED a\n  RESOLVED @ " + first[:7] + " (run r1)\n" +
+		"- DEFERRED b\n  RESOLVED @ " + head + " (run r2)\n" +
+		"- DEFERRED c\n"
+	if err := os.WriteFile(f.ledger(t, DeferredFile), []byte(ledger), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin := t.TempDir()
-	script := "#!/bin/sh\nif [ \"$1 $2\" = \"rev-parse --git-common-dir\" ]; then printf '/srv/caf\\351/.git\\n'; exit 0; fi\nexec '" + real + "' \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	t.Chdir(f.root)
+	var out, errb bytes.Buffer
+	if code := Deferred(nil, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	want := `"merged": [
+    {
+      "line": 1,
+      "text": "- DEFERRED a"
+    }
+  ]`
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("want only entry a merged, got:\n%s", out.String())
+	}
 }

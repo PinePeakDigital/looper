@@ -1,7 +1,7 @@
 exit=0
 --- stdout ---
 {
-  "path": ".git/info/review-loop-threat-model.md",
+  "path": "<store>/threat-model.md",
   "exists": false,
   "claims": 0,
   "stale": [],

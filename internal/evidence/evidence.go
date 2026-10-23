@@ -15,11 +15,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
+
+	"github.com/pinepeakdigital/looper/internal/home"
 )
 
 // A run id is interpolated raw into a path segment and into a public PR comment, so `../`
-// would escape the git dir and `-->` would close the marker early. The ids runlog writes are
+// would escape the run dirs and `-->` would close the marker early. The ids runlog writes are
 // hex, so the hole has only ever been exercised on purpose.
 var runIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
@@ -37,15 +38,23 @@ func Marker(id string) (string, bool) {
 	return fmt.Sprintf("<!-- review-loop:run=%s -->", id), true
 }
 
-// PendingPath is where a report is deferred under the git common dir until a PR exists. It
-// is per RUN rather than per repo, because every worktree shares that dir; a single fixed name
-// let concurrent sessions overwrite each other's report. It refuses an invalid id.
-func PendingPath(commonDir, id string) (string, bool) {
+// PendingPath is where a report is deferred until a PR exists: <run dir>/pending-report.md.
+// Per RUN, because one repo's worktrees and branches run the loop concurrently, and in the run
+// dir, because a worktree-isolated builder cannot write under .git (narthur/skills#16). It
+// refuses an invalid id, which would traverse out of the run dirs.
+func PendingPath(id string) (string, bool) {
 	if !ValidRunID(id) {
 		return "", false
 	}
-	return filepath.Join(commonDir, "info", "review-loop-pending-report."+id+".md"), true
+	rd, err := home.RunDir(id)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(rd, PendingName), true
 }
+
+// PendingName is a pending report's file name inside its run dir.
+const PendingName = "pending-report.md"
 
 // PRsForBranch is the `gh api` endpoint listing the PRs whose head is branch, newest first and
 // in every state: the PR a report is posted to (report.FindPR) and the PR whose comments the
@@ -78,15 +87,22 @@ func PRComments(n int) string {
 // Pending is a file at the pending-report location and the run id its name carries.
 type Pending struct{ Path, ID string }
 
-// PendingReports lists every file at the pending-report location under commonDir, sorted by
-// path as runlog.py's glob was. The ID is read off the name unchecked, so a stray file still
-// surfaces for the caller to name rather than vanishing.
-func PendingReports(commonDir string) []Pending {
-	files, _ := filepath.Glob(filepath.Join(commonDir, "info", "review-loop-pending-report.*.md"))
+// PendingReports lists every pending report in every run dir, sorted by path, after moving
+// any left at the old place under repo's git common dir into their run dirs. Run dirs are
+// shared by every repo, so the caller scopes the list by the run record's repo. The ID is the
+// dir's name unchecked, so a stray dir still surfaces for the caller to name rather than
+// vanishing.
+func PendingReports(repo string) []Pending {
+	_ = home.MigratePending(repo, ValidRunID) // best effort: a report that fails to move stays where it was
+	base, err := home.Base()
+	if err != nil {
+		return nil
+	}
+	files, _ := filepath.Glob(filepath.Join(base, "run", "*", PendingName))
 	sort.Strings(files)
 	out := make([]Pending, len(files))
 	for i, f := range files {
-		out[i] = Pending{f, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "review-loop-pending-report."), ".md")}
+		out[i] = Pending{f, filepath.Base(filepath.Dir(f))}
 	}
 	return out
 }

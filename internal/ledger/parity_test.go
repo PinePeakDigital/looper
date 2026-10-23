@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/pinepeakdigital/looper/internal/home"
 )
 
 // The parity gate: every scenario ran through threat-model.py or deferred.py, and runs through
@@ -134,7 +135,14 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func TestMain(m *testing.M) {
+	// Off the real ~/.claude/review-loop: the store under test lands in this temp dir.
+	h, err := os.MkdirTemp("", "looper-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("REVIEW_LOOP_HOME", h)
 	code := m.Run()
+	os.RemoveAll(h)
 	if history.root != "" {
 		os.RemoveAll(filepath.Dir(history.root)) // the MkdirTemp above, and nothing else
 	}
@@ -172,9 +180,6 @@ func buildHistory(t *testing.T, dir string) []string {
 		pairs = append(pairs, "{c"+n+"}", sha, "{c"+n+"s}", sha[:7])
 	}
 	pairs = append(pairs, "{blob}", runGit(t, root, nil, "rev-parse", "HEAD:src/app.ts"))
-	if err := os.MkdirAll(filepath.Join(root, ".git", "info"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	return pairs
 }
 
@@ -189,7 +194,7 @@ func ledgerName(cmd string) string {
 func (f *fixture) prepare(t *testing.T, sc scenario) string {
 	t.Helper()
 	if !sc.missing {
-		p := filepath.Join(f.root, ".git", "info", ledgerName(sc.cmd))
+		p := f.ledger(t, ledgerName(sc.cmd))
 		if err := os.WriteFile(p, []byte(f.subst.Replace(sc.ledger)), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -208,8 +213,25 @@ func (f *fixture) prepare(t *testing.T, sc scenario) string {
 	return filepath.Join(f.root, filepath.FromSlash(sc.cwd))
 }
 
-// normalise replaces the fixture's temp directory, in both spellings, with <tmp>.
+// ledger is where the repo's store keeps ledger name (home.RepoDir), with its dir created.
+func (f *fixture) ledger(t *testing.T, name string) string {
+	t.Helper()
+	d, err := home.RepoDir(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(d, name)
+}
+
+// normalise replaces the repo's store, whose name carries a hash of the temp path, with
+// <store>, and the fixture's temp directory, in both spellings, with <tmp>.
 func (f *fixture) normalise(s string) string {
+	if d, err := home.RepoDir(f.root); err == nil {
+		s = strings.ReplaceAll(s, d, "<store>")
+	}
 	if real, err := filepath.EvalSymlinks(f.base); err == nil && real != f.base {
 		s = strings.ReplaceAll(s, real, "<tmp>")
 	}

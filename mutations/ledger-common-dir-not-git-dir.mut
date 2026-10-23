@@ -1,8 +1,8 @@
-target: internal/ledger/pins.go
-verify: go test ./internal/ledger/ -count=1 -run 'TestLedgersMatchThePython'
+target: internal/home/home.go
+verify: go test ./internal/home/ -count=1 -run 'TestRepoDirIsOnePerRepo'
 expect: --- FAIL:
-why:    --git-dir instead of --git-common-dir: in a linked worktree the ledger reads as missing, so Step 2b bootstraps a second threat model and the deferrals never wake
+why:    --git-dir instead of --git-common-dir: a linked worktree gets a store of its own, so its ledgers read as missing, Step 2b bootstraps a second threat model and the deferrals never wake
 --- old
-	raw := gitRaw("rev-parse", "--git-common-dir")
+	return git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 --- new
-	raw := gitRaw("rev-parse", "--git-dir")
+	return git(dir, "rev-parse", "--path-format=absolute", "--git-dir")

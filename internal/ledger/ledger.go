@@ -6,14 +6,18 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
+
+	"github.com/pinepeakdigital/looper/internal/home"
 )
 
-// The two ledgers' file names under <git-common-dir>/info.
+// The two ledgers' file names in the repo's store.
 const (
-	ThreatModelFile = "review-loop-threat-model.md"
-	DeferredFile    = "review-loop-deferred.md"
+	ThreatModelFile = home.ThreatModel
+	DeferredFile    = home.Deferred
 )
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
@@ -220,5 +224,31 @@ func Deferred(args []string, out, errOut io.Writer) int {
 		{"unpinned", unpinned},
 		{"broken_pins", brokenList(all, bad)},
 		{"unguarded", unguarded},
+		{"merged", merged(es)},
 	})
+}
+
+// resolvedRe is the mark a run leaves on an entry it fixed: `RESOLVED @ <sha>`.
+var resolvedRe = regexp.MustCompile(`RESOLVED @ ([0-9a-fA-F]{7,40})\b`)
+
+// merged names the entries marked `RESOLVED @ <sha>` whose sha is on the default branch
+// (origin/HEAD), which the skill then deletes. An entry resolved only on an unmerged branch
+// stays, so a dropped branch does not take its deferral with it: the ledger is one per repo,
+// not per branch (narthur/skills#16). nil (JSON null) when origin/HEAD is unknown, which is not
+// the same answer as "none merged".
+// ponytail: ancestry, so a squash merge never counts as merged; match on the PR's merge state if
+// squash merges start leaving RESOLVED entries behind.
+func merged(es []entry) value {
+	def := strip(decode(gitRaw("rev-parse", "--abbrev-ref", "origin/HEAD")))
+	if def == "" || def == "origin/HEAD" {
+		return nil
+	}
+	out := []value{}
+	for _, e := range es {
+		m := resolvedRe.FindStringSubmatch(e.text)
+		if m != nil && exec.Command("git", "merge-base", "--is-ancestor", m[1], def).Run() == nil {
+			out = append(out, e.first())
+		}
+	}
+	return out
 }
