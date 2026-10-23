@@ -1,0 +1,8 @@
+target: internal/home/home.go
+verify: go test ./internal/home/ -count=1 -run 'TestRepoDirRefusesAGitThatCannotAnswer'
+expect: --- FAIL:
+why:    a git that cannot answer is errGit, not "outside a repo": the cwd fallback names another store and splits the ledgers. This drops the timeout half of that check.
+--- old
+	if r.Expired || !r.Drained {
+--- new
+	if !r.Drained {

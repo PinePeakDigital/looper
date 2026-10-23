@@ -263,11 +263,17 @@ func TestRepoDirRefusesAGitThatCannotAnswer(t *testing.T) {
 	}
 	path := os.Getenv("PATH")
 	defer func(b time.Duration) { gitBudget = b }(gitBudget)
-	gitBudget = 300 * time.Millisecond
-	for name, body := range map[string]string{
-		"held pipe": "sleep 30 &\nexec " + real + ` "$@"`,
-		"timeout":   "exec sleep 30",
+	// Each case has its own budget: below run's 1s drain bound the budget has always expired
+	// by the time Run returns, so the held pipe must run under a longer one to reach !Drained.
+	for name, c := range map[string]struct {
+		body   string
+		budget time.Duration
+	}{
+		"held pipe": {"sleep 3 &\nexec " + real + ` "$@"`, 5 * time.Second},
+		"timeout":   {"exec sleep 30", 300 * time.Millisecond},
 	} {
+		gitBudget = c.budget
+		body := c.body
 		shim := t.TempDir()
 		write(t, filepath.Join(shim, "git"), "#!/bin/sh\n"+body+"\n")
 		if err := os.Chmod(filepath.Join(shim, "git"), 0o755); err != nil {
