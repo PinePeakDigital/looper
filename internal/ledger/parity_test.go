@@ -23,11 +23,11 @@ import (
 //
 // The fixture repo's commits are DETERMINISTIC — fixed identity, fixed author and committer
 // dates, no global or system git config — so every sha in a ledger and in a `commits` list is
-// the same on every run and every machine, and the goldens hold real shas. Two normalisations:
-// the temp directory, which appears in `path` for a worktree (git prints the common dir
-// absolute there) and differs per run — both its spellings, as given and with symlinks
-// resolved (macOS's /var is /private/var), become <tmp>; and the store dir, named by a hash of
-// that temp path, becomes <store>.
+// the same on every run and every machine, and the goldens hold real shas. The normalisation is
+// the store dir, which `path` always names and which differs per run (it is named by a hash of
+// the fixture's temp path): it becomes <store>. The fixture's temp directory, in both spellings
+// (as given and with symlinks resolved; macOS's /var is /private/var), becomes <tmp> as a
+// fallback for any output that carries it; no golden does today.
 
 type scenario struct {
 	name    string

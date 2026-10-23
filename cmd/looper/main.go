@@ -123,17 +123,17 @@ func run(args []string, in io.Reader, out, errOut io.Writer) int {
 	case "home":
 		// The repo's store, for the skill's shell snippets: `$(looper home)/learnings.md`. The
 		// ledgers are moved in first: a `looper learn add` on that path before anything had read
-		// the ledger would create a new file, and the old one would then never be moved.
+		// the ledger would create a new file, and the old one would then never be moved. A ledger
+		// that cannot move is named on stderr and the rest are still tried; only a store that
+		// cannot be named fails, since the skill's Step 0 reads that as "looper too old".
 		var d string
-		for _, n := range []string{home.ThreatModel, home.Deferred, home.Learnings} {
-			if _, err = home.Ledger("", n); err != nil {
-				break
+		if d, err = home.RepoDir(""); err == nil {
+			for _, n := range []string{home.ThreatModel, home.Deferred, home.Learnings} {
+				if _, lerr := home.Ledger("", n); lerr != nil {
+					fmt.Fprintf(errOut, "looper home: %s not moved in: %v\n", n, lerr)
+				}
 			}
-		}
-		if err == nil {
-			if d, err = home.RepoDir(""); err == nil {
-				_, err = fmt.Fprintln(out, d)
-			}
+			_, err = fmt.Fprintln(out, d)
 		}
 	case "plan":
 		return plan.Command(args[1:], in, out, errOut)
@@ -466,10 +466,6 @@ func runPrReport(args []string, in io.Reader, out, errOut io.Writer) error {
 					fmt.Fprintf(errOut, "pr-report: narrative from %s\n", p)
 				}
 			}
-		}
-		// Only when posting: without -post the body is on stdout for the reader to see.
-		if *post && *findingsFile == "" {
-			fmt.Fprintln(errOut, "pr-report: no -findings-file and no narrative.md in the run dir; the report carries no findings narrative")
 		}
 	}
 	narrative, err := readNarrative(*findingsFile, in)

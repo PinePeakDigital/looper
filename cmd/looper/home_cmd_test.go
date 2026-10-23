@@ -27,15 +27,32 @@ func TestHomePrintsTheRepoStore(t *testing.T) {
 
 	// A ledger still at the old place is moved in first, so `$(looper home)/learnings.md` names
 	// the real one rather than a new empty file.
-	old := filepath.Join(".git", "info", "review-loop-learnings.md")
-	if err := os.WriteFile(old, []byte("L\n"), 0o644); err != nil {
-		t.Fatal(err)
+	ledgers := []string{home.ThreatModel, home.Deferred, home.Learnings}
+	for _, n := range ledgers {
+		if err := os.WriteFile(filepath.Join(".git", "info", "review-loop-"+n), []byte(n), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if code, _, errOut := doRun(t, "home"); code != 0 {
 		t.Fatalf("home = %d (stderr %q)", code, errOut)
 	}
-	if b, _ := os.ReadFile(filepath.Join(want, home.Learnings)); string(b) != "L\n" {
-		t.Errorf("store learnings = %q, want the old ledger moved in", b)
+	for _, n := range ledgers {
+		if b, _ := os.ReadFile(filepath.Join(want, n)); string(b) != n {
+			t.Errorf("store %s = %q, want the old ledger moved in", n, b)
+		}
+	}
+	// A ledger that cannot move is named, and the store is still printed: Step 0 reads a
+	// failing `looper home` as "looper too old".
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(want, home.Deferred))
+	bad := filepath.Join(".git", "info", "review-loop-"+home.Deferred)
+	if err := os.WriteFile(bad, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := doRun(t, "home"); code != 0 || out != want+"\n" || !strings.Contains(errOut, home.Deferred) {
+		t.Errorf("unreadable old ledger: home = %d %q, stderr %q", code, out, errOut)
 	}
 	t.Setenv("REVIEW_LOOP_HOME", "")
 	t.Setenv("HOME", "")

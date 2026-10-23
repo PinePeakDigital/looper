@@ -250,3 +250,40 @@ func TestLedgerIgnoresANonRegularOldFile(t *testing.T) {
 		})
 	}
 }
+
+// A git that leaves its pipe held open is an error, not "outside a repo": the cwd fallback
+// would name another store. Before the time limit this hung for as long as the holder lived.
+func TestRepoDirRefusesAGitThatCannotAnswer(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
+	repo := gitInit(t)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on PATH")
+	}
+	shim := t.TempDir()
+	write(t, filepath.Join(shim, "git"), "#!/bin/sh\nsleep 30 &\nexec "+real+" \"$@\"\n")
+	if err := os.Chmod(filepath.Join(shim, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if p, err := RepoDir(repo); err == nil {
+		t.Errorf("RepoDir = %q with a hung git, want an error", p)
+	}
+}
+
+// A common dir holding glob characters still has its reports found.
+func TestMigratePendingUnderAGlobishRepo(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
+	repo := filepath.Join(t.TempDir(), "r[1*")
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	write(t, filepath.Join(repo, ".git", "info", "review-loop-pending-report.abc123.md"), "r\n")
+	if err := MigratePending(repo, func(string) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	rd, _ := RunDir("abc123")
+	if b, _ := os.ReadFile(filepath.Join(rd, "pending-report.md")); string(b) != "r\n" {
+		t.Errorf("run dir report = %q", b)
+	}
+}

@@ -43,38 +43,52 @@ func Base() (string, error) {
 	return filepath.Join(h, ".claude", "review-loop"), nil
 }
 
-// git is git's trimmed stdout, or "" when it fails. Bounded like every other looper git call:
-// a git whose descendant holds stdout open (a hook, a credential helper) once hung `looper home`
-// for as long as the descendant lived, and an undrained pipe's bytes would name the wrong store.
-func git(dir string, args ...string) string {
+// errGit is a git that ran but could not answer in time. It is not "outside a repo": falling
+// back to the working directory would quietly name another store and split the ledgers.
+var errGit = errors.New("git did not answer within its time limit, so the repo is unknown")
+
+// git is git's trimmed stdout, or "" when it fails or is missing, which reads as "outside a
+// repo". Bounded like every other looper git call: a git whose descendant holds stdout open (a
+// hook, a credential helper) once hung `looper home` for as long as the descendant lived. A
+// git that ran out of time or left its pipe undrained is errGit.
+func git(dir string, args ...string) (string, error) {
 	r := run.Run(dir, 10*time.Second, "git", args...)
-	if r.Error != nil || r.Code != 0 || !r.Drained {
-		return ""
+	if r.Started && (r.Expired || !r.Drained) {
+		return "", errGit
 	}
-	return strings.TrimSpace(string(r.Out))
+	if r.Error != nil || r.Code != 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(string(r.Out)), nil
 }
 
 // commonDir is dir's absolute git common dir, or "" outside a repo. --git-common-dir, never
 // --git-dir: a linked worktree's git dir is per worktree, so it would name another repo.
-func commonDir(dir string) string {
+func commonDir(dir string) (string, error) {
 	return git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 }
 
 // RepoID is a repo's identity across worktrees: its common dir's parent ("" means the working
-// directory). Outside a repo it is the directory itself. The run record's `repo` is this value.
+// directory). Outside a repo, or when git could not answer, it is the directory itself. The
+// run record's `repo` is this value.
 func RepoID(dir string) string {
-	common := commonDir(dir)
+	id, _ := repoID(dir)
+	return id
+}
+
+func repoID(dir string) (string, error) {
+	common, err := commonDir(dir)
 	if common == "" {
 		if dir == "" {
 			dir, _ = os.Getwd()
 		}
 		abs, _ := filepath.Abs(dir)
-		return abs
+		return abs, err
 	}
 	if filepath.Base(common) == ".git" {
-		return filepath.Dir(common)
+		return filepath.Dir(common), nil
 	}
-	return common
+	return common, nil
 }
 
 // RepoDir is the repo's store: <base>/repos/<name>-<hash of RepoID>. The name is for people;
@@ -86,7 +100,10 @@ func RepoDir(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	id := RepoID(dir)
+	id, err := repoID(dir)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256([]byte(id))
 	return filepath.Join(base, "repos", name(filepath.Base(id))+"-"+hex.EncodeToString(sum[:4])), nil
 }
@@ -116,7 +133,11 @@ func Ledger(dir, name string) (string, error) {
 	if _, err := os.Lstat(p); err == nil {
 		return p, nil
 	}
-	if common := commonDir(dir); common != "" {
+	common, err := commonDir(dir)
+	if err != nil {
+		return "", err
+	}
+	if common != "" {
 		old := filepath.Join(common, "info", legacyPfx+name)
 		if err := move(old, p); err != nil {
 			return "", err
@@ -139,9 +160,9 @@ func RunDir(id string) (string, error) {
 // valid says which ids can name a dir; a name it refuses is left where it is. A report that
 // fails to move stays where it was and the rest are still tried; the error names every one.
 func MigratePending(dir string, valid func(string) bool) error {
-	common := commonDir(dir)
+	common, err := commonDir(dir)
 	if common == "" {
-		return nil
+		return err
 	}
 	// Listed, not globbed: a common dir holding `[` or `*` is a pattern to Glob.
 	des, err := os.ReadDir(filepath.Join(common, "info"))
