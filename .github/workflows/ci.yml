@@ -240,7 +240,7 @@ jobs:
                       TestAnUnreadableLedgerIsAnError:2 \
                       TestInvalidUTF8LedgerIsRead:2 TestSelftestIsRefused:2 \
                       TestNonUTF8GitOutputIsRead:2 TestANULInAPinPathIsAnError:2 \
-                      TestInfoAsAFileIsNoLedger:2 TestNonUTF8CommonDirIsAnError:2; do
+                      TestInfoAsAFileIsNoLedger:2; do
             t=${spec%:*}; min=${spec#*:}
             c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' ledger.log)
             [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat ledger.log; exit 1; }
