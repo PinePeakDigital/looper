@@ -190,7 +190,7 @@ func move(src, dst string) error {
 		werr = cerr
 	}
 	if werr == nil {
-		werr = os.Chmod(f.Name(), 0o644)
+		werr = os.Chmod(f.Name(), fi.Mode().Perm()) // CreateTemp makes 0600; keep the source's mode
 	}
 	if werr == nil {
 		werr = os.Rename(f.Name(), dst)

@@ -94,12 +94,13 @@ var swept = regexp.MustCompile(`^[ \t\n\v\f\r]*<!--[ \t\n\v\f\r]*[Ss]wept:[ \t\n
 
 // learnings is the learnings file's text (trailing newlines removed), its entry count, and the
 // count the last sweep left, or nil when the file has never been swept.
-func learnings() (string, int, *string) {
+func learnings(errOut io.Writer) (string, int, *string) {
 	p, err := home.Ledger("", home.Learnings)
 	if err != nil {
 		// Said, not swallowed: an empty learnings field reads as "nothing dismissed", so every
-		// dismissed finding would be raised again with no sign of why.
-		fmt.Fprintf(os.Stderr, "looper context: learnings unreadable, reviewing without them: %v\n", err)
+		// dismissed finding would be raised again with no sign of why. (A store that resolves but
+		// holds no readable file is still silent, as context.sh was.)
+		fmt.Fprintf(errOut, "looper context: learnings unreadable, reviewing without them: %v\n", err)
 		return "", 0, nil
 	}
 	if fi, err := os.Stat(p); err != nil || !fi.Mode().IsRegular() {
@@ -371,7 +372,7 @@ func Command(args []string, stdout, errOut io.Writer) int {
 	if base != "" {
 		probe("git", "fetch", "origin", base) // best effort, as context.sh did
 	}
-	learn, entries, sweptAt := learnings()
+	learn, entries, sweptAt := learnings(errOut)
 
 	var changed, semantic int
 	var diffstat, excluded string

@@ -3,8 +3,10 @@ package home
 import (
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -119,5 +121,74 @@ func TestBaseRefusesNoHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	if p, err := Base(); err == nil {
 		t.Errorf("Base = %q with no HOME, want an error", p)
+	}
+}
+
+// The migrated copy keeps the source's mode, so a umask-077 user's ledger stays private.
+func TestMoveKeepsTheSourceMode(t *testing.T) {
+	d := t.TempDir()
+	src, dst := filepath.Join(d, "src"), filepath.Join(d, "out", "dst")
+	write(t, src, "x\n")
+	if err := os.Chmod(src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := move(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(dst); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("dst mode = %v, %v; want 0600", fi.Mode(), err)
+	}
+}
+
+// A copy that fails partway leaves no dst, so the old ledger is still the one read next time.
+func TestMoveLeavesNoPartialFile(t *testing.T) {
+	d := t.TempDir()
+	src, dst := filepath.Join(d, "src"), filepath.Join(d, "dst")
+	write(t, src, strings.Repeat("x", 128<<10))
+	var old syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
+		t.Skip(err)
+	}
+	signal.Ignore(syscall.SIGXFSZ)
+	defer signal.Reset(syscall.SIGXFSZ)
+	lim := old
+	lim.Cur = 32 << 10
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &lim); err != nil {
+		t.Skip(err)
+	}
+	err := move(src, dst)
+	if rerr := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if err == nil {
+		t.Fatal("move succeeded past the file size limit")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Errorf("a partial dst exists: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(d, ".migrate-*")); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("src lost: %v", err)
+	}
+}
+
+// One report that cannot move does not stop the rest, and the error names it.
+func TestMigratePendingContinuesPastAFailure(t *testing.T) {
+	t.Setenv("REVIEW_LOOP_HOME", t.TempDir())
+	repo := gitInit(t)
+	info := filepath.Join(repo, ".git", "info")
+	write(t, filepath.Join(info, "review-loop-pending-report.aaa.md"), "a\n")
+	write(t, filepath.Join(info, "review-loop-pending-report.bbb.md"), "b\n")
+	ra, _ := RunDir("aaa")
+	write(t, ra, "") // a file where the run dir should be
+	err := MigratePending(repo, func(string) bool { return true })
+	if err == nil || !strings.Contains(err.Error(), "pending-report.aaa.md left in place") {
+		t.Errorf("err = %v", err)
+	}
+	rb, _ := RunDir("bbb")
+	if b, _ := os.ReadFile(filepath.Join(rb, "pending-report.md")); string(b) != "b\n" {
+		t.Errorf("bbb not moved: %q", b)
 	}
 }

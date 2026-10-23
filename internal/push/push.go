@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/pinepeakdigital/looper/internal/evidence"
-	"github.com/pinepeakdigital/looper/internal/home"
 	"github.com/pinepeakdigital/looper/internal/record"
 	"github.com/pinepeakdigital/looper/internal/run"
 )
@@ -234,10 +233,9 @@ func probeReport(runID string, r *record.Run, repo, branch string) (landed, attr
 	if !ok {
 		return false, attributable, ghWhy // no home directory: nowhere to look
 	}
-	// A report deferred by a looper older than the run dirs is still at the old place; move it
-	// first, or the gate refuses a report that exists. Best effort: one that cannot move is
-	// read as not landed, which fails closed, and `record pending` names it.
-	_ = home.MigratePending(repo, evidence.ValidRunID)
+	// A report deferred by a looper older than the run dirs is not moved here: that runs git
+	// with no budget on the gate's path. `record pending` moves it (Step 0c runs it before any
+	// push), and until then it reads as not landed, which fails closed.
 	// No attributable assignment here: the path resolved, so both paths below return true outright.
 	body, err := os.ReadFile(pending)
 	if err != nil {

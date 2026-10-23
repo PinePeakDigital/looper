@@ -227,3 +227,18 @@ func nonUTF8Name(t *testing.T, w world) {
 	git(t, w.repo, "update-index", "--add", "--cacheinfo", "100644,"+strings.TrimSpace(string(blob))+",caf\xe9.txt")
 	git(t, w.repo, "commit", "-q", "-m", "latin-1 name")
 }
+
+// A learnings store that cannot be found is said on the caller's stderr, not swallowed: an
+// empty learnings field reads as "nothing dismissed".
+func TestUnfoundLearningsAreSaid(t *testing.T) {
+	code, out, errOut := divergence{scenario: scenario{prep: func(t *testing.T, w world) {
+		t.Setenv("REVIEW_LOOP_HOME", "")
+		t.Setenv("HOME", "")
+		if err := os.Unsetenv("HOME"); err != nil {
+			t.Fatal(err)
+		}
+	}}}.run(t)
+	if code != 0 || !strings.Contains(out, `"learnings": null,`) || !strings.Contains(errOut, "learnings unreadable") {
+		t.Errorf("exit %d, stderr %q, stdout:\n%s", code, errOut, out)
+	}
+}
